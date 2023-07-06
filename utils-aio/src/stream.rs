@@ -4,7 +4,12 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::{future::FusedFuture, stream::FusedStream, Future, TryStream, TryStreamExt};
+use futures::{future::FusedFuture, stream::FusedStream, Future, Stream, TryStream, TryStreamExt};
+
+/// A stream which yields `std::io::Result<T>` items.
+pub trait IoStream<T>: Stream<Item = Result<T, std::io::Error>> {}
+
+impl<T, U> IoStream<U> for T where T: Stream<Item = Result<U, std::io::Error>> {}
 
 /// Future for the [`expect_next`](Duplex::expect_next) method.
 #[derive(Debug)]

@@ -1,33 +1,20 @@
 use std::{
-    io,
     io::{Error, ErrorKind},
     pin::Pin,
 };
 
 use futures::{channel::mpsc, AsyncRead, AsyncWrite, Sink, Stream};
 
+use crate::{sink::IoSink, stream::IoStream};
+
 pub trait DuplexByteStream: AsyncWrite + AsyncRead + Unpin {}
 
 impl<T> DuplexByteStream for T where T: AsyncWrite + AsyncRead + Unpin {}
 
 /// A channel that can be used to send and receive messages.
-pub trait Duplex<T>:
-    futures::Stream<Item = Result<T, io::Error>>
-    + futures::Sink<T, Error = io::Error>
-    + Send
-    + Sync
-    + Unpin
-{
-}
+pub trait Duplex<T>: IoStream<T> + IoSink<T> + Send + Sync + Unpin {}
 
-impl<T, U> Duplex<T> for U where
-    U: futures::Stream<Item = Result<T, io::Error>>
-        + futures::Sink<T, Error = io::Error>
-        + Send
-        + Sync
-        + Unpin
-{
-}
+impl<T, U> Duplex<T> for U where U: IoStream<T> + IoSink<T> + Send + Sync + Unpin {}
 
 #[derive(Debug)]
 pub struct MpscDuplex<T> {
