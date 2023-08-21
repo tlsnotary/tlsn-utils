@@ -74,9 +74,9 @@ pub trait ExpectStreamExt: TryStream + Unpin {
     /// # futures::executor::block_on(async {
     /// use futures::{SinkExt, StreamExt};
     /// use utils_aio::stream::ExpectStreamExt;
-    /// use utils_aio::duplex::MpscDuplex;
+    /// use utils_aio::duplex::MemoryDuplex;
     ///
-    /// let (mut a, mut b) = MpscDuplex::new();
+    /// let (mut a, mut b) = MemoryDuplex::new();
     ///
     /// a.send(()).await.unwrap();
     /// a.close().await.unwrap();

@@ -17,12 +17,12 @@ pub trait Duplex<T>: IoStream<T> + IoSink<T> + Send + Sync + Unpin {}
 impl<T, U> Duplex<T> for U where U: IoStream<T> + IoSink<T> + Send + Sync + Unpin {}
 
 #[derive(Debug)]
-pub struct MpscDuplex<T> {
+pub struct MemoryDuplex<T> {
     sink: mpsc::Sender<T>,
     stream: mpsc::Receiver<T>,
 }
 
-impl<T> MpscDuplex<T>
+impl<T> MemoryDuplex<T>
 where
     T: Send + 'static,
 {
@@ -42,7 +42,7 @@ where
     }
 }
 
-impl<T> Sink<T> for MpscDuplex<T>
+impl<T> Sink<T> for MemoryDuplex<T>
 where
     T: Send + 'static,
 {
@@ -82,7 +82,7 @@ where
     }
 }
 
-impl<T> Stream for MpscDuplex<T> {
+impl<T> Stream for MemoryDuplex<T> {
     type Item = Result<T, std::io::Error>;
 
     fn poll_next(

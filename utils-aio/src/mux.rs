@@ -67,7 +67,7 @@ pub mod mock {
         sync::{Arc, Mutex},
     };
 
-    use crate::duplex::MpscDuplex;
+    use crate::duplex::MemoryDuplex;
 
     #[derive(Default)]
     struct FactoryState {
@@ -128,7 +128,7 @@ pub mod mock {
             let mut state = self.state.lock().unwrap();
 
             if let Some(channel) = state.buffer.remove(id) {
-                if let Ok(channel) = channel.downcast::<MpscDuplex<T>>() {
+                if let Ok(channel) = channel.downcast::<MemoryDuplex<T>>() {
                     Ok(channel)
                 } else {
                     Err(MuxerError::InternalError(
@@ -140,7 +140,7 @@ pub mod mock {
                     return Err(MuxerError::DuplicateStreamId(id.to_string()));
                 }
 
-                let (channel_0, channel_1) = MpscDuplex::new();
+                let (channel_0, channel_1) = MemoryDuplex::new();
                 state.buffer.insert(id.to_string(), Box::new(channel_1));
 
                 Ok(Box::new(channel_0))
