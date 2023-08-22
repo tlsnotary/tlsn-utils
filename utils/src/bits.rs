@@ -82,7 +82,11 @@ macro_rules! impl_from_bits {
 
                 for i in 0..<$typ>::BITS {
                     let Some(bit) = iter.next() else {
-                        panic!("Bit iterator yielded fewer bits than expected, got {}, expected {}", i, <$typ>::BITS);
+                        panic!(
+                            "Bit iterator yielded fewer bits than expected, got {}, expected {}",
+                            i,
+                            <$typ>::BITS
+                        );
                     };
 
                     value |= (bit as $typ) << i;
@@ -98,7 +102,11 @@ macro_rules! impl_from_bits {
 
                 for i in 0..<$typ>::BITS {
                     let Some(bit) = iter.next() else {
-                        panic!("Bit iterator yielded fewer bits than expected, got {}, expected {}", i, <$typ>::BITS);
+                        panic!(
+                            "Bit iterator yielded fewer bits than expected, got {}, expected {}",
+                            i,
+                            <$typ>::BITS
+                        );
                     };
 
                     value |= (bit as $typ) << ((<$typ>::BITS - 1) - i);

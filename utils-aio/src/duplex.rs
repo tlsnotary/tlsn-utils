@@ -1,20 +1,28 @@
-use futures::{channel::mpsc, AsyncRead, AsyncWrite, Sink, Stream};
 use std::{
     io::{Error, ErrorKind},
     pin::Pin,
 };
 
+use futures::{channel::mpsc, AsyncRead, AsyncWrite, Sink, Stream};
+
+use crate::{sink::IoSink, stream::IoStream};
+
 pub trait DuplexByteStream: AsyncWrite + AsyncRead + Unpin {}
 
 impl<T> DuplexByteStream for T where T: AsyncWrite + AsyncRead + Unpin {}
 
+/// A channel that can be used to send and receive messages.
+pub trait Duplex<T>: IoStream<T> + IoSink<T> + Send + Sync + Unpin {}
+
+impl<T, U> Duplex<T> for U where U: IoStream<T> + IoSink<T> + Send + Sync + Unpin {}
+
 #[derive(Debug)]
-pub struct DuplexChannel<T> {
+pub struct MemoryDuplex<T> {
     sink: mpsc::Sender<T>,
     stream: mpsc::Receiver<T>,
 }
 
-impl<T> DuplexChannel<T>
+impl<T> MemoryDuplex<T>
 where
     T: Send + 'static,
 {
@@ -34,7 +42,7 @@ where
     }
 }
 
-impl<T> Sink<T> for DuplexChannel<T>
+impl<T> Sink<T> for MemoryDuplex<T>
 where
     T: Send + 'static,
 {
@@ -46,13 +54,13 @@ where
     ) -> std::task::Poll<Result<(), Self::Error>> {
         Pin::new(&mut self.sink)
             .poll_ready(cx)
-            .map_err(|_| Error::new(ErrorKind::ConnectionAborted, "channel died"))
+            .map_err(|e| Error::new(ErrorKind::ConnectionAborted, e.to_string()))
     }
 
     fn start_send(mut self: std::pin::Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
         Pin::new(&mut self.sink)
             .start_send(item)
-            .map_err(|_| Error::new(ErrorKind::ConnectionAborted, "channel died"))
+            .map_err(|e| Error::new(ErrorKind::ConnectionAborted, e.to_string()))
     }
 
     fn poll_flush(
@@ -61,7 +69,7 @@ where
     ) -> std::task::Poll<Result<(), Self::Error>> {
         Pin::new(&mut self.sink)
             .poll_flush(cx)
-            .map_err(|_| Error::new(ErrorKind::ConnectionAborted, "channel died"))
+            .map_err(|e| Error::new(ErrorKind::ConnectionAborted, e.to_string()))
     }
 
     fn poll_close(
@@ -70,11 +78,11 @@ where
     ) -> std::task::Poll<Result<(), Self::Error>> {
         Pin::new(&mut self.sink)
             .poll_close(cx)
-            .map_err(|_| Error::new(ErrorKind::ConnectionAborted, "channel died"))
+            .map_err(|e| Error::new(ErrorKind::ConnectionAborted, e.to_string()))
     }
 }
 
-impl<T> Stream for DuplexChannel<T> {
+impl<T> Stream for MemoryDuplex<T> {
     type Item = Result<T, std::io::Error>;
 
     fn poll_next(

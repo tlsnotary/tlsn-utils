@@ -4,8 +4,8 @@ use tokio_serde::formats::Bincode;
 use tokio_util::{codec::LengthDelimitedCodec, compat::FuturesAsyncReadCompatExt};
 
 use crate::{
+    duplex::Duplex,
     mux::{MuxChannelSerde, MuxStream, MuxerError},
-    Channel,
 };
 
 /// Wraps a [`MuxStream`] and provides a [`Channel`] with a bincode codec
@@ -25,7 +25,7 @@ where
     pub fn attach_codec<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static, T>(
         &self,
         stream: S,
-    ) -> impl Channel<T>
+    ) -> impl Duplex<T>
     where
         T: serde::Serialize + for<'a> serde::Deserialize<'a> + Send + Sync + Unpin + 'static,
     {
@@ -45,7 +45,7 @@ where
     >(
         &mut self,
         id: &str,
-    ) -> Result<Box<dyn Channel<T> + 'static>, MuxerError> {
+    ) -> Result<Box<dyn Duplex<T> + 'static>, MuxerError> {
         let stream = self.0.get_stream(id).await?;
 
         Ok(Box::new(self.attach_codec(stream)))

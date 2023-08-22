@@ -1,6 +1,7 @@
-use super::Channel;
 use async_trait::async_trait;
 use futures_util::{AsyncRead, AsyncWrite};
+
+use crate::duplex::Duplex;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MuxerError {
@@ -30,7 +31,7 @@ pub trait MuxChannelSerde: Sized {
     >(
         &mut self,
         id: &str,
-    ) -> Result<Box<dyn Channel<T> + 'static>, MuxerError>;
+    ) -> Result<Box<dyn Duplex<T> + 'static>, MuxerError>;
 }
 
 /// A trait for opening a new duplex channel with a remote peer.
@@ -41,7 +42,7 @@ pub trait MuxChannel<T> {
     /// Opens a new channel with the remote using the provided id
     ///
     /// Attaches a codec to the underlying stream
-    async fn get_channel(&mut self, id: &str) -> Result<Box<dyn Channel<T> + 'static>, MuxerError>;
+    async fn get_channel(&mut self, id: &str) -> Result<Box<dyn Duplex<T> + 'static>, MuxerError>;
 }
 
 #[async_trait]
@@ -50,7 +51,7 @@ where
     T: serde::Serialize + serde::de::DeserializeOwned + Send + Sync + Unpin + 'static,
     U: MuxChannelSerde + Send,
 {
-    async fn get_channel(&mut self, id: &str) -> Result<Box<dyn Channel<T> + 'static>, MuxerError> {
+    async fn get_channel(&mut self, id: &str) -> Result<Box<dyn Duplex<T> + 'static>, MuxerError> {
         self.get_channel::<T>(id).await
     }
 }
@@ -66,7 +67,7 @@ pub mod mock {
         sync::{Arc, Mutex},
     };
 
-    use crate::duplex::DuplexChannel;
+    use crate::duplex::MemoryDuplex;
 
     #[derive(Default)]
     struct FactoryState {
@@ -123,11 +124,11 @@ pub mod mock {
         async fn get_channel<T: Send + 'static>(
             &mut self,
             id: &str,
-        ) -> Result<Box<dyn Channel<T> + 'static>, MuxerError> {
+        ) -> Result<Box<dyn Duplex<T> + 'static>, MuxerError> {
             let mut state = self.state.lock().unwrap();
 
             if let Some(channel) = state.buffer.remove(id) {
-                if let Ok(channel) = channel.downcast::<DuplexChannel<T>>() {
+                if let Ok(channel) = channel.downcast::<MemoryDuplex<T>>() {
                     Ok(channel)
                 } else {
                     Err(MuxerError::InternalError(
@@ -139,7 +140,7 @@ pub mod mock {
                     return Err(MuxerError::DuplicateStreamId(id.to_string()));
                 }
 
-                let (channel_0, channel_1) = DuplexChannel::new();
+                let (channel_0, channel_1) = MemoryDuplex::new();
                 state.buffer.insert(id.to_string(), Box::new(channel_1));
 
                 Ok(Box::new(channel_0))
