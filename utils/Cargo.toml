@@ -7,7 +7,7 @@ edition = "2021"
 name = "utils"
 
 [dependencies]
-thiserror = "1"
+thiserror.workspace = true
 
 [dev-dependencies]
 rstest = "0.12"

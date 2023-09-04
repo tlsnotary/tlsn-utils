@@ -1,5 +1,6 @@
 [workspace]
 members = ["utils", "utils-aio"]
+resolver = "2"
 
 [workspace.dependencies]
 rand = "0.8"
