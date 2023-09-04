@@ -62,7 +62,7 @@ pub fn invert_range<T: Ord + Copy>(
     Ok(inverted)
 }
 
-/// An error that can occur during span creation
+/// Errors that can occur during range manipulation
 #[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum RangeError {
