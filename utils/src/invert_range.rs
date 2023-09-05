@@ -8,11 +8,16 @@ use thiserror::Error;
 /// function will return the ranges `1..2`, `5..7` and `8..10`.
 ///
 /// Every range in `ranges_to_remove` must be contained in `original_range`.
-/// Ranges in `ranges_to_remove` must not overlap.
+/// Ranges must not overlap and cannot be empty or negative.
 pub fn invert_range<T: Ord + Copy>(
     original_range: &Range<T>,
     ranges_to_remove: &[Range<T>],
 ) -> Result<Vec<Range<T>>, RangeError> {
+    // Check that original_range is valid
+    if original_range.start >= original_range.end {
+        return Err(RangeError::Invalid);
+    }
+
     for (k, range) in ranges_to_remove.iter().enumerate() {
         // Check that there is no invalid or empty range
         if range.start >= range.end {
