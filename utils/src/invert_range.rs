@@ -71,7 +71,7 @@ pub fn invert_range<T: Ord + Copy>(
 #[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum RangeError {
-    #[error("Found zero or negative range")]
+    #[error("Found empty or negative range")]
     Invalid,
     #[error("Found out of bounds range")]
     OutOfBounds,
