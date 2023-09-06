@@ -10,15 +10,17 @@ use thiserror::Error;
 /// Every range in `ranges_to_remove` must be contained in `original_range`.
 /// Ranges must not overlap and cannot be empty or negative.
 pub fn invert_range<T: Ord + Copy>(
-    original_range: &Range<T>,
-    ranges_to_remove: &[Range<T>],
+    original_range: Range<T>,
+    mut ranges_to_remove: Vec<Range<T>>,
 ) -> Result<Vec<Range<T>>, RangeError> {
-    // Check that original_range is valid
+    // Check that `original_range`  and `ranges_to_remove` are well formed, i.e.
+    // - no negative or empty ranges
+    // - every range in `ranges_to_remove` is contained within `original_range`
     if original_range.start >= original_range.end {
         return Err(RangeError::Invalid);
     }
 
-    for (k, range) in ranges_to_remove.iter().enumerate() {
+    for range in ranges_to_remove.iter() {
         // Check that there is no invalid or empty range
         if range.start >= range.end {
             return Err(RangeError::Invalid);
@@ -32,33 +34,32 @@ pub fn invert_range<T: Ord + Copy>(
         {
             return Err(RangeError::OutOfBounds);
         }
+    }
 
-        // Check that ranges are not overlapping
-        if ranges_to_remove
-            .iter()
-            .enumerate()
-            .any(|(l, r)| k != l && r.start < range.end && r.end > range.start)
-        {
-            return Err(RangeError::Overlapping);
-        }
+    // Check that ranges are not overlapping by sorting them and then using a sliding window
+    ranges_to_remove.sort_by(|a, b| a.start.cmp(&b.start));
+
+    if ranges_to_remove
+        .windows(2)
+        .any(|w| w[1].start < w[0].end && w[1].end > w[0].start)
+    {
+        return Err(RangeError::Overlapping);
     }
 
     // Now invert ranges
-    let mut inverted = vec![original_range.clone()];
+    // Need to copy `original_range.end` here because it is moved in `inverted.push`
+    let orignal_end = original_range.end;
+    let mut inverted = Vec::with_capacity(ranges_to_remove.len() + 1);
+    inverted.push(original_range);
 
-    for range in ranges_to_remove.iter() {
-        let inv = inverted
-            .iter_mut()
-            .find(|inv| range.start >= inv.start && range.end <= inv.end)
-            .expect("Should have found range to invert");
+    // Only operate on the tail of `inverted` because `ranges_to_remove` is sorted
+    for remove in ranges_to_remove {
+        let tail = inverted
+            .last_mut()
+            .expect("There should be at least one range");
 
-        let original_end = inv.end;
-        inv.end = range.start;
-
-        inverted.push(Range {
-            start: range.end,
-            end: original_end,
-        });
+        tail.end = remove.start;
+        inverted.push(remove.end..orignal_end);
     }
 
     // Remove empty ranges
@@ -93,11 +94,11 @@ mod tests {
 
         for range in ranges {
             assert!(invert_range(
-                &Range {
+                Range {
                     start: 0_usize,
                     end: 10
                 },
-                &[range]
+                vec![range]
             )
             .is_err());
         }
@@ -119,22 +120,22 @@ mod tests {
 
         for range in overlap {
             assert!(invert_range(
-                &Range {
+                Range {
                     start: 1_usize,
                     end: 10
                 },
-                &range,
+                range,
             )
             .is_err());
         }
 
         for range in ok {
             assert!(invert_range(
-                &Range {
+                Range {
                     start: 1_usize,
                     end: 10
                 },
-                &range
+                range
             )
             .is_ok());
         }
@@ -142,7 +143,7 @@ mod tests {
 
     #[test]
     fn test_invert_ranges() {
-        let ranges = &[
+        let ranges = vec![
             Range { start: 1, end: 5 },
             Range { start: 5, end: 10 },
             Range { start: 12, end: 16 },
@@ -153,7 +154,7 @@ mod tests {
 
         assert_eq!(
             invert_range(
-                &Range {
+                Range {
                     start: 1_usize,
                     end: 20
                 },
@@ -162,5 +163,22 @@ mod tests {
             .unwrap(),
             expected
         );
+    }
+
+    #[test]
+    fn test_invert_ranges_empty_and_full() {
+        let range = Range {
+            start: 0_usize,
+            end: 10,
+        };
+
+        // Check that an empty vec returns the original range
+        assert_eq!(
+            invert_range(range.clone(), vec![]).unwrap(),
+            vec![range.clone()]
+        );
+
+        // Check that we can remove the range itself and it returns an empty vec
+        assert_eq!(invert_range(range.clone(), vec![range]).unwrap(), vec![]);
     }
 }
