@@ -18,7 +18,7 @@ impl From<SmallSet> for RangeSet<u8> {
 impl<'a> Arbitrary<'a> for SmallSet {
     fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
         // Generates a set of ranges with a maximum of 8 ranges.
-        let count = u8::arbitrary(u)?.min(8);
+        let count = u8::arbitrary(u)? % 8;
 
         let mut set = RangeSet::default();
         for _ in 0..count {
