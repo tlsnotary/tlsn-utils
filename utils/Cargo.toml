@@ -11,3 +11,4 @@ name = "utils"
 [dev-dependencies]
 rstest = "0.12"
 rand = { workspace = true }
+itertools = "0.11.0"

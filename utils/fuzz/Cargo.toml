@@ -1,0 +1,69 @@
+[package]
+name = "tlsn-utils-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
+
+[dependencies.tlsn-utils]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "range_union_range"
+path = "fuzz_targets/range_union_range.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "range_union_set"
+path = "fuzz_targets/range_union_set.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "range_diff_range"
+path = "fuzz_targets/range_diff_range.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "range_diff_set"
+path = "fuzz_targets/range_diff_set.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "set_union_range"
+path = "fuzz_targets/set_union_range.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "set_union_set"
+path = "fuzz_targets/set_union_set.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "set_diff_set"
+path = "fuzz_targets/set_diff_set.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "set_diff_range"
+path = "fuzz_targets/set_diff_range.rs"
+test = false
+doc = false
