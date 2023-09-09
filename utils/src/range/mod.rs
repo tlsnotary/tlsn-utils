@@ -3,6 +3,7 @@ mod union;
 
 use std::ops::Range;
 
+/// A set of ranges.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct RangeSet<T> {
     /// The ranges of the set.
@@ -82,6 +83,7 @@ impl<T: Ord> From<Range<T>> for RangeSet<T> {
     }
 }
 
+/// An iterator over the values in a `RangeSet`.
 pub struct RangeSetIter<'a, T> {
     iter: std::slice::Iter<'a, Range<T>>,
     current: Option<Range<T>>,
