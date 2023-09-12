@@ -5,14 +5,22 @@ use std::ops::Range;
 
 /// A set of ranges.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct RangeSet<T> {
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(from = "Vec<Range<T>>"))]
+pub struct RangeSet<T: Clone + Copy + Ord> {
     /// The ranges of the set.
     ///
     /// The ranges *MUST* be sorted, non-intersecting, and non-empty.
     ranges: Vec<Range<T>>,
 }
 
-impl<T> Default for RangeSet<T> {
+impl<T: Clone + Copy + Ord> From<Vec<Range<T>>> for RangeSet<T> {
+    fn from(ranges: Vec<Range<T>>) -> Self {
+        Self::new(&ranges)
+    }
+}
+
+impl<T: Clone + Copy + Ord> Default for RangeSet<T> {
     fn default() -> Self {
         Self {
             ranges: Default::default(),
@@ -56,7 +64,7 @@ impl<T: Clone + Copy + Ord> RangeSet<T> {
     }
 }
 
-impl<T> RangeSet<T>
+impl<T: Clone + Copy + Ord> RangeSet<T>
 where
     Range<T>: ExactSizeIterator<Item = T>,
 {
@@ -71,7 +79,7 @@ where
     }
 }
 
-impl<T: Ord> From<Range<T>> for RangeSet<T> {
+impl<T: Clone + Copy + Ord> From<Range<T>> for RangeSet<T> {
     fn from(range: Range<T>) -> Self {
         if range.is_empty() {
             return Self::default();
@@ -91,7 +99,7 @@ pub struct RangeSetIter<'a, T> {
 
 impl<'a, T> Iterator for RangeSetIter<'a, T>
 where
-    T: Copy,
+    T: Clone + Copy + Ord,
     Range<T>: Iterator<Item = T>,
 {
     type Item = T;
@@ -149,49 +157,49 @@ pub trait RangeUnion<Rhs> {
     fn union(&self, other: &Rhs) -> Self::Output;
 }
 
-impl<T: Ord> RangeIntersects<Range<T>> for Range<T> {
+impl<T: Clone + Copy + Ord> RangeIntersects<Range<T>> for Range<T> {
     fn intersects(&self, other: &Range<T>) -> bool {
         self.start < other.end && self.end > other.start
     }
 }
 
-impl<T: Ord> RangeIntersects<RangeSet<T>> for Range<T> {
+impl<T: Clone + Copy + Ord> RangeIntersects<RangeSet<T>> for Range<T> {
     fn intersects(&self, other: &RangeSet<T>) -> bool {
         other.ranges.iter().any(|range| self.intersects(range))
     }
 }
 
-impl<T: Ord> RangeDisjoint<Range<T>> for Range<T> {
+impl<T: Clone + Copy + Ord> RangeDisjoint<Range<T>> for Range<T> {
     fn is_disjoint(&self, other: &Range<T>) -> bool {
         self.start >= other.end || self.end <= other.start
     }
 }
 
-impl<T: Ord> RangeDisjoint<RangeSet<T>> for Range<T> {
+impl<T: Clone + Copy + Ord> RangeDisjoint<RangeSet<T>> for Range<T> {
     fn is_disjoint(&self, other: &RangeSet<T>) -> bool {
         other.ranges.iter().all(|range| self.is_disjoint(range))
     }
 }
 
-impl<T: Ord> RangeSuperset<Range<T>> for Range<T> {
+impl<T: Clone + Copy + Ord> RangeSuperset<Range<T>> for Range<T> {
     fn is_superset(&self, other: &Range<T>) -> bool {
         self.start <= other.start && self.end >= other.end
     }
 }
 
-impl<T: Ord> RangeSuperset<RangeSet<T>> for Range<T> {
+impl<T: Clone + Copy + Ord> RangeSuperset<RangeSet<T>> for Range<T> {
     fn is_superset(&self, other: &RangeSet<T>) -> bool {
         other.ranges.iter().all(|range| self.is_superset(range))
     }
 }
 
-impl<T: Ord> RangeSubset<Range<T>> for Range<T> {
+impl<T: Clone + Copy + Ord> RangeSubset<Range<T>> for Range<T> {
     fn is_subset(&self, other: &Range<T>) -> bool {
         self.start >= other.start && self.end <= other.end
     }
 }
 
-impl<T: Ord> RangeSubset<RangeSet<T>> for Range<T> {
+impl<T: Clone + Copy + Ord> RangeSubset<RangeSet<T>> for Range<T> {
     fn is_subset(&self, other: &RangeSet<T>) -> bool {
         other.ranges.iter().all(|range| self.is_subset(range))
     }
