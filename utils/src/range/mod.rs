@@ -58,6 +58,13 @@ impl<T: Clone + Copy + Ord> RangeSet<T> {
         }
     }
 
+    /// Returns an iterator over the ranges in the set.
+    pub fn iter_ranges(&self) -> RangeIter<'_, T> {
+        RangeIter {
+            iter: self.ranges.iter(),
+        }
+    }
+
     /// Returns `true` if the set contains the given value.
     pub fn contains(&self, value: &T) -> bool {
         self.ranges.iter().any(|range| range.contains(value))
@@ -120,6 +127,23 @@ where
         }
 
         None
+    }
+}
+
+/// An iterator over the ranges in a `RangeSet`.
+pub struct RangeIter<'a, T> {
+    iter: std::slice::Iter<'a, Range<T>>,
+}
+
+impl<'a, T> Iterator for RangeIter<'a, T>
+where
+    T: Clone + Copy + Ord,
+    Range<T>: Iterator<Item = T>,
+{
+    type Item = Range<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().cloned()
     }
 }
 
