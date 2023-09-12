@@ -69,6 +69,16 @@ impl<T: Clone + Copy + Ord> RangeSet<T> {
     pub fn contains(&self, value: &T) -> bool {
         self.ranges.iter().any(|range| range.contains(value))
     }
+
+    /// Returns the minimum value in the set, or `None` if the set is empty.
+    pub fn min(&self) -> Option<T> {
+        self.ranges.first().map(|range| range.start)
+    }
+
+    /// Returns the maximum value in the set, or `None` if the set is empty.
+    pub fn max(&self) -> Option<T> {
+        self.ranges.last().map(|range| range.end)
+    }
 }
 
 impl<T: Clone + Copy + Ord> RangeSet<T>
