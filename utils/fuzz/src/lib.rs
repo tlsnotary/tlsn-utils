@@ -30,6 +30,11 @@ impl<'a> Arbitrary<'a> for SmallSet {
             ranges: set.into_inner(),
         })
     }
+
+    fn size_hint(_depth: usize) -> (usize, Option<usize>) {
+        // Maximum of 1 byte for `count` and 8 Range<u8> which are 2 bytes each.
+        (0, Some(1 + 8 * 2))
+    }
 }
 
 /// Asserts that the ranges of the given set are sorted, non-adjacent, non-intersecting, and non-empty.
