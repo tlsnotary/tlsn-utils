@@ -123,11 +123,13 @@ where
     Range<T>: ExactSizeIterator<Item = T>,
 {
     /// Returns the number of values in the set.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.ranges.iter().map(|range| range.len()).sum()
     }
 
     /// Returns `true` if the set is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -220,21 +222,25 @@ where
 
 pub trait RangeIntersects<Rhs> {
     /// Returns `true` if the range intersects with `other`.
+    #[must_use]
     fn intersects(&self, other: &Rhs) -> bool;
 }
 
 pub trait RangeDisjoint<Rhs> {
     /// Returns `true` if the range is disjoint with `other`.
+    #[must_use]
     fn is_disjoint(&self, other: &Rhs) -> bool;
 }
 
 pub trait RangeSuperset<Rhs> {
     /// Returns `true` if `self` is a superset of `other`.
+    #[must_use]
     fn is_superset(&self, other: &Rhs) -> bool;
 }
 
 pub trait RangeSubset<Rhs> {
     /// Returns `true` if `self` is a subset of `other`.
+    #[must_use]
     fn is_subset(&self, other: &Rhs) -> bool;
 }
 
@@ -242,6 +248,7 @@ pub trait RangeDifference<Rhs> {
     type Output;
 
     /// Returns the set difference of `self` and `other`.
+    #[must_use]
     fn difference(&self, other: &Rhs) -> Self::Output;
 }
 
@@ -249,6 +256,7 @@ pub trait RangeUnion<Rhs> {
     type Output;
 
     /// Returns the set union of `self` and `other`.
+    #[must_use]
     fn union(&self, other: &Rhs) -> Self::Output;
 }
 
