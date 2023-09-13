@@ -3,14 +3,51 @@ mod union;
 
 use std::ops::Range;
 
-/// A set of ranges.
+/// A set of values represented using ranges.
+///
+/// A `RangeSet` is similar to any other kind of set, such as `HashSet`, with the difference being that the
+/// values in the set are represented using ranges rather than storing each value individually.
+///
+/// # Invariants
+///
+/// `RangeSet` enforces the following invariants on the ranges it contains:
+///
+/// - The ranges are sorted.
+/// - The ranges are non-adjacent.
+/// - The ranges are non-intersecting.
+/// - The ranges are non-empty.
+///
+/// This is enforced in the constructor, and guaranteed to hold after applying any operation on a range or set.
+///
+/// # Examples
+///
+/// ```
+/// use utils::range::*;
+///
+/// let a = 10..20;
+///
+/// // Difference
+/// assert_eq!(a.difference(&(15..25)), RangeSet::from([10..15]));
+/// assert_eq!(a.difference(&(12..15)), RangeSet::from([(10..12), (15..20)]));
+///
+/// // Union
+/// assert_eq!(a.union(&(15..25)), RangeSet::from([10..25]));
+/// assert_eq!(a.union(&(0..0)), RangeSet::from([10..20]));
+///
+/// // Comparison
+/// assert!(a.is_superset(&(15..18)));
+/// assert!(a.is_subset(&(0..30)));
+/// assert!(a.intersects(&(15..25)));
+/// assert!(a.is_disjoint(&(0..10)));
+/// assert_eq!(a.clone(), RangeSet::from(a));
+/// ```
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(from = "Vec<Range<T>>"))]
 pub struct RangeSet<T: Clone + Copy + Ord> {
     /// The ranges of the set.
     ///
-    /// The ranges *MUST* be sorted, non-intersecting, and non-empty.
+    /// The ranges *MUST* be sorted, non-adjacent, non-intersecting, and non-empty.
     ranges: Vec<Range<T>>,
 }
 
@@ -105,6 +142,30 @@ impl<T: Clone + Copy + Ord> From<Range<T>> for RangeSet<T> {
         Self {
             ranges: Vec::from([range]),
         }
+    }
+}
+
+impl<const N: usize, T: Clone + Copy + Ord> From<[Range<T>; N]> for RangeSet<T> {
+    fn from(ranges: [Range<T>; N]) -> Self {
+        Self::new(&ranges)
+    }
+}
+
+impl<T: Clone + Copy + Ord> From<&[Range<T>]> for RangeSet<T> {
+    fn from(ranges: &[Range<T>]) -> Self {
+        Self::new(ranges)
+    }
+}
+
+impl<T: Clone + Copy + Ord> PartialEq<Range<T>> for RangeSet<T> {
+    fn eq(&self, other: &Range<T>) -> bool {
+        self.ranges.len() == 1 && self.ranges[0] == *other
+    }
+}
+
+impl<T: Clone + Copy + Ord> PartialEq<RangeSet<T>> for Range<T> {
+    fn eq(&self, other: &RangeSet<T>) -> bool {
+        other == self
     }
 }
 
@@ -243,12 +304,6 @@ impl<T: Clone + Copy + Ord> RangeSubset<RangeSet<T>> for Range<T> {
 #[allow(clippy::all)]
 mod tests {
     use super::*;
-
-    impl<const N: usize, T: Default + Copy + Ord> From<[Range<T>; N]> for RangeSet<T> {
-        fn from(value: [Range<T>; N]) -> Self {
-            RangeSet::new(&value)
-        }
-    }
 
     #[test]
     fn test_range_disjoint() {

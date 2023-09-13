@@ -87,10 +87,14 @@ impl<T: Clone + Copy + Ord> RangeDifference<Range<T>> for RangeSet<T> {
             }
             // If other is a subset of the current range
             else if other.is_subset(&ranges[i]) {
-                let mut new_range = ranges[i].clone();
-                new_range.start = other.end;
-                ranges[i].end = other.start;
-                ranges.insert(i + 1, new_range);
+                if ranges[i].start == other.start {
+                    ranges[i].start = other.end;
+                } else if ranges[i].end == other.end {
+                    ranges[i].end = other.start;
+                } else {
+                    ranges.insert(i + 1, other.end..ranges[i].end);
+                    ranges[i].end = other.start;
+                }
             } else {
                 // Trim end
                 if ranges[i].start < other.start {

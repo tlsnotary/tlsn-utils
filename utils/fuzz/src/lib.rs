@@ -31,3 +31,11 @@ impl<'a> Arbitrary<'a> for SmallSet {
         })
     }
 }
+
+/// Asserts that the ranges of the given set are sorted, non-adjacent, non-intersecting, and non-empty.
+pub fn assert_invariants(set: RangeSet<u8>) {
+    assert!(set.into_inner().windows(2).all(|w| w[0].start < w[1].start
+        && w[0].end < w[1].start
+        && w[0].start < w[0].end
+        && w[1].start < w[1].end));
+}

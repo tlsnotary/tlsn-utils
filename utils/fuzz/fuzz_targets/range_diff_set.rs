@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use libfuzzer_sys::fuzz_target;
 
-use tlsn_utils_fuzz::SmallSet;
+use tlsn_utils_fuzz::{assert_invariants, SmallSet};
 
 use utils::range::*;
 
@@ -23,4 +23,6 @@ fuzz_target!(|r: (Range<u8>, SmallSet)| {
     let actual_values = diff.iter().collect::<Vec<_>>();
 
     assert_eq!(expected_values, actual_values);
+
+    assert_invariants(diff);
 });
