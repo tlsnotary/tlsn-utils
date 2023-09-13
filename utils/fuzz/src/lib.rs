@@ -33,7 +33,7 @@ impl<'a> Arbitrary<'a> for SmallSet {
 
     fn size_hint(_depth: usize) -> (usize, Option<usize>) {
         // Maximum of 1 byte for `count` and 8 Range<u8> which are 2 bytes each.
-        (0, Some(1 + 8 * 2))
+        (1, Some(1 + 8 * 2))
     }
 }
 
