@@ -4,7 +4,7 @@ use crate::range::{
     RangeDifference, RangeDisjoint, RangeSet, RangeSubset, RangeSuperset, RangeUnion,
 };
 
-impl<T: Clone + Copy + Ord> RangeDifference<Range<T>> for Range<T> {
+impl<T: Copy + Ord> RangeDifference<Range<T>> for Range<T> {
     type Output = RangeSet<T>;
 
     fn difference(&self, other: &Range<T>) -> Self::Output {
@@ -39,7 +39,7 @@ impl<T: Clone + Copy + Ord> RangeDifference<Range<T>> for Range<T> {
     }
 }
 
-impl<T: Clone + Copy + Ord> RangeDifference<RangeSet<T>> for Range<T>
+impl<T: Copy + Ord> RangeDifference<RangeSet<T>> for Range<T>
 where
     RangeSet<T>: RangeDifference<Range<T>, Output = RangeSet<T>>,
 {
@@ -60,7 +60,7 @@ where
     }
 }
 
-impl<T: Clone + Copy + Ord> RangeDifference<Range<T>> for RangeSet<T> {
+impl<T: Copy + Ord> RangeDifference<Range<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn difference(&self, other: &Range<T>) -> Self::Output {
@@ -114,7 +114,7 @@ impl<T: Clone + Copy + Ord> RangeDifference<Range<T>> for RangeSet<T> {
     }
 }
 
-impl<T: Clone + Copy + Ord> RangeDifference<RangeSet<T>> for RangeSet<T> {
+impl<T: Copy + Ord> RangeDifference<RangeSet<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn difference(&self, other: &RangeSet<T>) -> Self::Output {
