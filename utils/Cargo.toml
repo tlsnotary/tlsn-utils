@@ -3,11 +3,17 @@ name = "tlsn-utils"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["serde"]
+serde = ["dep:serde"]
+
 [lib]
 name = "utils"
 
 [dependencies]
+serde = { workspace = true, optional = true, features = ["derive"] }
 
 [dev-dependencies]
 rstest = "0.12"
 rand = { workspace = true }
+itertools = "0.11.0"
