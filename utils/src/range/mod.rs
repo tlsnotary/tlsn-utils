@@ -336,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn test_range_subset() {
+    fn test_range_superset() {
         let a = 10..20;
 
         // rightward
@@ -358,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn test_range_superset() {
+    fn test_range_subset() {
         let a = 10..20;
 
         // rightward
