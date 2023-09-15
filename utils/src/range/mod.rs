@@ -37,7 +37,6 @@ use std::ops::Range;
 /// // Comparison
 /// assert!(a.is_superset(&(15..18)));
 /// assert!(a.is_subset(&(0..30)));
-/// assert!(a.intersects(&(15..25)));
 /// assert!(a.is_disjoint(&(0..10)));
 /// assert_eq!(a.clone(), RangeSet::from(a));
 /// ```
@@ -220,12 +219,6 @@ where
     }
 }
 
-pub trait RangeIntersects<Rhs> {
-    /// Returns `true` if the range intersects with `other`.
-    #[must_use]
-    fn intersects(&self, other: &Rhs) -> bool;
-}
-
 pub trait RangeDisjoint<Rhs> {
     /// Returns `true` if the range is disjoint with `other`.
     #[must_use]
@@ -258,18 +251,6 @@ pub trait RangeUnion<Rhs> {
     /// Returns the set union of `self` and `other`.
     #[must_use]
     fn union(&self, other: &Rhs) -> Self::Output;
-}
-
-impl<T: Copy + Ord> RangeIntersects<Range<T>> for Range<T> {
-    fn intersects(&self, other: &Range<T>) -> bool {
-        self.start < other.end && self.end > other.start
-    }
-}
-
-impl<T: Copy + Ord> RangeIntersects<RangeSet<T>> for Range<T> {
-    fn intersects(&self, other: &RangeSet<T>) -> bool {
-        other.ranges.iter().any(|range| self.intersects(range))
-    }
 }
 
 impl<T: Copy + Ord> RangeDisjoint<Range<T>> for Range<T> {
