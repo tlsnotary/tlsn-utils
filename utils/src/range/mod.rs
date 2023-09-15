@@ -304,7 +304,7 @@ impl<T: Copy + Ord> RangeSubset<Range<T>> for Range<T> {
 
 impl<T: Copy + Ord> RangeSubset<RangeSet<T>> for Range<T> {
     fn is_subset(&self, other: &RangeSet<T>) -> bool {
-        other.ranges.iter().all(|range| self.is_subset(range))
+        other.ranges.iter().any(|range| self.is_subset(range))
     }
 }
 
