@@ -265,6 +265,18 @@ impl<T: Copy + Ord> RangeDisjoint<RangeSet<T>> for Range<T> {
     }
 }
 
+impl<T: Copy + Ord> RangeDisjoint<RangeSet<T>> for RangeSet<T> {
+    fn is_disjoint(&self, other: &RangeSet<T>) -> bool {
+        self.ranges.iter().all(|range| range.is_disjoint(other))
+    }
+}
+
+impl<T: Copy + Ord> RangeDisjoint<Range<T>> for RangeSet<T> {
+    fn is_disjoint(&self, other: &Range<T>) -> bool {
+        other.is_disjoint(self)
+    }
+}
+
 impl<T: Copy + Ord> RangeSuperset<Range<T>> for Range<T> {
     fn is_superset(&self, other: &Range<T>) -> bool {
         self.start <= other.start && self.end >= other.end
