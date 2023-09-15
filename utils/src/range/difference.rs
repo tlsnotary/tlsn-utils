@@ -220,6 +220,12 @@ mod tests {
         // superset
         assert_eq!(a.difference(&(5..25)), RangeSet::default());
 
+        // subset
+        assert_eq!(
+            a.difference(&(14..16)),
+            RangeSet::from([(10..14), (16..20)])
+        );
+
         // equal
         assert_eq!(a.difference(&(10..20)), RangeSet::default());
     }
