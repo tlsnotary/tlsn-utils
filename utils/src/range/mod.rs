@@ -42,7 +42,10 @@ use std::ops::Range;
 /// ```
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(from = "Vec<Range<T>>"))]
+#[cfg_attr(
+    feature = "serde",
+    serde(from = "Vec<Range<T>>", into = "Vec<Range<T>>")
+)]
 pub struct RangeSet<T: Copy + Ord> {
     /// The ranges of the set.
     ///
@@ -53,6 +56,12 @@ pub struct RangeSet<T: Copy + Ord> {
 impl<T: Copy + Ord> From<Vec<Range<T>>> for RangeSet<T> {
     fn from(ranges: Vec<Range<T>>) -> Self {
         Self::new(&ranges)
+    }
+}
+
+impl<T: Copy + Ord> From<RangeSet<T>> for Vec<Range<T>> {
+    fn from(ranges: RangeSet<T>) -> Self {
+        ranges.into_inner()
     }
 }
 
