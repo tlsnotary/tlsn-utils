@@ -37,13 +37,15 @@ use std::ops::Range;
 /// // Comparison
 /// assert!(a.is_superset(&(15..18)));
 /// assert!(a.is_subset(&(0..30)));
-/// assert!(a.intersects(&(15..25)));
 /// assert!(a.is_disjoint(&(0..10)));
 /// assert_eq!(a.clone(), RangeSet::from(a));
 /// ```
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(from = "Vec<Range<T>>"))]
+#[cfg_attr(
+    feature = "serde",
+    serde(from = "Vec<Range<T>>", into = "Vec<Range<T>>")
+)]
 pub struct RangeSet<T: Copy + Ord> {
     /// The ranges of the set.
     ///
@@ -54,6 +56,12 @@ pub struct RangeSet<T: Copy + Ord> {
 impl<T: Copy + Ord> From<Vec<Range<T>>> for RangeSet<T> {
     fn from(ranges: Vec<Range<T>>) -> Self {
         Self::new(&ranges)
+    }
+}
+
+impl<T: Copy + Ord> From<RangeSet<T>> for Vec<Range<T>> {
+    fn from(ranges: RangeSet<T>) -> Self {
+        ranges.into_inner()
     }
 }
 
@@ -220,12 +228,6 @@ where
     }
 }
 
-pub trait RangeIntersects<Rhs> {
-    /// Returns `true` if the range intersects with `other`.
-    #[must_use]
-    fn intersects(&self, other: &Rhs) -> bool;
-}
-
 pub trait RangeDisjoint<Rhs> {
     /// Returns `true` if the range is disjoint with `other`.
     #[must_use]
@@ -260,18 +262,6 @@ pub trait RangeUnion<Rhs> {
     fn union(&self, other: &Rhs) -> Self::Output;
 }
 
-impl<T: Copy + Ord> RangeIntersects<Range<T>> for Range<T> {
-    fn intersects(&self, other: &Range<T>) -> bool {
-        self.start < other.end && self.end > other.start
-    }
-}
-
-impl<T: Copy + Ord> RangeIntersects<RangeSet<T>> for Range<T> {
-    fn intersects(&self, other: &RangeSet<T>) -> bool {
-        other.ranges.iter().any(|range| self.intersects(range))
-    }
-}
-
 impl<T: Copy + Ord> RangeDisjoint<Range<T>> for Range<T> {
     fn is_disjoint(&self, other: &Range<T>) -> bool {
         self.start >= other.end || self.end <= other.start
@@ -281,6 +271,18 @@ impl<T: Copy + Ord> RangeDisjoint<Range<T>> for Range<T> {
 impl<T: Copy + Ord> RangeDisjoint<RangeSet<T>> for Range<T> {
     fn is_disjoint(&self, other: &RangeSet<T>) -> bool {
         other.ranges.iter().all(|range| self.is_disjoint(range))
+    }
+}
+
+impl<T: Copy + Ord> RangeDisjoint<RangeSet<T>> for RangeSet<T> {
+    fn is_disjoint(&self, other: &RangeSet<T>) -> bool {
+        self.ranges.iter().all(|range| range.is_disjoint(other))
+    }
+}
+
+impl<T: Copy + Ord> RangeDisjoint<Range<T>> for RangeSet<T> {
+    fn is_disjoint(&self, other: &Range<T>) -> bool {
+        other.is_disjoint(self)
     }
 }
 
@@ -304,7 +306,7 @@ impl<T: Copy + Ord> RangeSubset<Range<T>> for Range<T> {
 
 impl<T: Copy + Ord> RangeSubset<RangeSet<T>> for Range<T> {
     fn is_subset(&self, other: &RangeSet<T>) -> bool {
-        other.ranges.iter().all(|range| self.is_subset(range))
+        other.ranges.iter().any(|range| self.is_subset(range))
     }
 }
 
@@ -336,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn test_range_subset() {
+    fn test_range_superset() {
         let a = 10..20;
 
         // rightward
@@ -358,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn test_range_superset() {
+    fn test_range_subset() {
         let a = 10..20;
 
         // rightward

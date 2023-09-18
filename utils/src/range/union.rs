@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::range::{RangeDisjoint, RangeSet, RangeSubset, RangeSuperset, RangeUnion};
+use crate::range::{RangeDisjoint, RangeSet, RangeSuperset, RangeUnion};
 
 impl<T: Copy + Ord> RangeUnion<Range<T>> for Range<T> {
     type Output = RangeSet<T>;
@@ -12,7 +12,7 @@ impl<T: Copy + Ord> RangeUnion<Range<T>> for Range<T> {
         }
 
         // If other is a superset, return other.
-        if other.is_subset(self) {
+        if other.is_superset(self) {
             return RangeSet::from(other.clone());
         }
 
@@ -53,7 +53,7 @@ impl<T: Copy + Ord> RangeUnion<RangeSet<T>> for Range<T> {
 
                 return RangeSet { ranges };
             }
-            // If the new_range overlaps with the current range
+            // If the new_range overlaps or is adjacent with the current range
             else if new_range.start <= ranges[i].end {
                 // Expand new_range to include the current range
                 new_range.start = new_range.start.min(ranges[i].start);

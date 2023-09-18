@@ -14,8 +14,8 @@ impl<T: Copy + Ord> RangeDifference<Range<T>> for Range<T> {
             return RangeSet::from(self.clone());
         }
 
-        // If the two are equal, or if other is a superset of self, return an empty set.
-        if self == other || (other.start <= self.start && other.end >= self.end) {
+        // If other is a superset of self, return an empty set.
+        if other.is_superset(self) {
             return RangeSet::default();
         }
 
@@ -26,12 +26,11 @@ impl<T: Copy + Ord> RangeDifference<Range<T>> for Range<T> {
 
         let mut set = RangeSet::default();
 
-        if self.start < other.start && self.end > other.end {
+        if self.start < other.start {
             set.ranges.push(self.start..other.start);
-            set.ranges.push(other.end..self.end);
-        } else if self.start < other.start {
-            set.ranges.push(self.start..other.start);
-        } else {
+        }
+
+        if self.end > other.end {
             set.ranges.push(other.end..self.end);
         }
 
@@ -219,6 +218,12 @@ mod tests {
 
         // superset
         assert_eq!(a.difference(&(5..25)), RangeSet::default());
+
+        // subset
+        assert_eq!(
+            a.difference(&(14..16)),
+            RangeSet::from([(10..14), (16..20)])
+        );
 
         // equal
         assert_eq!(a.difference(&(10..20)), RangeSet::default());
