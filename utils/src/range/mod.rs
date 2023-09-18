@@ -228,6 +228,26 @@ where
     }
 }
 
+impl<'a, T> ExactSizeIterator for RangeIter<'a, T>
+where
+    T: Copy + Ord,
+    Range<T>: Iterator<Item = T>,
+{
+    fn len(&self) -> usize {
+        self.iter.len()
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for RangeIter<'a, T>
+where
+    T: Copy + Ord,
+    Range<T>: Iterator<Item = T>,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.iter.next_back().cloned()
+    }
+}
+
 pub trait RangeDisjoint<Rhs> {
     /// Returns `true` if the range is disjoint with `other`.
     #[must_use]
@@ -388,5 +408,25 @@ mod tests {
         let values = a.iter().collect::<Vec<_>>();
         let expected_values = (10..20).chain(30..40).chain(50..60).collect::<Vec<_>>();
         assert_eq!(values, expected_values);
+    }
+
+    #[test]
+    fn test_range_iter() {
+        let a = RangeSet::from([(10..20), (30..40), (50..60)]);
+
+        let values = a.iter_ranges().collect::<Vec<_>>();
+        let expected_values = vec![10..20, 30..40, 50..60];
+
+        assert_eq!(values, expected_values);
+
+        let reversed_values = a.iter_ranges().rev().collect::<Vec<_>>();
+        let expected_reversed_values = vec![50..60, 30..40, 10..20];
+
+        assert_eq!(reversed_values, expected_reversed_values);
+
+        let mut iter = a.iter_ranges();
+        assert_eq!(iter.len(), 3);
+        _ = iter.next();
+        assert_eq!(iter.len(), 2);
     }
 }
