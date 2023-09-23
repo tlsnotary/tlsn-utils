@@ -21,6 +21,11 @@ where
         Self(mux)
     }
 
+    /// Claim the inner type that implements MuxStream
+    pub fn into_inner(self) -> M {
+        self.0
+    }
+
     /// Attaches a bincode codec to the provided stream
     pub fn attach_codec<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static, T>(
         &self,
