@@ -1,5 +1,8 @@
 mod difference;
+mod index;
 mod union;
+
+pub use index::IndexRanges;
 
 use std::ops::Range;
 
