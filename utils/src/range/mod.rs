@@ -113,6 +113,11 @@ impl<T: Copy + Ord> RangeSet<T> {
         }
     }
 
+    /// Returns the number of ranges in the set.
+    pub fn len_ranges(&self) -> usize {
+        self.ranges.len()
+    }
+
     /// Returns `true` if the set contains the given value.
     pub fn contains(&self, value: &T) -> bool {
         self.ranges.iter().any(|range| range.contains(value))
@@ -143,6 +148,20 @@ where
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+impl<T: Copy + Ord> TryFrom<RangeSet<T>> for Range<T> {
+    type Error = RangeSet<T>;
+
+    /// Attempts to convert a `RangeSet` into a single `Range`, returning the set if it
+    /// does not contain exactly one range.
+    fn try_from(set: RangeSet<T>) -> Result<Self, Self::Error> {
+        if set.len_ranges() == 1 {
+            Ok(set.ranges.into_iter().next().unwrap())
+        } else {
+            Err(set)
+        }
     }
 }
 
