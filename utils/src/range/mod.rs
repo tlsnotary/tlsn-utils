@@ -176,9 +176,21 @@ impl<T: Copy + Ord> PartialEq<Range<T>> for RangeSet<T> {
     }
 }
 
+impl<T: Copy + Ord> PartialEq<Range<T>> for &RangeSet<T> {
+    fn eq(&self, other: &Range<T>) -> bool {
+        *self == other
+    }
+}
+
 impl<T: Copy + Ord> PartialEq<RangeSet<T>> for Range<T> {
     fn eq(&self, other: &RangeSet<T>) -> bool {
         other == self
+    }
+}
+
+impl<T: Copy + Ord> PartialEq<RangeSet<T>> for &Range<T> {
+    fn eq(&self, other: &RangeSet<T>) -> bool {
+        other == *self
     }
 }
 
