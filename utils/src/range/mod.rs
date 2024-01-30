@@ -4,7 +4,7 @@ mod union;
 
 pub use index::IndexRanges;
 
-use std::ops::Range;
+use std::ops::{Add, Range, Sub};
 
 /// A set of values represented using ranges.
 ///
@@ -160,6 +160,34 @@ impl<T: Copy + Ord> RangeSet<T> {
         Self {
             ranges: split_ranges,
         }
+    }
+}
+
+impl<T: Copy + Ord + Sub<Output = T>> RangeSet<T> {
+    /// Shifts every range in the set to the left by the provided offset.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the shift causes an underflow.
+    pub fn shift_left(&mut self, offset: &T) {
+        self.ranges.iter_mut().for_each(|range| {
+            range.start = range.start - *offset;
+            range.end = range.end - *offset;
+        });
+    }
+}
+
+impl<T: Copy + Ord + Add<Output = T>> RangeSet<T> {
+    /// Shifts every range in the set to the right by the provided offset.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the the shift causes an overflow.
+    pub fn shift_right(&mut self, offset: &T) {
+        self.ranges.iter_mut().for_each(|range| {
+            range.start = range.start + *offset;
+            range.end = range.end + *offset;
+        });
     }
 }
 
@@ -508,5 +536,21 @@ mod tests {
     #[should_panic = "`at` is in the set"]
     fn test_range_set_split_off_panic_not_in_set() {
         RangeSet::from([0..1]).split_off(&1);
+    }
+
+    #[test]
+    fn test_range_set_shift_left() {
+        let mut a = RangeSet::from([(1..5), (6..10)]);
+        a.shift_left(&1);
+
+        assert_eq!(a, RangeSet::from([(0..4), (5..9)]));
+    }
+
+    #[test]
+    fn test_range_set_shift_right() {
+        let mut a = RangeSet::from([(0..4), (5..9)]);
+        a.shift_right(&1);
+
+        assert_eq!(a, RangeSet::from([(1..5), (6..10)]));
     }
 }
