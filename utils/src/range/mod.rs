@@ -123,9 +123,23 @@ impl<T: Copy + Ord> RangeSet<T> {
         self.ranges.first().map(|range| range.start)
     }
 
+    /// Returns the end of right-most range in the set, or `None` if the set is empty.
+    ///
+    /// # Note
+    ///
+    /// This is the *non-inclusive* bound of the right-most range. See `RangeSet::max` for the
+    /// maximum value in the set.
+    pub fn end(&self) -> Option<T> {
+        self.ranges.last().map(|range| range.end)
+    }
+}
+
+impl<T: Copy + Ord + Identity<T> + Sub<Output = T>> RangeSet<T> {
     /// Returns the maximum value in the set, or `None` if the set is empty.
     pub fn max(&self) -> Option<T> {
-        self.ranges.last().map(|range| range.end)
+        // This should never underflow because of the invariant that a set
+        // never contains empty ranges.
+        self.ranges.last().map(|range| range.end - T::IDENTITY)
     }
 
     /// Splits the set into two at the provided value.
@@ -359,6 +373,26 @@ pub trait RangeUnion<Rhs> {
     fn union(&self, other: &Rhs) -> Self::Output;
 }
 
+/// A type with an identity value.
+// std::iter::Step is nightly-only, and we want users to be able to use `RangeSet::max` for custom
+// types, so exposing this trait is a lesser evil.
+pub trait Identity<T> {
+    /// The identity value for the type `T`.
+    const IDENTITY: T;
+}
+
+macro_rules! impl_identity {
+    ($($ty:ty),+) => {
+        $(
+            impl Identity<$ty> for $ty {
+                const IDENTITY: $ty = 1;
+            }
+        )*
+    };
+}
+
+impl_identity!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
+
 impl<T: Copy + Ord> RangeDisjoint<Range<T>> for Range<T> {
     fn is_disjoint(&self, other: &Range<T>) -> bool {
         self.start >= other.end || self.end <= other.start
@@ -552,5 +586,13 @@ mod tests {
         a.shift_right(&1);
 
         assert_eq!(a, RangeSet::from([(1..5), (6..10)]));
+    }
+
+    #[test]
+    fn test_range_set_max() {
+        assert!(RangeSet::<u8>::default().max().is_none());
+        assert_eq!(RangeSet::from([0..1]).max(), Some(0));
+        assert_eq!(RangeSet::from([0..2]).max(), Some(1));
+        assert_eq!(RangeSet::from([(0..5), (6..10)]).max(), Some(9));
     }
 }
