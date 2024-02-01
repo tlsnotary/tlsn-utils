@@ -370,6 +370,12 @@ pub trait ToRangeSet<T: Copy + Ord> {
     fn to_range_set(&self) -> RangeSet<T>;
 }
 
+impl<T: Copy + Ord> ToRangeSet<T> for RangeSet<T> {
+    fn to_range_set(&self) -> RangeSet<T> {
+        self.clone()
+    }
+}
+
 impl<T: Copy + Ord> ToRangeSet<T> for Range<T> {
     fn to_range_set(&self) -> RangeSet<T> {
         RangeSet::from(self.clone())
