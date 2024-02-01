@@ -47,9 +47,13 @@ use std::ops::{Add, Range, Sub};
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
-    serde(from = "Vec<Range<T>>", into = "Vec<Range<T>>")
+    serde(
+        bound = "for<'a> T: serde::Serialize + serde::de::Deserialize<'a> + Copy + Ord",
+        from = "Vec<Range<T>>",
+        into = "Vec<Range<T>>"
+    )
 )]
-pub struct RangeSet<T: Copy + Ord> {
+pub struct RangeSet<T> {
     /// The ranges of the set.
     ///
     /// The ranges *MUST* be sorted, non-adjacent, non-intersecting, and non-empty.
@@ -62,7 +66,7 @@ impl<T: Copy + Ord> From<Vec<Range<T>>> for RangeSet<T> {
     }
 }
 
-impl<T: Copy + Ord> From<RangeSet<T>> for Vec<Range<T>> {
+impl<T> From<RangeSet<T>> for Vec<Range<T>> {
     fn from(ranges: RangeSet<T>) -> Self {
         ranges.into_inner()
     }
@@ -73,6 +77,18 @@ impl<T: Copy + Ord> Default for RangeSet<T> {
         Self {
             ranges: Default::default(),
         }
+    }
+}
+
+impl<T> RangeSet<T> {
+    /// Returns the ranges of the set.
+    pub fn into_inner(self) -> Vec<Range<T>> {
+        self.ranges
+    }
+
+    /// Returns the number of ranges in the set.
+    pub fn len_ranges(&self) -> usize {
+        self.ranges.len()
     }
 }
 
@@ -93,11 +109,6 @@ impl<T: Copy + Ord> RangeSet<T> {
         set
     }
 
-    /// Returns the ranges of the set.
-    pub fn into_inner(self) -> Vec<Range<T>> {
-        self.ranges
-    }
-
     /// Returns an iterator over the values in the set.
     pub fn iter(&self) -> RangeSetIter<'_, T> {
         RangeSetIter {
@@ -111,11 +122,6 @@ impl<T: Copy + Ord> RangeSet<T> {
         RangeIter {
             iter: self.ranges.iter(),
         }
-    }
-
-    /// Returns the number of ranges in the set.
-    pub fn len_ranges(&self) -> usize {
-        self.ranges.len()
     }
 
     /// Returns `true` if the set contains the given value.
