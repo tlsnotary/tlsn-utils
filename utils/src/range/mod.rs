@@ -364,6 +364,18 @@ where
     }
 }
 
+/// A type which has a corresponding range set.
+pub trait ToRangeSet<T: Copy + Ord> {
+    /// Returns a corresponding range set.
+    fn to_range_set(&self) -> RangeSet<T>;
+}
+
+impl<T: Copy + Ord> ToRangeSet<T> for Range<T> {
+    fn to_range_set(&self) -> RangeSet<T> {
+        RangeSet::from(self.clone())
+    }
+}
+
 pub trait RangeDisjoint<Rhs> {
     /// Returns `true` if the range is disjoint with `other`.
     #[must_use]
