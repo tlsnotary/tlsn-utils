@@ -145,12 +145,14 @@ impl<T: Copy + Ord> RangeSet<T> {
     }
 }
 
-impl<T: Copy + Ord + Identity<T> + Sub<Output = T>> RangeSet<T> {
+impl<T: Copy + Ord + Step + Sub<Output = T>> RangeSet<T> {
     /// Returns the maximum value in the set, or `None` if the set is empty.
     pub fn max(&self) -> Option<T> {
         // This should never underflow because of the invariant that a set
         // never contains empty ranges.
-        self.ranges.last().map(|range| range.end - T::IDENTITY)
+        self.ranges
+            .last()
+            .map(|range| Step::backward(range.end, 1).expect("set is not empty"))
     }
 
     /// Splits the set into two at the provided value.
@@ -416,19 +418,28 @@ pub trait RangeUnion<Rhs> {
     fn union(&self, other: &Rhs) -> Self::Output;
 }
 
-/// A type with an identity value.
-// std::iter::Step is nightly-only, and we want users to be able to use `RangeSet::max` for custom
-// types, so exposing this trait is a lesser evil.
-pub trait Identity<T> {
-    /// The identity value for the type `T`.
-    const IDENTITY: T;
+/// A type which successor and predecessor operations can be performed on.
+///
+/// Similar to `std::iter::Step`, but not nightly-only.
+pub trait Step: Sized {
+    /// Step forwards by `count` elements.
+    fn forward(start: Self, count: usize) -> Option<Self>;
+
+    /// Step backwards by `count` elements.
+    fn backward(start: Self, count: usize) -> Option<Self>;
 }
 
 macro_rules! impl_identity {
     ($($ty:ty),+) => {
         $(
-            impl Identity<$ty> for $ty {
-                const IDENTITY: $ty = 1;
+            impl Step for $ty {
+                fn forward(start: Self, count: usize) -> Option<Self> {
+                    start.checked_add(count as Self)
+                }
+
+                fn backward(start: Self, count: usize) -> Option<Self> {
+                    start.checked_sub(count as Self)
+                }
             }
         )*
     };
