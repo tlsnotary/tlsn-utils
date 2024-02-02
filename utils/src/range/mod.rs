@@ -429,7 +429,7 @@ pub trait Step: Sized {
     fn backward(start: Self, count: usize) -> Option<Self>;
 }
 
-macro_rules! impl_identity {
+macro_rules! impl_step {
     ($($ty:ty),+) => {
         $(
             impl Step for $ty {
@@ -445,7 +445,7 @@ macro_rules! impl_identity {
     };
 }
 
-impl_identity!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
+impl_step!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
 
 impl<T: Copy + Ord> RangeDisjoint<Range<T>> for Range<T> {
     fn is_disjoint(&self, other: &Range<T>) -> bool {
