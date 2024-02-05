@@ -373,6 +373,7 @@ impl Spanned for Body {
 /// An HTTP request or response body content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum BodyContent {
     /// Body with an `application/json` content type.
     Json(JsonValue),
