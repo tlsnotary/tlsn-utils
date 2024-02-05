@@ -7,8 +7,8 @@ use bytes::Bytes;
 
 pub use span::{parse_request, parse_response};
 pub use types::{
-    Body, Code, Header, HeaderName, HeaderValue, Method, Reason, Request, RequestLine, Response,
-    Status, Target,
+    Body, BodyContent, Code, Header, HeaderName, HeaderValue, Method, Reason, Request, RequestLine,
+    Response, Status, Target,
 };
 
 use crate::ParseError;
