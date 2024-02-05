@@ -422,10 +422,10 @@ pub trait RangeUnion<Rhs> {
 ///
 /// Similar to `std::iter::Step`, but not nightly-only.
 pub trait Step: Sized {
-    /// Step forwards by `count` elements.
+    /// Steps forwards by `count` elements.
     fn forward(start: Self, count: usize) -> Option<Self>;
 
-    /// Step backwards by `count` elements.
+    /// Steps backwards by `count` elements.
     fn backward(start: Self, count: usize) -> Option<Self>;
 }
 
