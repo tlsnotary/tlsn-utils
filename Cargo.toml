@@ -1,7 +1,11 @@
 [workspace]
-members = ["utils", "utils-aio"]
+members = ["utils", "utils-aio", "spansy"]
 
 [workspace.dependencies]
+tlsn-utils = { path = "utils" }
+tlsn-utils-aio = { path = "utils-aio" }
+spansy = { path = "spansy" }
+
 rand = "0.8"
 thiserror = "1"
 async-trait = "0.1"
