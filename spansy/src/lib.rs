@@ -169,6 +169,16 @@ impl Span<str> {
     }
 }
 
+impl AsRef<Span<[u8]>> for Span<str> {
+    fn as_ref(&self) -> &Span<[u8]> {
+        // # Safety
+        // Span<str> can be safely converted to Span<[u8]> because they have
+        // an identical layout and only differ in the phantom type parameter
+        // which is a ZST.
+        unsafe { &*(self as *const Span<str> as *const Span<[u8]>) }
+    }
+}
+
 impl AsRef<str> for Span<str> {
     fn as_ref(&self) -> &str {
         // # Safety
