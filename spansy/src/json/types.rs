@@ -1,6 +1,6 @@
 use std::ops::{Index, Range};
 
-use utils::range::{RangeDifference, RangeSet};
+use utils::range::{RangeDifference, RangeSet, ToRangeSet};
 
 use crate::{Span, Spanned};
 
@@ -58,19 +58,6 @@ impl JsonValue {
     }
 }
 
-impl Spanned<str> for JsonValue {
-    fn span(&self) -> &Span<str> {
-        match self {
-            JsonValue::Null(v) => v.span(),
-            JsonValue::Bool(v) => v.span(),
-            JsonValue::Number(v) => v.span(),
-            JsonValue::String(v) => v.span(),
-            JsonValue::Array(v) => v.span(),
-            JsonValue::Object(v) => v.span(),
-        }
-    }
-}
-
 impl JsonValue {
     /// Get a reference to the value using the given path.
     ///
@@ -95,6 +82,109 @@ impl JsonValue {
             JsonValue::Array(v) => v.get(path),
             JsonValue::Object(v) => v.get(path),
         }
+    }
+}
+
+impl Spanned<str> for JsonValue {
+    fn span(&self) -> &Span<str> {
+        match self {
+            JsonValue::Null(v) => v.span(),
+            JsonValue::Bool(v) => v.span(),
+            JsonValue::Number(v) => v.span(),
+            JsonValue::String(v) => v.span(),
+            JsonValue::Array(v) => v.span(),
+            JsonValue::Object(v) => v.span(),
+        }
+    }
+}
+
+impl AsRef<str> for JsonValue {
+    fn as_ref(&self) -> &str {
+        match self {
+            JsonValue::Null(v) => v.as_ref(),
+            JsonValue::Bool(v) => v.as_ref(),
+            JsonValue::Number(v) => v.as_ref(),
+            JsonValue::String(v) => v.as_ref(),
+            JsonValue::Array(v) => v.as_ref(),
+            JsonValue::Object(v) => v.as_ref(),
+        }
+    }
+}
+
+impl AsRef<[u8]> for JsonValue {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            JsonValue::Null(v) => v.as_ref(),
+            JsonValue::Bool(v) => v.as_ref(),
+            JsonValue::Number(v) => v.as_ref(),
+            JsonValue::String(v) => v.as_ref(),
+            JsonValue::Array(v) => v.as_ref(),
+            JsonValue::Object(v) => v.as_ref(),
+        }
+    }
+}
+
+impl AsRef<RangeSet<usize>> for JsonValue {
+    fn as_ref(&self) -> &RangeSet<usize> {
+        match self {
+            JsonValue::Null(v) => v.as_ref(),
+            JsonValue::Bool(v) => v.as_ref(),
+            JsonValue::Number(v) => v.as_ref(),
+            JsonValue::String(v) => v.as_ref(),
+            JsonValue::Array(v) => v.as_ref(),
+            JsonValue::Object(v) => v.as_ref(),
+        }
+    }
+}
+
+impl ToRangeSet<usize> for JsonValue {
+    fn to_range_set(&self) -> RangeSet<usize> {
+        match self {
+            JsonValue::Null(v) => v.to_range_set(),
+            JsonValue::Bool(v) => v.to_range_set(),
+            JsonValue::Number(v) => v.to_range_set(),
+            JsonValue::String(v) => v.to_range_set(),
+            JsonValue::Array(v) => v.to_range_set(),
+            JsonValue::Object(v) => v.to_range_set(),
+        }
+    }
+}
+
+impl PartialEq<str> for JsonValue {
+    fn eq(&self, other: &str) -> bool {
+        match self {
+            JsonValue::Null(v) => v == other,
+            JsonValue::Bool(v) => v == other,
+            JsonValue::Number(v) => v == other,
+            JsonValue::String(v) => v == other,
+            JsonValue::Array(v) => v == other,
+            JsonValue::Object(v) => v == other,
+        }
+    }
+}
+
+impl PartialEq<JsonValue> for str {
+    fn eq(&self, other: &JsonValue) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<&str> for JsonValue {
+    fn eq(&self, other: &&str) -> bool {
+        match self {
+            JsonValue::Null(v) => v == other,
+            JsonValue::Bool(v) => v == other,
+            JsonValue::Number(v) => v == other,
+            JsonValue::String(v) => v == other,
+            JsonValue::Array(v) => v == other,
+            JsonValue::Object(v) => v == other,
+        }
+    }
+}
+
+impl PartialEq<JsonValue> for &str {
+    fn eq(&self, other: &JsonValue) -> bool {
+        other == self
     }
 }
 
@@ -266,6 +356,30 @@ macro_rules! impl_type {
             }
         }
 
+        impl AsRef<str> for $ty {
+            fn as_ref(&self) -> &str {
+                self.$span.as_ref()
+            }
+        }
+
+        impl AsRef<[u8]> for $ty {
+            fn as_ref(&self) -> &[u8] {
+                self.$span.as_ref()
+            }
+        }
+
+        impl AsRef<RangeSet<usize>> for $ty {
+            fn as_ref(&self) -> &RangeSet<usize> {
+                &self.$span.indices
+            }
+        }
+
+        impl ToRangeSet<usize> for $ty {
+            fn to_range_set(&self) -> RangeSet<usize> {
+                self.$span.indices.clone()
+            }
+        }
+
         impl PartialEq<str> for $ty {
             fn eq(&self, other: &str) -> bool {
                 self.$span == other
@@ -339,7 +453,7 @@ mod tests {
 
         let value = parse_str(src).unwrap();
 
-        assert_eq!(value.get("foo").unwrap().span(), "bar");
+        assert_eq!(value.get("foo").unwrap(), "bar");
     }
 
     #[test]
@@ -348,7 +462,7 @@ mod tests {
 
         let value = parse_str(src).unwrap();
 
-        assert_eq!(value.get("foo.1").unwrap().span(), "14");
+        assert_eq!(value.get("foo.1").unwrap(), "14");
     }
 
     #[test]
@@ -357,7 +471,7 @@ mod tests {
 
         let value = parse_str(src).unwrap();
 
-        assert_eq!(value.get("foo.bar.1").unwrap().span(), "14");
+        assert_eq!(value.get("foo.bar.1").unwrap(), "14");
     }
 
     #[test]
