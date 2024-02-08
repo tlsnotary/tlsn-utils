@@ -229,7 +229,9 @@ pub struct Number(pub(crate) Span<str>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-/// A string value.
+/// A JSON string value.
+///
+/// This span does not capture the quotation marks around the string.
 pub struct String(pub(crate) Span<str>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
