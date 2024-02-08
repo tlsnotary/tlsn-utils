@@ -342,7 +342,7 @@ impl Spanned for Response {
     }
 }
 
-/// An HTTP request or response body.
+/// An HTTP request or response payload body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Body {
