@@ -281,12 +281,12 @@ fn response_body_len(response: &Response) -> Result<usize, ParseError> {
     }
 }
 
-/// Parses a request or response body.
+/// Parses a request or response message body.
 ///
 /// # Arguments
 ///
 /// * `src` - The source bytes.
-/// * `range` - The range of the body in the source bytes.
+/// * `range` - The range of the message body in the source bytes.
 /// * `content_type` - The value of the Content-Type header.
 fn parse_body(src: &Bytes, range: Range<usize>, content_type: &[u8]) -> Result<Body, ParseError> {
     let span = Span::new_bytes(src.clone(), range.clone());

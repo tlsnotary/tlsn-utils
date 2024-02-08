@@ -370,7 +370,7 @@ impl Spanned for Body {
     }
 }
 
-/// An HTTP request or response body content.
+/// An HTTP request or response payload body content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
