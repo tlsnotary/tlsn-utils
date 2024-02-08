@@ -1,6 +1,6 @@
 use utils::range::{RangeDifference, RangeSet};
 
-use crate::{Span, Spanned};
+use crate::{json::JsonValue, Span, Spanned};
 
 /// An HTTP header name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -342,11 +342,14 @@ impl Spanned for Response {
     }
 }
 
-/// An HTTP request or response body.
+/// An HTTP request or response payload body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Body {
     pub(crate) span: Span,
+
+    /// The body content.
+    pub content: BodyContent,
 }
 
 impl Body {
@@ -364,5 +367,25 @@ impl Body {
 impl Spanned for Body {
     fn span(&self) -> &Span {
         &self.span
+    }
+}
+
+/// An HTTP request or response payload body content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum BodyContent {
+    /// Body with an `application/json` content type.
+    Json(JsonValue),
+    /// Body with an unknown content type.
+    Unknown(Span),
+}
+
+impl Spanned for BodyContent {
+    fn span(&self) -> &Span {
+        match self {
+            BodyContent::Json(json) => json.span().as_ref(),
+            BodyContent::Unknown(span) => span,
+        }
     }
 }

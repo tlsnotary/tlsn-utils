@@ -1,12 +1,14 @@
+use std::ops::Range;
+
 use bytes::Bytes;
 
 use crate::{
     helpers::get_span_range,
     http::{
-        Body, Code, Header, HeaderName, HeaderValue, Method, Reason, Request, RequestLine,
-        Response, Status, Target,
+        Body, BodyContent, Code, Header, HeaderName, HeaderValue, Method, Reason, Request,
+        RequestLine, Response, Status, Target,
     },
-    ParseError, Span,
+    json, ParseError, Span,
 };
 
 const MAX_HEADERS: usize = 128;
@@ -87,11 +89,14 @@ pub(crate) fn parse_request_from_bytes(src: &Bytes, offset: usize) -> Result<Req
             )));
         }
 
-        request.span = Span::new_bytes(src.clone(), offset..range.end);
+        let content_type = request
+            .headers_with_name("Content-Type")
+            .next()
+            .map(|header| header.value.as_bytes())
+            .unwrap_or_default();
 
-        request.body = Some(Body {
-            span: Span::new_bytes(src.clone(), range),
-        });
+        request.body = Some(parse_body(src, range.clone(), content_type)?);
+        request.span = Span::new_bytes(src.clone(), offset..range.end);
     }
 
     Ok(request)
@@ -175,11 +180,14 @@ pub(crate) fn parse_response_from_bytes(
             )));
         }
 
-        response.span = Span::new_bytes(src.clone(), offset..range.end);
+        let content_type = response
+            .headers_with_name("Content-Type")
+            .next()
+            .map(|header| header.value.as_bytes())
+            .unwrap_or_default();
 
-        response.body = Some(Body {
-            span: Span::new_bytes(src.clone(), range),
-        });
+        response.body = Some(parse_body(src, range.clone(), content_type)?);
+        response.span = Span::new_bytes(src.clone(), offset..range.end);
     }
 
     Ok(response)
@@ -273,6 +281,27 @@ fn response_body_len(response: &Response) -> Result<usize, ParseError> {
     }
 }
 
+/// Parses a request or response message body.
+///
+/// # Arguments
+///
+/// * `src` - The source bytes.
+/// * `range` - The range of the message body in the source bytes.
+/// * `content_type` - The value of the Content-Type header.
+fn parse_body(src: &Bytes, range: Range<usize>, content_type: &[u8]) -> Result<Body, ParseError> {
+    let span = Span::new_bytes(src.clone(), range.clone());
+    let content = if content_type.get(..16) == Some(b"application/json".as_slice()) {
+        let mut value = json::parse(span.data.clone())?;
+        value.offset(range.start);
+
+        BodyContent::Json(value)
+    } else {
+        BodyContent::Unknown(span.clone())
+    };
+
+    Ok(Body { span, content })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::Spanned;
@@ -320,6 +349,19 @@ mod tests {
                         Content-Type: text/plain\r\n\
                         Connection: keep-alive\r\n\r\n\
                         pong";
+
+    const TEST_REQUEST_JSON: &[u8] = b"\
+                        POST / HTTP/1.1\r\n\
+                        Host: localhost\r\n\
+                        Content-Type: application/json\r\n\
+                        Content-Length: 14\r\n\r\n\
+                        {\"foo\": \"bar\"}";
+
+    const TEST_RESPONSE_JSON: &[u8] = b"\
+                        HTTP/1.1 200 OK\r\n\
+                        Content-Type: application/json\r\n\
+                        Content-Length: 14\r\n\r\n\
+                        {\"foo\": \"bar\"}";
 
     #[test]
     fn test_parse_request() {
@@ -431,5 +473,27 @@ mod tests {
             res.body.unwrap().span(),
             b"<html>\n<body>\n<h1>Hello, World!</h1>\n</body>\n</html>".as_slice()
         );
+    }
+
+    #[test]
+    fn test_parse_request_json() {
+        let req = parse_request(TEST_REQUEST_JSON).unwrap();
+
+        let BodyContent::Json(value) = req.body.unwrap().content else {
+            panic!("body is not json");
+        };
+
+        assert_eq!(value.span(), "{\"foo\": \"bar\"}");
+    }
+
+    #[test]
+    fn test_parse_response_json() {
+        let res = parse_response(TEST_RESPONSE_JSON).unwrap();
+
+        let BodyContent::Json(value) = res.body.unwrap().content else {
+            panic!("body is not json");
+        };
+
+        assert_eq!(value.span(), "{\"foo\": \"bar\"}");
     }
 }
