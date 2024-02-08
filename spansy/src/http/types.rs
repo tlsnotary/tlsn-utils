@@ -1,4 +1,4 @@
-use utils::range::{RangeDifference, RangeSet};
+use utils::range::{RangeDifference, RangeSet, ToRangeSet};
 
 use crate::{json::JsonValue, Span, Spanned};
 
@@ -25,6 +25,12 @@ impl Spanned<str> for HeaderName {
     }
 }
 
+impl ToRangeSet<usize> for HeaderName {
+    fn to_range_set(&self) -> RangeSet<usize> {
+        self.0.indices.clone()
+    }
+}
+
 /// An HTTP header value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -45,6 +51,12 @@ impl HeaderValue {
 impl Spanned for HeaderValue {
     fn span(&self) -> &Span {
         &self.0
+    }
+}
+
+impl ToRangeSet<usize> for HeaderValue {
+    fn to_range_set(&self) -> RangeSet<usize> {
+        self.0.indices.clone()
     }
 }
 
@@ -81,6 +93,12 @@ impl Spanned for Header {
     }
 }
 
+impl ToRangeSet<usize> for Header {
+    fn to_range_set(&self) -> RangeSet<usize> {
+        self.span.indices.clone()
+    }
+}
+
 /// An HTTP request method.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -104,6 +122,12 @@ impl Spanned<str> for Method {
     }
 }
 
+impl ToRangeSet<usize> for Method {
+    fn to_range_set(&self) -> RangeSet<usize> {
+        self.0.indices.clone()
+    }
+}
+
 /// An HTTP request target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -124,6 +148,12 @@ impl Target {
 impl Spanned<str> for Target {
     fn span(&self) -> &Span<str> {
         &self.0
+    }
+}
+
+impl ToRangeSet<usize> for Target {
+    fn to_range_set(&self) -> RangeSet<usize> {
+        self.0.indices.clone()
     }
 }
 
@@ -156,6 +186,12 @@ impl RequestLine {
 impl Spanned<str> for RequestLine {
     fn span(&self) -> &Span<str> {
         &self.span
+    }
+}
+
+impl ToRangeSet<usize> for RequestLine {
+    fn to_range_set(&self) -> RangeSet<usize> {
+        self.span.indices.clone()
     }
 }
 
@@ -214,6 +250,12 @@ impl Spanned for Request {
     }
 }
 
+impl ToRangeSet<usize> for Request {
+    fn to_range_set(&self) -> RangeSet<usize> {
+        self.span.indices.clone()
+    }
+}
+
 /// An HTTP response code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -237,6 +279,12 @@ impl Spanned<str> for Code {
     }
 }
 
+impl ToRangeSet<usize> for Code {
+    fn to_range_set(&self) -> RangeSet<usize> {
+        self.0.indices.clone()
+    }
+}
+
 /// An HTTP response reason phrase.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -257,6 +305,12 @@ impl Reason {
 impl Spanned<str> for Reason {
     fn span(&self) -> &Span<str> {
         &self.0
+    }
+}
+
+impl ToRangeSet<usize> for Reason {
+    fn to_range_set(&self) -> RangeSet<usize> {
+        self.0.indices.clone()
     }
 }
 
@@ -284,6 +338,12 @@ impl Status {
 impl Spanned<str> for Status {
     fn span(&self) -> &Span<str> {
         &self.span
+    }
+}
+
+impl ToRangeSet<usize> for Status {
+    fn to_range_set(&self) -> RangeSet<usize> {
+        self.span.indices.clone()
     }
 }
 
@@ -342,6 +402,12 @@ impl Spanned for Response {
     }
 }
 
+impl ToRangeSet<usize> for Response {
+    fn to_range_set(&self) -> RangeSet<usize> {
+        self.span.indices.clone()
+    }
+}
+
 /// An HTTP request or response payload body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -370,6 +436,12 @@ impl Spanned for Body {
     }
 }
 
+impl ToRangeSet<usize> for Body {
+    fn to_range_set(&self) -> RangeSet<usize> {
+        self.span.indices.clone()
+    }
+}
+
 /// An HTTP request or response payload body content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -386,6 +458,15 @@ impl Spanned for BodyContent {
         match self {
             BodyContent::Json(json) => json.span().as_ref(),
             BodyContent::Unknown(span) => span,
+        }
+    }
+}
+
+impl ToRangeSet<usize> for BodyContent {
+    fn to_range_set(&self) -> RangeSet<usize> {
+        match self {
+            BodyContent::Json(json) => json.span().indices.clone(),
+            BodyContent::Unknown(span) => span.indices.clone(),
         }
     }
 }
