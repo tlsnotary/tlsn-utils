@@ -1,18 +1,23 @@
 [workspace]
-members = ["utils", "utils-aio", "spansy"]
+members = ["utils", "utils-aio", "spansy", "serio"]
 
 [workspace.dependencies]
 tlsn-utils = { path = "utils" }
 tlsn-utils-aio = { path = "utils-aio" }
 spansy = { path = "spansy" }
+serio = { path = "serio" }
 
 rand = "0.8"
 thiserror = "1"
 async-trait = "0.1"
 prost = "0.9"
 futures = "0.3"
+futures-sink = "0.3"
+futures-core = "0.3"
+futures-channel = "0.3"
 futures-util = "0.3"
 tokio-util = "0.7"
+tokio-serde = "0.8"
 tokio = "1.23"
 async-tungstenite = "0.16"
 prost-build = "0.9"
@@ -20,3 +25,5 @@ bytes = "1"
 async-std = "1"
 rayon = "1"
 serde = "1"
+cfg-if = "1"
+bincode = "1.3"

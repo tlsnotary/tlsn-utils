@@ -1,0 +1,31 @@
+[package]
+name = "serio"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["compat", "channel", "codec", "bincode"]
+compat = ["dep:futures-sink"]
+channel = ["dep:futures-channel"]
+codec = ["dep:tokio-util"]
+bincode = ["dep:bincode"]
+
+[dependencies]
+bytes.workspace = true
+serde.workspace = true
+futures-core.workspace = true
+futures-channel = { workspace = true, optional = true }
+futures-sink = { workspace = true, optional = true }
+futures-util = { workspace = true, features = ["bilock", "unstable"] }
+tokio-util = { workspace = true, features = ["codec"], optional = true }
+bincode = { workspace = true, optional = true }
+
+[dev-dependencies]
+futures.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["full"] }
+
+[[example]]
+name = "tokio_codec"
+path = "examples/tokio_codec.rs"
+required-features = ["codec"]
