@@ -182,7 +182,7 @@ pub trait SinkExt: Sink {
 
 impl<S: Sink + ?Sized> SinkExt for S {}
 
-/// Future for the [`close`](super::SinkExt::close) method.
+/// Future for the [`close`](SinkExt::close) method.
 #[derive(Debug)]
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct Close<'a, Si: ?Sized> {
@@ -208,7 +208,7 @@ impl<Si: Sink + Unpin + ?Sized> Future for Close<'_, Si> {
     }
 }
 
-/// Future for the [`send`](super::SinkExt::send) method.
+/// Future for the [`send`](SinkExt::send) method.
 #[derive(Debug)]
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct Send<'a, Si: ?Sized, Item> {
@@ -245,7 +245,7 @@ impl<Si: Sink + Unpin + ?Sized, Item: Serialize> Future for Send<'_, Si, Item> {
     }
 }
 
-/// Future for the [`feed`](super::SinkExt::feed) method.
+/// Future for the [`feed`](SinkExt::feed) method.
 #[derive(Debug)]
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct Feed<'a, Si: ?Sized, Item> {
