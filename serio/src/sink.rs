@@ -10,6 +10,11 @@ use std::{
 
 use crate::{future::assert_future, Serialize};
 
+/// A sink with an error type of `std::io::Error`.
+pub trait IoSink: Sink<Error = std::io::Error> {}
+
+impl<T: ?Sized> IoSink for T where T: Sink<Error = std::io::Error> {}
+
 /// A sink which accepts any item which implements `Serialize`.
 ///
 /// This trait is similar to [`futures::Sink`](https://docs.rs/futures/latest/futures/sink/trait.Sink.html),

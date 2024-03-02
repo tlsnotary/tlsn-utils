@@ -5,12 +5,17 @@ use std::{
     marker::PhantomData,
     ops::DerefMut,
     pin::Pin,
-    task::{Context, Poll},
+    task::{ready, Context, Poll},
 };
 
 use futures_core::FusedFuture;
 
 use crate::{future::assert_future, Deserialize};
+
+/// A stream with an error type of `std::io::Error`.
+pub trait IoStream: Stream<Error = std::io::Error> {}
+
+impl<T: ?Sized> IoStream for T where T: Stream<Error = std::io::Error> {}
 
 /// A stream producing any kind of value which implements `Deserialize`.
 ///
@@ -217,5 +222,44 @@ impl<St: ?Sized + Stream + Unpin, Item: Deserialize> Future for Next<'_, St, Ite
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.stream.poll_next_unpin(cx)
+    }
+}
+
+/// An extension trait for [`IoStream`] which provides a variety of convenient functions.
+pub trait IoStreamExt: IoStream {
+    /// Creates a future that resolves to the next item in the stream, returning
+    /// an error if the stream is exhausted.
+    fn expect_next<Item: Deserialize>(&mut self) -> ExpectNext<'_, Self, Item>
+    where
+        Self: Unpin,
+    {
+        ExpectNext {
+            next: self.next(),
+            _pd: PhantomData,
+        }
+    }
+}
+
+impl<S: ?Sized> IoStreamExt for S where S: IoStream {}
+
+/// Future for the [`expect_next`](IoStreamExt::expect_next) method.
+#[derive(Debug)]
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+pub struct ExpectNext<'a, St: ?Sized, Item> {
+    next: Next<'a, St, Item>,
+    _pd: PhantomData<Item>,
+}
+
+impl<St: ?Sized + Unpin, Item> Unpin for ExpectNext<'_, St, Item> {}
+
+impl<'a, St: ?Sized + IoStream + Unpin, Item: Deserialize> Future for ExpectNext<'a, St, Item> {
+    type Output = Result<Item, St::Error>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match ready!(Pin::new(&mut self.next).poll(cx)) {
+            Some(Ok(item)) => Poll::Ready(Ok(item)),
+            Some(Err(err)) => Poll::Ready(Err(err)),
+            None => Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
+        }
     }
 }
