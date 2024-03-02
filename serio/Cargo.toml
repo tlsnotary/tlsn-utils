@@ -13,6 +13,7 @@ bincode = ["dep:bincode"]
 [dependencies]
 bytes.workspace = true
 serde.workspace = true
+pin-project-lite.workspace = true
 futures-core.workspace = true
 futures-channel = { workspace = true, optional = true }
 futures-sink = { workspace = true, optional = true }

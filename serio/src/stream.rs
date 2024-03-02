@@ -177,6 +177,15 @@ pub trait StreamExt: Stream {
         assert_future::<Option<Result<Item, Self::Error>>, _>(Next::new(self))
     }
 
+    /// Converts this stream into a `futures::Stream`.
+    #[cfg(feature = "compat")]
+    fn into_stream<Item: Deserialize>(self) -> IntoStream<Self, Item>
+    where
+        Self: Sized,
+    {
+        assert_futures_stream(IntoStream::new(self))
+    }
+
     /// A convenience method for calling [`Stream::poll_next`] on [`Unpin`]
     /// stream types.
     fn poll_next_unpin<Item: Deserialize>(
@@ -225,6 +234,59 @@ impl<St: ?Sized + Stream + Unpin, Item: Deserialize> Future for Next<'_, St, Ite
     }
 }
 
+#[cfg(feature = "compat")]
+mod compat {
+    use super::*;
+
+    pin_project_lite::pin_project! {
+        /// Wraps a stream and provides a `futures::Stream` implementation.
+        pub struct IntoStream<St, Item> {
+            #[pin]
+            stream: St,
+            _pd: PhantomData<Item>,
+        }
+    }
+
+    impl<St, Item> IntoStream<St, Item> {
+        pub(super) fn new(stream: St) -> Self {
+            Self {
+                stream,
+                _pd: PhantomData,
+            }
+        }
+
+        /// Returns a reference to the inner stream.
+        pub fn stream(&self) -> &St {
+            &self.stream
+        }
+
+        /// Returns a mutable reference to the inner stream.
+        pub fn stream_mut(&mut self) -> &mut St {
+            &mut self.stream
+        }
+
+        /// Returns the inner stream.
+        pub fn into_inner(self) -> St {
+            self.stream
+        }
+    }
+
+    impl<St, Item> futures_core::Stream for IntoStream<St, Item>
+    where
+        St: Stream,
+        Item: Deserialize,
+    {
+        type Item = Result<Item, St::Error>;
+
+        fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            self.project().stream.poll_next(cx)
+        }
+    }
+}
+
+#[cfg(feature = "compat")]
+pub use compat::IntoStream;
+
 /// An extension trait for [`IoStream`] which provides a variety of convenient functions.
 pub trait IoStreamExt: IoStream {
     /// Creates a future that resolves to the next item in the stream, returning
@@ -262,4 +324,8 @@ impl<'a, St: ?Sized + IoStream + Unpin, Item: Deserialize> Future for ExpectNext
             None => Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
         }
     }
+}
+
+pub(crate) fn assert_futures_stream<S: futures_core::Stream>(stream: S) -> S {
+    stream
 }
