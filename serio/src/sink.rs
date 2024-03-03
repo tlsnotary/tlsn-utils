@@ -170,6 +170,14 @@ pub trait SinkExt: Sink {
         assert_future::<Result<(), Self::Error>, _>(Feed::new(self, item))
     }
 
+    /// A future that completes after the sink has been flushed.
+    fn flush(&mut self) -> Flush<'_, Self>
+    where
+        Self: Unpin,
+    {
+        assert_future::<Result<(), Self::Error>, _>(Flush::new(self))
+    }
+
     /// Convert this sink into a `futures::Sink`.
     #[cfg(feature = "compat")]
     fn into_sink<Item: Serialize>(self) -> IntoSink<Self, Item>
@@ -283,6 +291,29 @@ impl<Si: Sink + Unpin + ?Sized, Item: Serialize> Future for Feed<'_, Si, Item> {
         let item = this.item.take().expect("polled Feed after completion");
         sink.as_mut().start_send(item)?;
         Poll::Ready(Ok(()))
+    }
+}
+
+/// Future for the [`flush`](SinkExt::flush) method.
+#[derive(Debug)]
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+pub struct Flush<'a, Si: ?Sized> {
+    sink: &'a mut Si,
+}
+
+impl<Si: Unpin + ?Sized> Unpin for Flush<'_, Si> {}
+
+impl<'a, Si: Sink + Unpin + ?Sized> Flush<'a, Si> {
+    fn new(sink: &'a mut Si) -> Self {
+        Self { sink }
+    }
+}
+
+impl<Si: Sink + Unpin + ?Sized> Future for Flush<'_, Si> {
+    type Output = Result<(), Si::Error>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.sink).poll_flush(cx)
     }
 }
 
