@@ -25,6 +25,7 @@ bincode = { workspace = true, optional = true }
 futures.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true, features = ["codec"] }
 
 [[example]]
 name = "tokio_codec"

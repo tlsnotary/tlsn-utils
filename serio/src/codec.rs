@@ -128,3 +128,45 @@ where
         Poll::Ready(Some(item))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde::{Deserialize, Serialize};
+    use tokio::io::duplex;
+    use tokio_util::codec::LengthDelimitedCodec;
+
+    use crate::{SinkExt, StreamExt};
+
+    use super::*;
+
+    #[derive(Serialize, Deserialize)]
+    struct Ping;
+
+    #[derive(Serialize, Deserialize)]
+    struct Pong;
+
+    #[test]
+    fn test_framed() {
+        let (a, b) = duplex(1024);
+
+        let a = LengthDelimitedCodec::builder().new_framed(a);
+        let b = LengthDelimitedCodec::builder().new_framed(b);
+
+        let mut a = Framed::new(a, Bincode::default());
+        let mut b = Framed::new(b, Bincode::default());
+
+        let a = async {
+            a.send(Ping).await.unwrap();
+            a.next::<Pong>().await.unwrap().unwrap();
+        };
+
+        let b = async {
+            b.next::<Ping>().await.unwrap().unwrap();
+            b.send(Pong).await.unwrap();
+        };
+
+        futures::executor::block_on(async {
+            futures::join!(a, b);
+        });
+    }
+}
