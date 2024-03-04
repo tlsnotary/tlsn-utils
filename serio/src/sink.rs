@@ -223,7 +223,7 @@ pub struct Send<'a, Si: ?Sized, Item> {
     feed: Feed<'a, Si, Item>,
 }
 
-// Pinning is never projected to children
+// Pinning is never projected to children.
 impl<Si: Unpin + ?Sized, Item> Unpin for Send<'_, Si, Item> {}
 
 impl<'a, Si: Sink + Unpin + ?Sized, Item> Send<'a, Si, Item> {
@@ -245,8 +245,8 @@ impl<Si: Sink + Unpin + ?Sized, Item: Serialize> Future for Send<'_, Si, Item> {
             debug_assert!(!this.feed.is_item_pending());
         }
 
-        // we're done sending the item, but want to block on flushing the
-        // sink
+        // We're done sending the item, but want to block on flushing the
+        // sink.
         ready!(this.feed.sink_pin_mut().poll_flush(cx))?;
 
         Poll::Ready(Ok(()))
@@ -261,7 +261,7 @@ pub struct Feed<'a, Si: ?Sized, Item> {
     item: Option<Item>,
 }
 
-// Pinning is never projected to children
+// Pinning is never projected to children.
 impl<Si: Unpin + ?Sized, Item> Unpin for Feed<'_, Si, Item> {}
 
 impl<'a, Si: Sink + Unpin + ?Sized, Item> Feed<'a, Si, Item> {

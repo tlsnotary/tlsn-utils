@@ -15,7 +15,7 @@ use crate::{Deserialize, Serialize, Sink, Stream};
 
 type Item = Box<dyn Any + Send + Sync + 'static>;
 
-/// A memory sink that can be used to send any serialiable type to the receiver.
+/// A memory sink that can be used to send any serializable type to the receiver.
 pub struct MemorySink(mpsc::Sender<Item>);
 
 impl Sink for MemorySink {
