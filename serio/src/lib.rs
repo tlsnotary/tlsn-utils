@@ -24,3 +24,13 @@ impl<T> Serialize for T where T: serde::Serialize + Send + Sync + Unpin + 'stati
 pub trait Deserialize: serde::de::DeserializeOwned + Send + Sync + Unpin + 'static {}
 
 impl<T> Deserialize for T where T: serde::de::DeserializeOwned + Send + Sync + Unpin + 'static {}
+
+/// A duplex.
+pub trait Duplex<T, E>: Sink<Error = E> + Stream<Error = E> {}
+
+impl<T, U, E> Duplex<U, E> for T where T: Sink<Error = E> + Stream<Error = E> {}
+
+/// A duplex with a `std::io::Error` error type.
+pub trait IoDuplex<T>: Duplex<T, std::io::Error> {}
+
+impl<T, U> IoDuplex<U> for T where T: Duplex<U, std::io::Error> {}
