@@ -1,7 +1,13 @@
 use async_trait::async_trait;
 use futures::channel::oneshot;
 
-pub type Backend = RayonBackend;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "single-threaded")] {
+        pub type Backend = SingleThreadedBackend;
+    } else {
+        pub type Backend = RayonBackend;
+    }
+}
 
 /// Allows to spawn a closure on a thread outside of the async runtime
 ///
@@ -24,6 +30,16 @@ impl NonBlockingBackend for RayonBackend {
         });
 
         receiver.await.expect("channel should not be canceled")
+    }
+}
+
+/// A single-threaded backend for testing
+pub struct SingleThreadedBackend;
+
+#[async_trait]
+impl NonBlockingBackend for SingleThreadedBackend {
+    async fn spawn<F: FnOnce() -> T + Send + 'static, T: Send + 'static>(closure: F) -> T {
+        closure()
     }
 }
 

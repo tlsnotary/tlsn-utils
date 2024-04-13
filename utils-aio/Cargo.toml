@@ -13,6 +13,7 @@ mux = []
 duplex = []
 tokio_compat = ["tokio/rt"]
 wasm_compat = ["dep:wasm-bindgen-futures"]
+single-threaded = []
 
 [dependencies]
 bytes.workspace = true
@@ -28,6 +29,7 @@ thiserror.workspace = true
 async-std.workspace = true
 rayon.workspace = true
 serde = { workspace = true, optional = true }
+cfg-if.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = [
