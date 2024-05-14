@@ -12,6 +12,7 @@ edition = "2021"
 default = ["tracing", "serio"]
 tracing = ["dep:tracing"]
 serio = ["dep:serio"]
+test-utils = ["tokio/io-util", "dep:tokio-util"]
 
 [dependencies]
 async-trait = { workspace = true }
@@ -22,6 +23,7 @@ yamux = "0.13"
 blake3 = "1.5"
 hex = "0.4"
 serio = { workspace = true, optional = true }
+tokio-util = { version = "0.7", features = ["compat"], optional = true }
 
 [dev-dependencies]
 tokio-util = { version = "0.7", features = ["compat"] }
