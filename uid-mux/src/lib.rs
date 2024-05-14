@@ -5,7 +5,12 @@
 #![forbid(unsafe_code)]
 
 pub(crate) mod future;
+#[cfg(feature = "serio")]
+mod serio;
 pub mod yamux;
+
+#[cfg(feature = "serio")]
+pub use serio::{FramedMux, FramedUidMux};
 
 use core::fmt;
 

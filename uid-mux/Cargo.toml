@@ -9,8 +9,9 @@ license = "MIT OR Apache-2.0"
 edition = "2021"
 
 [features]
-default = ["tracing"]
+default = ["tracing", "serio"]
 tracing = ["dep:tracing"]
+serio = ["dep:serio"]
 
 [dependencies]
 async-trait = { workspace = true }
@@ -20,6 +21,7 @@ tracing = { workspace = true, optional = true }
 yamux = "0.13"
 blake3 = "1.5"
 hex = "0.4"
+serio = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio-util = { version = "0.7", features = ["compat"] }
