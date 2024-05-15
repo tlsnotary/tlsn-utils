@@ -29,7 +29,9 @@ jobs:
         run: cargo build
 
       - name: "Test"
-        run: cargo test --lib --bins --tests --examples --workspace
+        # Run all tests (bins, examples, lib, integration and docs)
+        # https://doc.rust-lang.org/cargo/commands/cargo-test.html#target-selection
+        run: cargo test
 
       - name: "Check documentation"
         env:
