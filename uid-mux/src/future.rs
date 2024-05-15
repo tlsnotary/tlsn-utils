@@ -184,7 +184,6 @@ mod tests {
 
     #[test]
     fn test_id_future() {
-        tracing_subscriber::fmt::init();
         let id_0 = InternalId([42u8; 32]);
 
         // send 1 byte at a time

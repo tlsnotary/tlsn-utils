@@ -250,6 +250,11 @@ where
         self.remote_closed || self.closed
     }
 
+    /// Sets the queue waker so that controllers can wake up the connection.
+    fn set_queue_waker(&self, cx: &mut Context<'_>) {
+        self.queue.lock().unwrap().waker = cx.waker().clone();
+    }
+
     fn poll_client(&mut self, cx: &mut Context<'_>) -> Result<()> {
         self.client_handle_inbound(cx)?;
 
@@ -299,6 +304,8 @@ where
             info!("connection complete");
             Poll::Ready(Ok(()))
         } else {
+            self.set_queue_waker(cx);
+
             Poll::Pending
         }
     }
@@ -317,6 +324,12 @@ impl YamuxCtrl {
     /// Close the yamux connection.
     pub fn close(&self) {
         self.shutdown_notify.store(true, Ordering::Relaxed);
+        self.wake_conn();
+    }
+
+    /// Wakes up the connection.
+    fn wake_conn(&self) {
+        self.queue.lock().unwrap().waker.wake_by_ref();
     }
 }
 
@@ -349,7 +362,10 @@ where
             }
 
             let (sender, receiver) = oneshot::channel();
+            
+            // Insert the oneshot into the queue.
             queue.waiting.insert(internal_id, sender);
+            // Wake up the connection.
             queue.waker.wake_by_ref();
 
             trace!("waiting for stream");
@@ -382,7 +398,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_yamux() {
-        tracing_subscriber::fmt::init();
         let (client_io, server_io) = duplex(1024);
         let client = Yamux::new(client_io.compat(), Config::default(), Mode::Client);
         let server = Yamux::new(server_io.compat(), Config::default(), Mode::Server);
