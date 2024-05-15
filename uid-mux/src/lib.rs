@@ -40,12 +40,6 @@ impl AsRef<[u8]> for InternalId {
     }
 }
 
-impl From<[u8; 32]> for InternalId {
-    fn from(id: [u8; 32]) -> Self {
-        Self(id)
-    }
-}
-
 /// A multiplexer that opens streams with unique ids.
 #[async_trait]
 pub trait UidMux<Id> {

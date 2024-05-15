@@ -11,12 +11,13 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
 };
 
 use async_trait::async_trait;
 use futures::{
-    ready, stream::FuturesUnordered, AsyncRead, AsyncWrite, Future, FutureExt, StreamExt,
+    stream::FuturesUnordered, task::noop_waker, AsyncRead, AsyncWrite, Future, FutureExt,
+    StreamExt,
 };
 use tokio::sync::{oneshot, Notify};
 use yamux::Connection;
@@ -56,16 +57,28 @@ pub struct Yamux<Io> {
     shutdown_notify: Arc<AtomicBool>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Queue {
     waiting: HashMap<InternalId, oneshot::Sender<Stream>>,
     ready: HashMap<InternalId, Stream>,
+    waker: Waker,
+}
+
+impl Default for Queue {
+    fn default() -> Self {
+        Self {
+            waiting: Default::default(),
+            ready: Default::default(),
+            waker: noop_waker(),
+        }
+    }
 }
 
 impl<Io> Yamux<Io> {
     /// Returns a new control handle.
     pub fn control(&self) -> YamuxCtrl {
         YamuxCtrl {
+            role: self.role,
             queue: self.queue.clone(),
             close_notify: self.close_notify.clone(),
             shutdown_notify: self.shutdown_notify.clone(),
@@ -109,6 +122,7 @@ where
             outgoing: Default::default(),
             queue: self.queue,
             closed: false,
+            remote_closed: false,
             close_notify: self.close_notify,
             shutdown_notify: self.shutdown_notify,
         }
@@ -127,7 +141,10 @@ pub struct YamuxFuture<Io> {
     /// to callers.
     outgoing: FuturesUnordered<ReturnStream<Stream>>,
     queue: Arc<Mutex<Queue>>,
+    /// Whether this side has closed the connection.
     closed: bool,
+    /// Whether the remote has closed the connection.
+    remote_closed: bool,
     close_notify: Arc<Notify>,
     shutdown_notify: Arc<AtomicBool>,
 }
@@ -136,92 +153,125 @@ impl<Io> YamuxFuture<Io>
 where
     Io: AsyncWrite + AsyncRead + Unpin,
 {
-    fn poll_client(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn client_handle_inbound(&mut self, cx: &mut Context<'_>) -> Result<()> {
         if let Poll::Ready(stream) = self.conn.poll_next_inbound(cx).map(Option::transpose)? {
-            self.closed = true;
-            info!("({}): mux connection closed", self.role);
             if stream.is_some() {
-                error!("({}): client mux received incoming stream", self.role);
-                return Poll::Ready(Err(std::io::Error::other(
+                error!("client mux received incoming stream");
+                return Err(std::io::Error::other(
                     "client mode can not accept incoming streams",
                 )
-                .into()));
+                .into());
             }
+
+            info!("remote closed connection");
+            self.remote_closed = true;
         }
 
-        // Open new outgoing streams.
+        Ok(())
+    }
+
+    fn client_handle_outbound(&mut self, cx: &mut Context<'_>) -> Result<()> {
         let mut queue = self.queue.lock().unwrap();
-        while !self.closed && !queue.waiting.is_empty() {
+        while !queue.waiting.is_empty() {
             if let Poll::Ready(stream) = self.conn.poll_new_outbound(cx)? {
                 let id = *queue.waiting.keys().next().unwrap();
                 let sender = queue.waiting.remove(&id).unwrap();
 
-                debug!("({}): opened new stream: {}", self.role, id);
+                debug!("opened new stream: {}", id);
 
                 self.outgoing.push(ReturnStream::new(id, stream, sender));
+            } else {
+                break;
             }
         }
 
-        // Poll all outgoing streams.
         while let Poll::Ready(Some(())) =
             self.outgoing.poll_next_unpin(cx).map(Option::transpose)?
         {
-            trace!("({}): finished processing stream", self.role)
+            trace!("finished processing stream");
         }
 
-        if !self.closed && self.shutdown_notify.load(Ordering::Relaxed) {
-            if let Poll::Ready(()) = self.conn.poll_close(cx)? {
-                self.closed = true;
-                info!("({}): mux connection closed", self.role);
-            }
-        }
+        // Set the waker to wake up when the queue is ready to process more streams.
+        queue.waker = cx.waker().clone();
 
-        if self.closed {
-            Poll::Ready(Ok(()))
-        } else {
-            Poll::Pending
-        }
+        Ok(())
     }
 
-    fn poll_server(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        if let Poll::Ready(stream) = self.conn.poll_next_inbound(cx).map(Option::transpose)? {
-            if let Some(stream) = stream {
-                debug!("({}): received incoming stream", self.role);
+    fn server_handle_inbound(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        while let Poll::Ready(stream) = self.conn.poll_next_inbound(cx).map(Option::transpose)? {
+            let Some(stream) = stream else {
+                if !self.remote_closed {
+                    info!("remote closed connection");
+                    self.remote_closed = true;
+                }
+               
+                break;
+            };
 
-                // The size of this is bounded by yamux max streams config.
-                self.incoming.push(ReadId::new(stream));
-            } else {
-                info!("({}): mux connection closed", self.role);
-                self.closed = true;
-            }
+            debug!("received incoming stream");
+            // The size of this is bounded by yamux max streams config.
+            self.incoming.push(ReadId::new(stream));
         }
 
+        Ok(())
+    }
+
+    fn server_process_inbound(&mut self, cx: &mut Context<'_>) -> Result<()> {
         while let Poll::Ready(Some((id, stream))) =
             self.incoming.poll_next_unpin(cx).map(Option::transpose)?
         {
-            debug!("({}): received stream: {}", self.role, id);
+            debug!("received stream: {}", id);
             let mut queue = self.queue.lock().unwrap();
             if let Some(sender) = queue.waiting.remove(&id) {
-                trace!("({}): returning stream to caller: {}", self.role, id);
-                _ = sender.send(stream);
+                _ = sender.send(stream).inspect_err(|_| error!("caller dropped receiver"));
+                trace!("returned stream to caller: {}", id);
             } else {
-                trace!("({}): queueing stream: {}", self.role, id);
+                trace!("queuing stream: {}", id);
                 queue.ready.insert(id, stream);
             }
         }
 
+        Ok(())
+    }
+
+    fn handle_shutdown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        // Attempt to close the connection if the shutdown notify has been set.
         if !self.closed && self.shutdown_notify.load(Ordering::Relaxed) {
             if let Poll::Ready(()) = self.conn.poll_close(cx)? {
                 self.closed = true;
-                info!("({}): mux connection closed", self.role);
+                info!("mux connection closed");
             }
         }
 
-        if self.closed && self.incoming.is_empty() {
-            Poll::Ready(Ok(()))
-        } else {
-            Poll::Pending
+        Ok(())
+    }
+
+    fn is_complete(&self) -> bool {
+        self.remote_closed || self.closed
+    }
+
+    fn poll_client(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.client_handle_inbound(cx)?;
+
+        if !self.remote_closed {
+            self.client_handle_outbound(cx)?;
+
+            // We need to poll the inbound again to make sure the connection
+            // flushes the write buffer.
+            self.client_handle_inbound(cx)?;
         }
+
+        self.handle_shutdown(cx)?;
+
+        Ok(())
+    }
+
+    fn poll_server(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.server_handle_inbound(cx)?;
+        self.server_process_inbound(cx)?;
+        self.handle_shutdown(cx)?;
+
+        Ok(())
     }
 }
 
@@ -231,19 +281,33 @@ where
 {
     type Output = Result<()>;
 
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            fields(role = %self.role),
+            skip_all
+        )
+    )]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let output = match self.role {
-            Role::Client => ready!(self.poll_client(cx)),
-            Role::Server => ready!(self.poll_server(cx)),
+        match self.role {
+            Role::Client => self.poll_client(cx)?,
+            Role::Server => self.poll_server(cx)?,
         };
-        self.close_notify.notify_waiters();
-        Poll::Ready(output)
+
+        if self.is_complete() {
+            self.close_notify.notify_waiters();
+            info!("connection complete");
+            Poll::Ready(Ok(()))
+        } else {
+            Poll::Pending
+        }
     }
 }
 
 /// A yamux control handle.
 #[derive(Debug, Clone)]
 pub struct YamuxCtrl {
+    role: Role,
     queue: Arc<Mutex<Queue>>,
     close_notify: Arc<Notify>,
     shutdown_notify: Arc<AtomicBool>,
@@ -264,22 +328,31 @@ where
     type Stream = Stream;
     type Error = std::io::Error;
 
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            fields(role = %self.role, id = hex::encode(id)),
+            skip_all, 
+            err
+        )
+    )]
     async fn open(&self, id: &Id) -> Result<Self::Stream, Self::Error> {
         let internal_id = InternalId::new(id.as_ref());
 
-        debug!("opening stream: {} -> {}", hex::encode(id), internal_id);
+        debug!("opening stream: {}", internal_id);
 
         let receiver = {
             let mut queue = self.queue.lock().unwrap();
             if let Some(stream) = queue.ready.remove(&internal_id) {
-                trace!("stream already opened: {}", hex::encode(id));
+                trace!("stream already opened");
                 return Ok(stream);
             }
 
             let (sender, receiver) = oneshot::channel();
             queue.waiting.insert(internal_id, sender);
+            queue.waker.wake_by_ref();
 
-            trace!("waiting for stream: {}", hex::encode(id));
+            trace!("waiting for stream");
 
             receiver
         };
@@ -287,13 +360,13 @@ where
         futures::select! {
             stream = receiver.fuse() =>
                 stream
-                    .inspect(|_| debug!("caller received stream: {}", hex::encode(id)))
-                    .inspect_err(|_| error!("connection cancelled stream: {}", hex::encode(id)))
+                    .inspect(|_| debug!("caller received stream"))
+                    .inspect_err(|_| error!("connection cancelled stream"))
                     .map_err(|_| {
-                    std::io::Error::other(format!("connection cancelled stream: {}", hex::encode(id)))
+                    std::io::Error::other(format!("connection cancelled stream"))
                 }),
             _ = self.close_notify.notified().fuse() => {
-                error!("connection closed before stream opened: {}", hex::encode(id));
+                error!("connection closed before stream opened");
                 Err(std::io::ErrorKind::ConnectionAborted.into())
             }
         }
@@ -323,19 +396,27 @@ mod tests {
 
         futures::join!(
             async {
-                let mut stream = client_ctrl.open(b"test").await.unwrap();
+                let mut stream = client_ctrl.open(b"0").await.unwrap();
+                let mut stream2 = client_ctrl.open(b"00").await.unwrap();
+
                 stream.write_all(b"ping").await.unwrap();
+                stream2.write_all(b"ping2").await.unwrap();
 
                 client_ctrl.close();
             },
             async {
-                let mut stream = server_ctrl.open(b"test").await.unwrap();
+                let mut stream = server_ctrl.open(b"0").await.unwrap();
+                let mut stream2 = server_ctrl.open(b"00").await.unwrap();
+
                 let mut buf = [0; 4];
                 stream.read_exact(&mut buf).await.unwrap();
+                assert_eq!(&buf, b"ping");
+                
+                let mut buf = [0; 5];
+                stream2.read_exact(&mut buf).await.unwrap();
+                assert_eq!(&buf, b"ping2");
 
                 server_ctrl.close();
-
-                assert_eq!(&buf, b"ping");
             }
         );
 
