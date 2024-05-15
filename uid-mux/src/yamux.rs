@@ -16,8 +16,7 @@ use std::{
 
 use async_trait::async_trait;
 use futures::{
-    stream::FuturesUnordered, task::noop_waker, AsyncRead, AsyncWrite, Future, FutureExt,
-    StreamExt,
+    stream::FuturesUnordered, task::noop_waker, AsyncRead, AsyncWrite, Future, FutureExt, StreamExt,
 };
 use tokio::sync::{oneshot, Notify};
 use yamux::Connection;
@@ -157,10 +156,9 @@ where
         if let Poll::Ready(stream) = self.conn.poll_next_inbound(cx).map(Option::transpose)? {
             if stream.is_some() {
                 error!("client mux received incoming stream");
-                return Err(std::io::Error::other(
-                    "client mode can not accept incoming streams",
-                )
-                .into());
+                return Err(
+                    std::io::Error::other("client mode can not accept incoming streams").into(),
+                );
             }
 
             info!("remote closed connection");
@@ -204,7 +202,7 @@ where
                     info!("remote closed connection");
                     self.remote_closed = true;
                 }
-               
+
                 break;
             };
 
@@ -223,7 +221,9 @@ where
             debug!("received stream: {}", id);
             let mut queue = self.queue.lock().unwrap();
             if let Some(sender) = queue.waiting.remove(&id) {
-                _ = sender.send(stream).inspect_err(|_| error!("caller dropped receiver"));
+                _ = sender
+                    .send(stream)
+                    .inspect_err(|_| error!("caller dropped receiver"));
                 trace!("returned stream to caller: {}", id);
             } else {
                 trace!("queuing stream: {}", id);
@@ -345,7 +345,7 @@ where
         feature = "tracing",
         tracing::instrument(
             fields(role = %self.role, id = hex::encode(id)),
-            skip_all, 
+            skip_all,
             err
         )
     )]
@@ -362,7 +362,7 @@ where
             }
 
             let (sender, receiver) = oneshot::channel();
-            
+
             // Insert the oneshot into the queue.
             queue.waiting.insert(internal_id, sender);
             // Wake up the connection.
@@ -426,7 +426,7 @@ mod tests {
                 let mut buf = [0; 4];
                 stream.read_exact(&mut buf).await.unwrap();
                 assert_eq!(&buf, b"ping");
-                
+
                 let mut buf = [0; 5];
                 stream2.read_exact(&mut buf).await.unwrap();
                 assert_eq!(&buf, b"ping2");
