@@ -15,9 +15,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use futures::{
-    stream::FuturesUnordered, task::noop_waker, AsyncRead, AsyncWrite, Future, FutureExt, StreamExt,
-};
+use futures::{stream::FuturesUnordered, AsyncRead, AsyncWrite, Future, FutureExt, StreamExt};
 use tokio::sync::{oneshot, Notify};
 use yamux::Connection;
 
@@ -60,7 +58,7 @@ pub struct Yamux<Io> {
 struct Queue {
     waiting: HashMap<InternalId, oneshot::Sender<Stream>>,
     ready: HashMap<InternalId, Stream>,
-    waker: Waker,
+    waker: Option<Waker>,
 }
 
 impl Default for Queue {
@@ -68,7 +66,7 @@ impl Default for Queue {
         Self {
             waiting: Default::default(),
             ready: Default::default(),
-            waker: noop_waker(),
+            waker: None,
         }
     }
 }
@@ -169,18 +167,24 @@ where
     }
 
     fn client_handle_outbound(&mut self, cx: &mut Context<'_>) -> Result<()> {
-        let mut queue = self.queue.lock().unwrap();
-        while !queue.waiting.is_empty() {
-            if let Poll::Ready(stream) = self.conn.poll_new_outbound(cx)? {
-                let id = *queue.waiting.keys().next().unwrap();
-                let sender = queue.waiting.remove(&id).unwrap();
+        // Putting this in a block so the lock is released as soon as possible.
+        {
+            let mut queue = self.queue.lock().unwrap();
+            while !queue.waiting.is_empty() {
+                if let Poll::Ready(stream) = self.conn.poll_new_outbound(cx)? {
+                    let id = *queue.waiting.keys().next().unwrap();
+                    let sender = queue.waiting.remove(&id).unwrap();
 
-                debug!("opened new stream: {}", id);
+                    debug!("opened new stream: {}", id);
 
-                self.outgoing.push(ReturnStream::new(id, stream, sender));
-            } else {
-                break;
+                    self.outgoing.push(ReturnStream::new(id, stream, sender));
+                } else {
+                    break;
+                }
             }
+
+            // Set the waker so `YamuxCtrl` can wake up the connection.
+            queue.waker = Some(cx.waker().clone());
         }
 
         while let Poll::Ready(Some(())) =
@@ -188,9 +192,6 @@ where
         {
             trace!("finished processing stream");
         }
-
-        // Set the waker to wake up when the queue is ready to process more streams.
-        queue.waker = cx.waker().clone();
 
         Ok(())
     }
@@ -215,11 +216,11 @@ where
     }
 
     fn server_process_inbound(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let mut queue = self.queue.lock().unwrap();
         while let Poll::Ready(Some((id, stream))) =
             self.incoming.poll_next_unpin(cx).map(Option::transpose)?
         {
             debug!("received stream: {}", id);
-            let mut queue = self.queue.lock().unwrap();
             if let Some(sender) = queue.waiting.remove(&id) {
                 _ = sender
                     .send(stream)
@@ -230,6 +231,9 @@ where
                 queue.ready.insert(id, stream);
             }
         }
+
+        // Set the waker so `YamuxCtrl` can wake up the connection.
+        queue.waker = Some(cx.waker().clone());
 
         Ok(())
     }
@@ -248,11 +252,6 @@ where
 
     fn is_complete(&self) -> bool {
         self.remote_closed || self.closed
-    }
-
-    /// Sets the queue waker so that controllers can wake up the connection.
-    fn set_queue_waker(&self, cx: &mut Context<'_>) {
-        self.queue.lock().unwrap().waker = cx.waker().clone();
     }
 
     fn poll_client(&mut self, cx: &mut Context<'_>) -> Result<()> {
@@ -304,8 +303,6 @@ where
             info!("connection complete");
             Poll::Ready(Ok(()))
         } else {
-            self.set_queue_waker(cx);
-
             Poll::Pending
         }
     }
@@ -324,12 +321,14 @@ impl YamuxCtrl {
     /// Close the yamux connection.
     pub fn close(&self) {
         self.shutdown_notify.store(true, Ordering::Relaxed);
-        self.wake_conn();
-    }
 
-    /// Wakes up the connection.
-    fn wake_conn(&self) {
-        self.queue.lock().unwrap().waker.wake_by_ref();
+        // Wake up the connection.
+        self.queue
+            .lock()
+            .unwrap()
+            .waker
+            .as_ref()
+            .map(|waker| waker.wake_by_ref());
     }
 }
 
@@ -366,7 +365,7 @@ where
             // Insert the oneshot into the queue.
             queue.waiting.insert(internal_id, sender);
             // Wake up the connection.
-            queue.waker.wake_by_ref();
+            queue.waker.as_ref().map(|waker| waker.wake_by_ref());
 
             trace!("waiting for stream");
 
