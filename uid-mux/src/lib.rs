@@ -19,7 +19,7 @@ use futures::io::{AsyncRead, AsyncWrite};
 pub(crate) struct InternalId([u8; 32]);
 
 impl InternalId {
-    /// Create a new `InternalId` from a byte slice.
+    /// Creates a new `InternalId` from a byte slice.
     pub(crate) fn new(bytes: &[u8]) -> Self {
         Self(blake3::hash(bytes).into())
     }

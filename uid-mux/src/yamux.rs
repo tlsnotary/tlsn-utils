@@ -89,7 +89,7 @@ impl<Io> Yamux<Io>
 where
     Io: AsyncWrite + AsyncRead + Unpin,
 {
-    /// Create a new yamux multiplexer.
+    /// Creates a new yamux multiplexer.
     pub fn new(io: Io, config: Config, mode: Mode) -> Self {
         let role = match mode {
             Mode::Client => Role::Client,

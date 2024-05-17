@@ -44,7 +44,7 @@ impl<Io> State<Io> {
 pub(crate) struct ReadId<Io>(State<Io>);
 
 impl<Io> ReadId<Io> {
-    /// Create a new `ReadId` future.
+    /// Creates a new `ReadId` future.
     pub(crate) fn new(io: Io) -> Self {
         Self(State::Pending(Inner {
             io,
@@ -90,7 +90,7 @@ where
 pub(crate) struct WriteId<Io>(State<Io>);
 
 impl<Io> WriteId<Io> {
-    /// Create a new `WriteId` future.
+    /// Creates a new `WriteId` future.
     pub(crate) fn new(io: Io, id: InternalId) -> Self {
         Self(State::Pending(Inner {
             io,
@@ -147,7 +147,7 @@ pub(crate) struct ReturnStream<Io> {
 }
 
 impl<Io> ReturnStream<Io> {
-    /// Create a new `ReturnStream` future.
+    /// Creates a new `ReturnStream` future.
     pub(crate) fn new(id: InternalId, io: Io, sender: oneshot::Sender<Io>) -> Self {
         Self {
             fut: WriteId::new(io, id),
