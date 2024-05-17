@@ -62,6 +62,15 @@ pub(crate) mod log {
         };
     }
 
+    macro_rules! warn_ {
+        ($( $tokens:tt )*) => {
+            {
+                #[cfg(feature = "tracing")]
+                tracing::warn!($( $tokens )*);
+            }
+        };
+    }
+
     macro_rules! trace {
         ($( $tokens:tt )*) => {
             {
@@ -89,5 +98,5 @@ pub(crate) mod log {
         };
     }
 
-    pub(crate) use {debug, error, info, trace};
+    pub(crate) use {debug, error, info, trace, warn_ as warn};
 }
