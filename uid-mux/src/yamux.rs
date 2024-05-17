@@ -513,7 +513,6 @@ mod tests {
     // Test the case where the server closes the connection while the client is opening a new stream.
     #[tokio::test]
     async fn test_yamux_server_close_early() {
-        tracing_subscriber::fmt::init();
         let (client_io, server_io) = duplex(1024);
         let client = Yamux::new(client_io.compat(), Config::default(), Mode::Client);
         let server = Yamux::new(server_io.compat(), Config::default(), Mode::Server);
