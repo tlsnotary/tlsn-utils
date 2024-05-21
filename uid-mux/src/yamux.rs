@@ -156,7 +156,7 @@ where
             if stream.is_some() {
                 error!("client mux received incoming stream");
                 return Err(
-                    std::io::Error::other("client mode can not accept incoming streams").into(),
+                    std::io::Error::other("client mode cannot accept incoming streams").into(),
                 );
             }
 
@@ -332,7 +332,7 @@ pub struct YamuxCtrl {
 }
 
 impl YamuxCtrl {
-    /// Close the yamux connection.
+    /// Closes the yamux connection.
     pub fn close(&self) {
         self.shutdown_notify.store(true, Ordering::Relaxed);
 
