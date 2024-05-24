@@ -11,7 +11,7 @@ pub trait FramedUidMux<Id> {
     /// Error type.
     type Error;
 
-    /// Open a new framed stream with the given id.
+    /// Opens a new framed stream with the given id.
     async fn open_framed(&self, id: &Id) -> Result<Self::Framed, Self::Error>;
 }
 
@@ -23,7 +23,7 @@ pub struct FramedMux<M, C> {
 }
 
 impl<M, C> FramedMux<M, C> {
-    /// Create a new `FramedMux`.
+    /// Creates a new `FramedMux`.
     pub fn new(mux: M, codec: C) -> Self {
         Self { mux, codec }
     }
@@ -48,7 +48,7 @@ impl<M, C> FramedMux<M, C> {
         &mut self.codec
     }
 
-    /// Split the `FramedMux` into its parts.
+    /// Splits the `FramedMux` into its parts.
     pub fn into_parts(self) -> (M, C) {
         (self.mux, self.codec)
     }
@@ -66,7 +66,7 @@ where
     /// Error type.
     type Error = <M as UidMux<Id>>::Error;
 
-    /// Open a new framed stream with the given id.
+    /// Opens a new framed stream with the given id.
     async fn open_framed(&self, id: &Id) -> Result<Self::Framed, Self::Error> {
         let stream = self.mux.open(id).await?;
         Ok(self.codec.new_framed(stream))

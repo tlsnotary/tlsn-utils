@@ -9,7 +9,7 @@ use crate::{
     FramedMux,
 };
 
-/// Create a test pair of yamux instances.
+/// Creates a test pair of yamux instances.
 ///
 /// # Arguments
 ///
@@ -25,7 +25,7 @@ pub fn test_yamux_pair(
     (a, b)
 }
 
-/// Create a test pair of framed yamux instances.
+/// Creates a test pair of framed yamux instances.
 ///
 /// # Arguments
 ///
