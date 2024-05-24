@@ -7,7 +7,7 @@ edition = "2021"
 default = ["compat", "channel", "codec", "bincode"]
 compat = ["dep:futures-sink"]
 channel = ["dep:futures-channel"]
-codec = ["dep:tokio-util"]
+codec = ["dep:tokio-util", "dep:futures-io"]
 bincode = ["dep:bincode"]
 
 [dependencies]
@@ -15,10 +15,14 @@ bytes.workspace = true
 serde.workspace = true
 pin-project-lite.workspace = true
 futures-core.workspace = true
+futures-io = { workspace = true, optional = true }
 futures-channel = { workspace = true, optional = true }
 futures-sink = { workspace = true, optional = true }
 futures-util = { workspace = true, features = ["bilock", "unstable"] }
-tokio-util = { workspace = true, features = ["codec"], optional = true }
+tokio-util = { workspace = true, features = [
+    "codec",
+    "compat",
+], optional = true }
 bincode = { workspace = true, optional = true }
 
 [dev-dependencies]

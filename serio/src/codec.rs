@@ -8,8 +8,18 @@ use std::{
 
 use bytes::{Bytes, BytesMut};
 use futures_core::stream::TryStream;
+use futures_io::{AsyncRead, AsyncWrite};
 
-use crate::{Deserialize, Serialize, Sink, Stream};
+use crate::{Deserialize, IoDuplex, Serialize, Sink, Stream};
+
+/// A codec.
+pub trait Codec<Io> {
+    /// The framed transport type.
+    type Framed: IoDuplex;
+
+    /// Creates a new framed transport with the given IO.
+    fn new_framed(&self, io: Io) -> Self::Framed;
+}
 
 /// A serializer.
 pub trait Serializer {
@@ -51,6 +61,25 @@ mod bincode_impl {
 
         fn deserialize<T: Deserialize>(&mut self, buf: &BytesMut) -> Result<T, Self::Error> {
             Ok(deserialize(buf)?)
+        }
+    }
+
+    use tokio_util::{
+        codec::{Framed as TokioFramed, LengthDelimitedCodec},
+        compat::{Compat, FuturesAsyncReadCompatExt as _},
+    };
+
+    impl<Io> Codec<Io> for Bincode
+    where
+        Io: AsyncRead + AsyncWrite + Unpin,
+    {
+        type Framed = Framed<TokioFramed<Compat<Io>, LengthDelimitedCodec>, Self>;
+
+        fn new_framed(&self, io: Io) -> Self::Framed {
+            Framed::new(
+                LengthDelimitedCodec::builder().new_framed(io.compat()),
+                self.clone(),
+            )
         }
     }
 }
@@ -133,7 +162,7 @@ where
 mod tests {
     use serde::{Deserialize, Serialize};
     use tokio::io::duplex;
-    use tokio_util::codec::LengthDelimitedCodec;
+    use tokio_util::compat::TokioAsyncReadCompatExt;
 
     use crate::{SinkExt, StreamExt};
 
@@ -149,11 +178,8 @@ mod tests {
     fn test_framed() {
         let (a, b) = duplex(1024);
 
-        let a = LengthDelimitedCodec::builder().new_framed(a);
-        let b = LengthDelimitedCodec::builder().new_framed(b);
-
-        let mut a = Framed::new(a, Bincode::default());
-        let mut b = Framed::new(b, Bincode::default());
+        let mut a = Bincode::default().new_framed(a.compat());
+        let mut b = Bincode::default().new_framed(b.compat());
 
         let a = async {
             a.send(Ping).await.unwrap();

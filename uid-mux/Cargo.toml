@@ -1,0 +1,34 @@
+[package]
+name = "uid-mux"
+version = "0.1.0"
+authors = ["TLSNotary Team"]
+description = "Async multiplexing library."
+keywords = ["multiplex", "channel", "futures", "async"]
+categories = ["network-programming", "asynchronous"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+
+[features]
+default = ["tracing", "serio"]
+tracing = ["dep:tracing"]
+serio = ["dep:serio"]
+test-utils = ["tokio/io-util", "dep:tokio-util"]
+
+[dependencies]
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+futures = { workspace = true }
+tracing = { workspace = true, optional = true }
+yamux = "0.13"
+blake3 = "1.5"
+hex = "0.4"
+serio = { workspace = true, optional = true }
+tokio-util = { version = "0.7", features = ["compat"], optional = true }
+
+[dev-dependencies]
+tokio-util = { version = "0.7", features = ["compat"] }
+tokio = { workspace = true, features = [
+    "io-util",
+    "rt-multi-thread",
+    "macros",
+] }
