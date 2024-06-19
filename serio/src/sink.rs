@@ -2,12 +2,13 @@
 
 use std::{
     future::Future,
-    marker::PhantomData,
     ops::DerefMut,
     pin::Pin,
     task::{ready, Context, Poll},
 };
 
+#[cfg(feature = "compat")]
+use crate::FuturesCompat;
 use crate::{future::assert_future, Serialize};
 
 /// A sink with an error type of `std::io::Error`.
@@ -178,13 +179,14 @@ pub trait SinkExt: Sink {
         assert_future::<Result<(), Self::Error>, _>(Flush::new(self))
     }
 
-    /// Convert this sink into a `futures::Sink`.
+    /// Wraps the sink in a compatibility layer that allows it to be used as a
+    /// futures 0.3 sink.
     #[cfg(feature = "compat")]
-    fn into_sink<Item: Serialize>(self) -> IntoSink<Self, Item>
+    fn compat_sink<Item: Serialize>(self) -> FuturesCompat<Self, Item>
     where
         Self: Sized,
     {
-        assert_futures_sink(IntoSink::new(self))
+        assert_futures_sink(FuturesCompat::new(self))
     }
 }
 
@@ -316,71 +318,6 @@ impl<Si: Sink + Unpin + ?Sized> Future for Flush<'_, Si> {
         Pin::new(&mut self.sink).poll_flush(cx)
     }
 }
-
-#[cfg(feature = "compat")]
-mod compat {
-    use super::*;
-
-    pin_project_lite::pin_project! {
-        /// Wraps a sink and provides a `futures::Sink` implementation.
-        pub struct IntoSink<Si, Item> {
-            #[pin]
-            sink: Si,
-            _pd: PhantomData<Item>,
-        }
-    }
-
-    impl<Si, Item> IntoSink<Si, Item> {
-        pub(super) fn new(sink: Si) -> Self {
-            Self {
-                sink,
-                _pd: PhantomData,
-            }
-        }
-
-        /// Returns a reference to the inner sink.
-        pub fn sink(&self) -> &Si {
-            &self.sink
-        }
-
-        /// Returns a mutable reference to the inner sink.
-        pub fn sink_mut(&mut self) -> &mut Si {
-            &mut self.sink
-        }
-
-        /// Returns the inner sink.
-        pub fn into_inner(self) -> Si {
-            self.sink
-        }
-    }
-
-    impl<Si, Item> futures_sink::Sink<Item> for IntoSink<Si, Item>
-    where
-        Si: Sink,
-        Item: Serialize,
-    {
-        type Error = Si::Error;
-
-        fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-            self.project().sink.poll_ready(cx)
-        }
-
-        fn start_send(self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
-            self.project().sink.start_send(item)
-        }
-
-        fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-            self.project().sink.poll_flush(cx)
-        }
-
-        fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-            self.project().sink.poll_close(cx)
-        }
-    }
-}
-
-#[cfg(feature = "compat")]
-pub use compat::IntoSink;
 
 pub(crate) fn assert_futures_sink<S: futures_sink::Sink<Item>, Item>(sink: S) -> S {
     sink
