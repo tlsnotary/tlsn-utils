@@ -10,6 +10,8 @@ use std::{
 
 use futures_core::FusedFuture;
 
+#[cfg(feature = "compat")]
+use crate::FuturesCompat;
 use crate::{future::assert_future, Deserialize};
 
 /// A stream with an error type of `std::io::Error`.
@@ -177,13 +179,14 @@ pub trait StreamExt: Stream {
         assert_future::<Option<Result<Item, Self::Error>>, _>(Next::new(self))
     }
 
-    /// Converts this stream into a `futures::Stream`.
+    /// Wraps the stream in a compatibility layer that allows it to be used as a
+    /// futures 0.3 stream.
     #[cfg(feature = "compat")]
-    fn into_stream<Item: Deserialize>(self) -> IntoStream<Self, Item>
+    fn compat_stream<Item: Deserialize>(self) -> FuturesCompat<Self, Item>
     where
         Self: Sized,
     {
-        assert_futures_stream(IntoStream::new(self))
+        assert_futures_stream(FuturesCompat::new(self))
     }
 
     /// A convenience method for calling [`Stream::poll_next`] on [`Unpin`]
@@ -233,59 +236,6 @@ impl<St: ?Sized + Stream + Unpin, Item: Deserialize> Future for Next<'_, St, Ite
         self.stream.poll_next_unpin(cx)
     }
 }
-
-#[cfg(feature = "compat")]
-mod compat {
-    use super::*;
-
-    pin_project_lite::pin_project! {
-        /// Wraps a stream and provides a `futures::Stream` implementation.
-        pub struct IntoStream<St, Item> {
-            #[pin]
-            stream: St,
-            _pd: PhantomData<Item>,
-        }
-    }
-
-    impl<St, Item> IntoStream<St, Item> {
-        pub(super) fn new(stream: St) -> Self {
-            Self {
-                stream,
-                _pd: PhantomData,
-            }
-        }
-
-        /// Returns a reference to the inner stream.
-        pub fn stream(&self) -> &St {
-            &self.stream
-        }
-
-        /// Returns a mutable reference to the inner stream.
-        pub fn stream_mut(&mut self) -> &mut St {
-            &mut self.stream
-        }
-
-        /// Returns the inner stream.
-        pub fn into_inner(self) -> St {
-            self.stream
-        }
-    }
-
-    impl<St, Item> futures_core::Stream for IntoStream<St, Item>
-    where
-        St: Stream,
-        Item: Deserialize,
-    {
-        type Item = Result<Item, St::Error>;
-
-        fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-            self.project().stream.poll_next(cx)
-        }
-    }
-}
-
-#[cfg(feature = "compat")]
-pub use compat::IntoStream;
 
 /// An extension trait for [`IoStream`] which provides a variety of convenient functions.
 pub trait IoStreamExt: IoStream {

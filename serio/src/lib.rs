@@ -6,12 +6,16 @@
 pub mod channel;
 #[cfg(feature = "codec")]
 pub mod codec;
+#[cfg(feature = "compat")]
+pub(crate) mod compat;
 pub(crate) mod future;
 pub mod sink;
 pub mod stream;
 
 #[cfg(feature = "codec")]
 pub use codec::{Deserializer, Framed, Serializer};
+#[cfg(feature = "compat")]
+pub use compat::FuturesCompat;
 pub use sink::{IoSink, Sink, SinkExt};
 pub use stream::{IoStream, Stream, StreamExt};
 
