@@ -2,6 +2,14 @@
 name = "serio"
 version = "0.1.0"
 edition = "2021"
+authors = ["TLSNotary Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tlsnotary/tlsn-utils"
+description = """
+A library providing traits and utilities for typed IO using format agnostic serialization built on serde.
+"""
+categories = ["asynchronous", "network-programming"]
+keywords = ["io", "async", "futures", "serde"]
 
 [features]
 default = ["compat", "channel", "codec", "bincode"]
