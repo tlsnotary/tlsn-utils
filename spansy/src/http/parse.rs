@@ -10,39 +10,32 @@ pub fn parse_chunked_body(src: &Bytes, offset: usize) -> Result<(Bytes, usize), 
     let mut pos = offset;
 
     loop {
-        // Find the end of the chunk size line
         let chunk_size_end = src[pos..]
             .windows(2)
             .position(|w| w == b"\r\n")
             .ok_or_else(|| ParseError("Invalid chunked encoding: missing chunk size CRLF".to_string()))?
             + pos;
         
-        // Parse the chunk size
         let chunk_size_str = std::str::from_utf8(&src[pos..chunk_size_end])
             .map_err(|_| ParseError("Invalid chunk size encoding".to_string()))?;
         let chunk_size = usize::from_str_radix(chunk_size_str.trim(), 16)
             .map_err(|_| ParseError("Invalid chunk size value".to_string()))?;
         
-        // Move past the chunk size line
         pos = chunk_size_end + 2;
         
-        // If chunk size is zero, this is the last chunk
         if chunk_size == 0 {
             break;
         }
         
-        // Extract the chunk data
         let chunk_data_end = pos + chunk_size;
         if chunk_data_end > src.len() {
             return Err(ParseError("Chunk data exceeds source length".to_string()));
         }
         body.extend_from_slice(&src[pos..chunk_data_end]);
         
-        // Move past the chunk data and the trailing CRLF
         pos = chunk_data_end + 2;
     }
     
-    // Move past the final CRLF after the last chunk
     pos += 2;
     
     Ok((body.freeze(), pos))

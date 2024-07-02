@@ -168,7 +168,23 @@ pub(crate) fn parse_response_from_bytes(
 
     let body_len = response_body_len(&response)?;
 
-    if body_len > 0 {
+    if body_len == usize::MAX {
+        // Handle different transfer encodings
+        let transfer_encoding = response.headers_with_name("Transfer-Encoding").next().unwrap().value.as_bytes();
+        let (body_bytes, end_pos) = match transfer_encoding {
+            b"chunked" => parse_chunked_body(src, head_end)?,
+            b"gzip" => (parse_gzip_body(&src.slice(head_end..))?, src.len()),
+            b"deflate" => (parse_deflate_body(&src.slice(head_end..))?, src.len()),
+            b"identity" => (parse_identity_body(&src.slice(head_end..))?, src.len()),
+            _ => return Err(ParseError("Unsupported Transfer-Encoding".to_string())),
+        };
+        let body_span = Span::new_bytes(body_bytes.clone(), 0..body_bytes.len());
+        response.body = Some(Body {
+            span: Span::new_bytes(src.clone(), head_end..end_pos),
+            content: BodyContent::Unknown(body_span),
+        });
+        response.span = Span::new_bytes(src.clone(), offset..end_pos);
+    } else if body_len > 0 {
         let range = head_end..head_end + body_len;
 
         if range.end > src.len() {
