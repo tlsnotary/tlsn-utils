@@ -1,5 +1,7 @@
 use crate::ParseError;
 use bytes::{Bytes, BytesMut};
+use flate2::read::{GzDecoder, DeflateDecoder};
+use std::io::Read;
 
 // Parsing functions for Transfer-Encoding header types
 // Parse Transfer-Encoding: chunked body
@@ -46,7 +48,12 @@ fn parse_chunked_body(src: &Bytes, offset: usize) -> Result<(Bytes, usize), Pars
     Ok((body.freeze(), pos))
 }
 
-fn parse_gzip_body() {}
+fn parse_gzip_body(src: &Bytes) -> Result<Bytes, ParseError> {
+    let mut decoder = GzDecoder::new(&src[..]);
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed).map_err(|e| ParseError(format!("Failed to decompress gzip body: {}", e)))?;
+    Ok(Bytes::from(decompressed))
+}
 
 fn parse_deflate_body() {}
 
