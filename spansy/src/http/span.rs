@@ -256,14 +256,12 @@ fn response_body_len(response: &Response) -> Result<usize, ParseError> {
         _ => {}
     }
 
-    if response
-        .headers_with_name("Transfer-Encoding")
-        .next()
-        .is_some()
-    {
-        Err(ParseError(
-            "Transfer-Encoding not supported yet".to_string(),
-        ))
+    if let Some(transfer_encoding) = response.headers_with_name("Transfer-Encoding").next() {
+        match transfer_encoding.value.as_bytes() {
+            b"chunked" => Ok(usize::MAX),
+            b"gzip" | b"deflate" | b"identity" => Ok(usize::MAX),
+            _ => Err(ParseError("Unsupported Transfer-Encoding".to_string())),
+        }
     } else if let Some(h) = response.headers_with_name("Content-Length").next() {
         // If a valid Content-Length header field is present without Transfer-Encoding, its decimal value
         // defines the expected message body length in octets.
