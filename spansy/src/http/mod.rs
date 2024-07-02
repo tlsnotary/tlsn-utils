@@ -2,6 +2,7 @@
 
 mod span;
 mod types;
+mod parse;
 
 use bytes::Bytes;
 
