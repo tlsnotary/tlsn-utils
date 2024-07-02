@@ -55,6 +55,11 @@ fn parse_gzip_body(src: &Bytes) -> Result<Bytes, ParseError> {
     Ok(Bytes::from(decompressed))
 }
 
-fn parse_deflate_body() {}
+fn parse_deflate_body(src: &Bytes) -> Result<Bytes, ParseError> {
+    let mut decoder = DeflateDecoder::new(&src[..]);
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed).map_err(|e| ParseError(format!("Failed to decompress deflate body: {}", e)))?;
+    Ok(Bytes::from(decompressed))
+}
 
 fn parse_idenity_body() {}
