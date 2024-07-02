@@ -62,4 +62,6 @@ fn parse_deflate_body(src: &Bytes) -> Result<Bytes, ParseError> {
     Ok(Bytes::from(decompressed))
 }
 
-fn parse_idenity_body() {}
+fn parse_identity_body(src: &Bytes) -> Result<Bytes, ParseError> {
+    Ok(src.clone())
+}
