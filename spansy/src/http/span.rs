@@ -6,7 +6,7 @@ use crate::{
     helpers::get_span_range,
     http::{
         Body, BodyContent, Code, Header, HeaderName, HeaderValue, Method, Reason, Request,
-        RequestLine, Response, Status, Target,
+        RequestLine, Response, Status, Target, parse_chunked_body, parse_deflate_body, parse_gzip_body, parse_identity_body
     },
     json, ParseError, Span,
 };

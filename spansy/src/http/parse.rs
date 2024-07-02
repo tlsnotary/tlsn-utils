@@ -4,8 +4,8 @@ use flate2::read::{GzDecoder, DeflateDecoder};
 use std::io::Read;
 
 // Parsing functions for Transfer-Encoding header types
-// Parse Transfer-Encoding: chunked body
-fn parse_chunked_body(src: &Bytes, offset: usize) -> Result<(Bytes, usize), ParseError> {
+/// Parse Transfer-Encoding: chunked body
+pub fn parse_chunked_body(src: &Bytes, offset: usize) -> Result<(Bytes, usize), ParseError> {
     let mut body = BytesMut::new();
     let mut pos = offset;
 
@@ -48,20 +48,23 @@ fn parse_chunked_body(src: &Bytes, offset: usize) -> Result<(Bytes, usize), Pars
     Ok((body.freeze(), pos))
 }
 
-fn parse_gzip_body(src: &Bytes) -> Result<Bytes, ParseError> {
+/// Parse Transfer-Encoding: gzip body
+pub fn parse_gzip_body(src: &Bytes) -> Result<Bytes, ParseError> {
     let mut decoder = GzDecoder::new(&src[..]);
     let mut decompressed = Vec::new();
     decoder.read_to_end(&mut decompressed).map_err(|e| ParseError(format!("Failed to decompress gzip body: {}", e)))?;
     Ok(Bytes::from(decompressed))
 }
 
-fn parse_deflate_body(src: &Bytes) -> Result<Bytes, ParseError> {
+/// Parse Transfer-Encoding: deflate body
+pub fn parse_deflate_body(src: &Bytes) -> Result<Bytes, ParseError> {
     let mut decoder = DeflateDecoder::new(&src[..]);
     let mut decompressed = Vec::new();
     decoder.read_to_end(&mut decompressed).map_err(|e| ParseError(format!("Failed to decompress deflate body: {}", e)))?;
     Ok(Bytes::from(decompressed))
 }
 
-fn parse_identity_body(src: &Bytes) -> Result<Bytes, ParseError> {
+/// Parse Transfer-Encoding: identity body
+pub fn parse_identity_body(src: &Bytes) -> Result<Bytes, ParseError> {
     Ok(src.clone())
 }
