@@ -1,5 +1,5 @@
 [workspace]
-members = ["utils", "utils-aio", "spansy", "serio", "uid-mux"]
+members = ["utils", "utils-aio", "spansy", "serio", "uid-mux", "websocket-relay"]
 
 [workspace.dependencies]
 tlsn-utils = { path = "utils" }
