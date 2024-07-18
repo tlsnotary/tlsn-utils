@@ -26,7 +26,7 @@ struct State {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ConnectionId(String);
 
-static STATE: Lazy<Arc<Mutex<State>>> = Lazy::new(|| Default::default());
+static STATE: Lazy<Arc<Mutex<State>>> = Lazy::new(Default::default);
 
 enum Mode {
     /// Acts a proxy between two websocket clients.
