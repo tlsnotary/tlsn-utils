@@ -1,7 +1,10 @@
 use std::{
     collections::HashMap,
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use anyhow::{anyhow, Result};
@@ -150,6 +153,8 @@ async fn handle_tcp(addr: String, ws: WebSocketStream<TcpStream>) -> Result<()> 
     let (mut sink, mut stream) = ws.split();
     let (mut rx, mut tx) = tcp.split();
 
+    let is_client_closed = AtomicBool::new(false);
+
     let fut_tx = async {
         while let Some(msg) = stream.next().await.transpose()? {
             let data = match msg {
@@ -166,6 +171,7 @@ async fn handle_tcp(addr: String, ws: WebSocketStream<TcpStream>) -> Result<()> 
         }
 
         debug!("websocket client closed");
+        is_client_closed.store(true, Ordering::Relaxed);
 
         tx.shutdown().await?;
 
@@ -184,7 +190,10 @@ async fn handle_tcp(addr: String, ws: WebSocketStream<TcpStream>) -> Result<()> 
                 return Ok(());
             }
 
-            sink.send(Message::Binary(buf[..n].to_vec())).await?;
+            // Only send to client if it hasn't closed.
+            if !is_client_closed.load(Ordering::Relaxed) {
+                sink.send(Message::Binary(buf[..n].to_vec())).await?;
+            }
         }
     };
 
