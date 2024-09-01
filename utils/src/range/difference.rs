@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::range::{Difference, Disjoint, RangeSet, Subset, Superset, Union};
+use crate::range::{Difference, Disjoint, RangeSet, Subset, Union};
 
 impl<T: Copy + Ord> Difference<Range<T>> for Range<T> {
     type Output = RangeSet<T>;
@@ -12,8 +12,8 @@ impl<T: Copy + Ord> Difference<Range<T>> for Range<T> {
             return RangeSet::from(self.clone());
         }
 
-        // If other is a superset of self, return an empty set.
-        if other.is_superset(self) {
+        // If other contains self, return an empty set.
+        if self.is_subset(other) {
             return RangeSet::default();
         }
 
@@ -78,7 +78,7 @@ impl<T: Copy + Ord> Difference<Range<T>> for RangeSet<T> {
                 break;
             }
             // If the current range is entirely contained within other
-            else if other.is_superset(&ranges[i]) {
+            else if ranges[i].is_subset(other) {
                 ranges.remove(i);
                 continue;
             }

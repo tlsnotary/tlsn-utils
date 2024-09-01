@@ -1,18 +1,18 @@
 use std::ops::Range;
 
-use crate::range::{Disjoint, RangeSet, Superset, Union};
+use crate::range::{Disjoint, RangeSet, Subset, Union};
 
 impl<T: Copy + Ord> Union<Range<T>> for Range<T> {
     type Output = RangeSet<T>;
 
     fn union(&self, other: &Range<T>) -> Self::Output {
         // If the two are equal, or other is a subset, return self.
-        if self == other || self.is_superset(other) {
+        if self == other || other.is_subset(self) {
             return RangeSet::from(self.clone());
         }
 
-        // If other is a superset, return other.
-        if other.is_superset(self) {
+        // If other contains self, return other.
+        if self.is_subset(other) {
             return RangeSet::from(other.clone());
         }
 

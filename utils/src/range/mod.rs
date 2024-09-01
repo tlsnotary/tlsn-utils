@@ -1,5 +1,6 @@
 mod difference;
 mod index;
+mod subset;
 mod union;
 
 pub use index::IndexRanges;
@@ -390,10 +391,10 @@ pub trait Disjoint<Rhs> {
     fn is_disjoint(&self, other: &Rhs) -> bool;
 }
 
-pub trait Superset<Rhs> {
-    /// Returns `true` if `self` is a superset of `other`.
+pub trait Contains<Rhs> {
+    /// Returns `true` if `self` contains `other`.
     #[must_use]
-    fn is_superset(&self, other: &Rhs) -> bool;
+    fn contains(&self, other: &Rhs) -> bool;
 }
 
 pub trait Subset<Rhs> {
@@ -471,30 +472,6 @@ impl<T: Copy + Ord> Disjoint<Range<T>> for RangeSet<T> {
     }
 }
 
-impl<T: Copy + Ord> Superset<Range<T>> for Range<T> {
-    fn is_superset(&self, other: &Range<T>) -> bool {
-        self.start <= other.start && self.end >= other.end
-    }
-}
-
-impl<T: Copy + Ord> Superset<RangeSet<T>> for Range<T> {
-    fn is_superset(&self, other: &RangeSet<T>) -> bool {
-        other.ranges.iter().all(|range| self.is_superset(range))
-    }
-}
-
-impl<T: Copy + Ord> Subset<Range<T>> for Range<T> {
-    fn is_subset(&self, other: &Range<T>) -> bool {
-        self.start >= other.start && self.end <= other.end
-    }
-}
-
-impl<T: Copy + Ord> Subset<RangeSet<T>> for Range<T> {
-    fn is_subset(&self, other: &RangeSet<T>) -> bool {
-        other.ranges.iter().any(|range| self.is_subset(range))
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::all)]
 mod tests {
@@ -521,50 +498,6 @@ mod tests {
         assert!(!a.is_disjoint(&(5..25)));
         // equal
         assert!(!a.is_disjoint(&(10..20)));
-    }
-
-    #[test]
-    fn test_range_superset() {
-        let a = 10..20;
-
-        // rightward
-        assert!(!a.is_superset(&(20..30)));
-        // rightward aligned
-        assert!(!a.is_superset(&(19..25)));
-        // leftward
-        assert!(!a.is_superset(&(0..10)));
-        // leftward aligned
-        assert!(!a.is_superset(&(5..11)));
-        // rightward subset
-        assert!(a.is_superset(&(15..20)));
-        // leftward subset
-        assert!(a.is_superset(&(10..15)));
-        // superset
-        assert!(!a.is_superset(&(5..25)));
-        // equal
-        assert!(a.is_superset(&(10..20)));
-    }
-
-    #[test]
-    fn test_range_subset() {
-        let a = 10..20;
-
-        // rightward
-        assert!(!a.is_subset(&(20..30)));
-        // rightward aligned
-        assert!(!a.is_subset(&(19..25)));
-        // leftward
-        assert!(!a.is_subset(&(0..10)));
-        // leftward aligned
-        assert!(!a.is_subset(&(5..11)));
-        // rightward subset
-        assert!(!a.is_subset(&(15..20)));
-        // leftward subset
-        assert!(!a.is_subset(&(10..15)));
-        // superset
-        assert!(a.is_subset(&(5..25)));
-        // equal
-        assert!(a.is_subset(&(10..20)));
     }
 
     #[test]
