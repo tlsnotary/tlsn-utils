@@ -1,8 +1,8 @@
 use std::ops::Range;
 
-use crate::range::{RangeDisjoint, RangeSet, RangeSuperset, RangeUnion};
+use crate::range::{Disjoint, RangeSet, Superset, Union};
 
-impl<T: Copy + Ord> RangeUnion<Range<T>> for Range<T> {
+impl<T: Copy + Ord> Union<Range<T>> for Range<T> {
     type Output = RangeSet<T>;
 
     fn union(&self, other: &Range<T>) -> Self::Output {
@@ -34,7 +34,7 @@ impl<T: Copy + Ord> RangeUnion<Range<T>> for Range<T> {
     }
 }
 
-impl<T: Copy + Ord> RangeUnion<RangeSet<T>> for Range<T> {
+impl<T: Copy + Ord> Union<RangeSet<T>> for Range<T> {
     type Output = RangeSet<T>;
 
     fn union(&self, other: &RangeSet<T>) -> Self::Output {
@@ -74,7 +74,7 @@ impl<T: Copy + Ord> RangeUnion<RangeSet<T>> for Range<T> {
     }
 }
 
-impl<T: Copy + Ord> RangeUnion<Range<T>> for RangeSet<T> {
+impl<T: Copy + Ord> Union<Range<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn union(&self, other: &Range<T>) -> Self::Output {
@@ -82,7 +82,7 @@ impl<T: Copy + Ord> RangeUnion<Range<T>> for RangeSet<T> {
     }
 }
 
-impl<T: Copy + Ord> RangeUnion<RangeSet<T>> for RangeSet<T> {
+impl<T: Copy + Ord> Union<RangeSet<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn union(&self, other: &RangeSet<T>) -> Self::Output {

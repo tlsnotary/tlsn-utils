@@ -1,4 +1,4 @@
-use utils::range::{RangeDifference, RangeSet, ToRangeSet};
+use utils::range::{Difference, RangeSet, ToRangeSet};
 
 use crate::{json::JsonValue, Span, Spanned};
 

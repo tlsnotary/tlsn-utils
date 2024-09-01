@@ -98,7 +98,7 @@ impl<T: Copy + Ord> RangeSet<T> {
     /// The `RangeSet` is constructed by computing the union of the given ranges.
     pub fn new(ranges: &[Range<T>]) -> Self
     where
-        Self: RangeUnion<Range<T>, Output = Self>,
+        Self: Union<Range<T>, Output = Self>,
     {
         let mut set = Self::default();
 
@@ -384,25 +384,25 @@ impl<T: Copy + Ord> ToRangeSet<T> for Range<T> {
     }
 }
 
-pub trait RangeDisjoint<Rhs> {
+pub trait Disjoint<Rhs> {
     /// Returns `true` if the range is disjoint with `other`.
     #[must_use]
     fn is_disjoint(&self, other: &Rhs) -> bool;
 }
 
-pub trait RangeSuperset<Rhs> {
+pub trait Superset<Rhs> {
     /// Returns `true` if `self` is a superset of `other`.
     #[must_use]
     fn is_superset(&self, other: &Rhs) -> bool;
 }
 
-pub trait RangeSubset<Rhs> {
+pub trait Subset<Rhs> {
     /// Returns `true` if `self` is a subset of `other`.
     #[must_use]
     fn is_subset(&self, other: &Rhs) -> bool;
 }
 
-pub trait RangeDifference<Rhs> {
+pub trait Difference<Rhs> {
     type Output;
 
     /// Returns the set difference of `self` and `other`.
@@ -410,7 +410,7 @@ pub trait RangeDifference<Rhs> {
     fn difference(&self, other: &Rhs) -> Self::Output;
 }
 
-pub trait RangeUnion<Rhs> {
+pub trait Union<Rhs> {
     type Output;
 
     /// Returns the set union of `self` and `other`.
@@ -447,49 +447,49 @@ macro_rules! impl_step {
 
 impl_step!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
 
-impl<T: Copy + Ord> RangeDisjoint<Range<T>> for Range<T> {
+impl<T: Copy + Ord> Disjoint<Range<T>> for Range<T> {
     fn is_disjoint(&self, other: &Range<T>) -> bool {
         self.start >= other.end || self.end <= other.start
     }
 }
 
-impl<T: Copy + Ord> RangeDisjoint<RangeSet<T>> for Range<T> {
+impl<T: Copy + Ord> Disjoint<RangeSet<T>> for Range<T> {
     fn is_disjoint(&self, other: &RangeSet<T>) -> bool {
         other.ranges.iter().all(|range| self.is_disjoint(range))
     }
 }
 
-impl<T: Copy + Ord> RangeDisjoint<RangeSet<T>> for RangeSet<T> {
+impl<T: Copy + Ord> Disjoint<RangeSet<T>> for RangeSet<T> {
     fn is_disjoint(&self, other: &RangeSet<T>) -> bool {
         self.ranges.iter().all(|range| range.is_disjoint(other))
     }
 }
 
-impl<T: Copy + Ord> RangeDisjoint<Range<T>> for RangeSet<T> {
+impl<T: Copy + Ord> Disjoint<Range<T>> for RangeSet<T> {
     fn is_disjoint(&self, other: &Range<T>) -> bool {
         other.is_disjoint(self)
     }
 }
 
-impl<T: Copy + Ord> RangeSuperset<Range<T>> for Range<T> {
+impl<T: Copy + Ord> Superset<Range<T>> for Range<T> {
     fn is_superset(&self, other: &Range<T>) -> bool {
         self.start <= other.start && self.end >= other.end
     }
 }
 
-impl<T: Copy + Ord> RangeSuperset<RangeSet<T>> for Range<T> {
+impl<T: Copy + Ord> Superset<RangeSet<T>> for Range<T> {
     fn is_superset(&self, other: &RangeSet<T>) -> bool {
         other.ranges.iter().all(|range| self.is_superset(range))
     }
 }
 
-impl<T: Copy + Ord> RangeSubset<Range<T>> for Range<T> {
+impl<T: Copy + Ord> Subset<Range<T>> for Range<T> {
     fn is_subset(&self, other: &Range<T>) -> bool {
         self.start >= other.start && self.end <= other.end
     }
 }
 
-impl<T: Copy + Ord> RangeSubset<RangeSet<T>> for Range<T> {
+impl<T: Copy + Ord> Subset<RangeSet<T>> for Range<T> {
     fn is_subset(&self, other: &RangeSet<T>) -> bool {
         other.ranges.iter().any(|range| self.is_subset(range))
     }

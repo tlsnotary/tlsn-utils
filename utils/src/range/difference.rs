@@ -1,10 +1,8 @@
 use std::ops::Range;
 
-use crate::range::{
-    RangeDifference, RangeDisjoint, RangeSet, RangeSubset, RangeSuperset, RangeUnion,
-};
+use crate::range::{Difference, Disjoint, RangeSet, Subset, Superset, Union};
 
-impl<T: Copy + Ord> RangeDifference<Range<T>> for Range<T> {
+impl<T: Copy + Ord> Difference<Range<T>> for Range<T> {
     type Output = RangeSet<T>;
 
     fn difference(&self, other: &Range<T>) -> Self::Output {
@@ -38,9 +36,9 @@ impl<T: Copy + Ord> RangeDifference<Range<T>> for Range<T> {
     }
 }
 
-impl<T: Copy + Ord> RangeDifference<RangeSet<T>> for Range<T>
+impl<T: Copy + Ord> Difference<RangeSet<T>> for Range<T>
 where
-    RangeSet<T>: RangeDifference<Range<T>, Output = RangeSet<T>>,
+    RangeSet<T>: Difference<Range<T>, Output = RangeSet<T>>,
 {
     type Output = RangeSet<T>;
 
@@ -59,7 +57,7 @@ where
     }
 }
 
-impl<T: Copy + Ord> RangeDifference<Range<T>> for RangeSet<T> {
+impl<T: Copy + Ord> Difference<Range<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn difference(&self, other: &Range<T>) -> Self::Output {
@@ -113,7 +111,7 @@ impl<T: Copy + Ord> RangeDifference<Range<T>> for RangeSet<T> {
     }
 }
 
-impl<T: Copy + Ord> RangeDifference<RangeSet<T>> for RangeSet<T> {
+impl<T: Copy + Ord> Difference<RangeSet<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn difference(&self, other: &RangeSet<T>) -> Self::Output {
