@@ -159,7 +159,7 @@ pub(crate) fn parse_response_from_bytes(
         .expect("code is present");
 
     let raw_body = &src[head_end..];
-    dbg!(String::from_utf8(raw_body.to_vec()).unwrap());
+    // dbg!(String::from_utf8(raw_body.to_vec()).unwrap());
 
     let mut response = Response {
         span: Span::new_bytes(src.clone(), offset..head_end),
@@ -179,7 +179,7 @@ pub(crate) fn parse_response_from_bytes(
         .map(|header| header.value.as_bytes())
         .unwrap_or_default();
 
-    if body_info.chunked == false && body_info.length > 0 {
+    if !body_info.chunked() && body_info.length > 0 {
         let range = head_end..head_end + body_info.length;
 
         if range.end > src.len() {
@@ -193,7 +193,7 @@ pub(crate) fn parse_response_from_bytes(
 
         response.body = Some(parse_body(src, range.clone(), content_type)?);
         response.span = Span::new_bytes(src.clone(), offset..range.end);
-    } else if body_info.chunked {
+    } else if body_info.chunked() {
         response.body = Some(parse_body(
             &body_info.bytes.unwrap(),
             0..body_info.length,
@@ -254,13 +254,17 @@ fn request_body_len(request: &Request) -> Result<usize, ParseError> {
 
 struct ResponseBodyInfo {
     length: usize,
-    chunked: bool,
     bytes: Option<Bytes>,
+}
+
+impl ResponseBodyInfo {
+    fn chunked(&self) -> bool {
+        self.bytes.is_some()
+    }
 }
 
 const EMPTY_RESPONSE_BODY_INFO: ResponseBodyInfo = ResponseBodyInfo {
     length: 0,
-    chunked: false,
     bytes: None,
 };
 
@@ -286,7 +290,6 @@ fn response_body_len(response: &Response, raw_body: &[u8]) -> Result<ResponseBod
             // If Transfer-Encoding is "chunked", calculate the total body length by summing the chunk sizes
             calculate_chunked_body(raw_body).map(|r| ResponseBodyInfo {
                 length: r.0,
-                chunked: true,
                 bytes: Some(r.1),
             })
         } else {
@@ -302,7 +305,6 @@ fn response_body_len(response: &Response, raw_body: &[u8]) -> Result<ResponseBod
             .parse::<usize>()
             .map(|length| ResponseBodyInfo {
                 length,
-                chunked: false,
                 bytes: None,
             })
             .map_err(|err| ParseError(format!("failed to parse Content-Length value: {err}")))
@@ -444,6 +446,18 @@ mod tests {
                         Content-Length: 14\r\n\r\n\
                         {\"foo\": \"bar\"}";
 
+    const TEST_RESPONSE_CHUNKED: &[u8] = b"\
+HTTP/1.1 200 OK\r\n\
+Content-Type: text/plain\r\n\
+Transfer-Encoding: chunked\r\n\
+\r\n\
+7\r\n\
+Mozilla\r\n\
+11\r\n\
+Developer Network\r\n\
+0\r\n\
+\r\n";
+
     #[test]
     fn test_parse_request() {
         let req = parse_request(TEST_REQUEST).unwrap();
@@ -576,5 +590,17 @@ mod tests {
         };
 
         assert_eq!(value.span(), "{\"foo\": \"bar\"}");
+    }
+
+    #[test]
+    fn test_parse_response_chunked() {
+        let res = parse_response(TEST_RESPONSE_CHUNKED).unwrap();
+
+        assert_eq!(res.span(), TEST_RESPONSE_CHUNKED);
+        assert_eq!(res.status.code.as_str(), "200");
+        assert_eq!(
+            String::from_utf8(res.body.unwrap().content.span().data().to_vec()).unwrap(),
+            "MozillaDeveloper Network"
+        );
     }
 }
