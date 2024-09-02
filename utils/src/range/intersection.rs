@@ -84,6 +84,10 @@ impl<T: Copy + Ord> Intersection<RangeSet<T>> for RangeSet<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
+    use itertools::iproduct;
+
     use super::*;
 
     #[test]
@@ -157,5 +161,32 @@ mod tests {
             set.intersection(&RangeSet::from(vec![2..3, 5..6])),
             RangeSet::from(vec![2..3, 5..6])
         );
+    }
+
+    #[test]
+    #[ignore = "expensive"]
+    fn test_prove_set_intersection_set_8x2_8x2() {
+        for (xs, xe, ys, ye, ws, we, zs, ze) in
+            iproduct!(0..8, 0..8, 0..8, 0..8, 0..8, 0..8, 0..8, 0..8)
+        {
+            let s1 = RangeSet::new(&[(xs..xe), (ys..ye)]);
+            let s2 = RangeSet::new(&[(ws..we), (zs..ze)]);
+
+            let h1 = s1.iter().collect::<HashSet<_>>();
+            let h2 = s2.iter().collect::<HashSet<_>>();
+
+            let actual = HashSet::<usize>::from_iter(s1.intersection(&s2).iter());
+
+            assert_eq!(
+                actual,
+                h1.intersection(&h2).copied().collect::<HashSet<_>>(),
+                "{:?} {:?} {:?} {:?} => {:?}",
+                xs..xe,
+                ys..ye,
+                ws..we,
+                zs..ze,
+                actual
+            );
+        }
     }
 }
