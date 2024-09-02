@@ -88,6 +88,8 @@ mod tests {
 
     use itertools::iproduct;
 
+    use crate::range::assert_invariants;
+
     use super::*;
 
     #[test]
@@ -175,17 +177,20 @@ mod tests {
             let h1 = s1.iter().collect::<HashSet<_>>();
             let h2 = s2.iter().collect::<HashSet<_>>();
 
-            let actual = HashSet::<usize>::from_iter(s1.intersection(&s2).iter());
+            let actual = s1.intersection(&s2);
+            let h3 = HashSet::<usize>::from_iter(actual.iter());
+
+            assert_invariants(&actual);
 
             assert_eq!(
-                actual,
+                h3,
                 h1.intersection(&h2).copied().collect::<HashSet<_>>(),
                 "{:?} {:?} {:?} {:?} => {:?}",
                 xs..xe,
                 ys..ye,
                 ws..we,
                 zs..ze,
-                actual
+                h3
             );
         }
     }

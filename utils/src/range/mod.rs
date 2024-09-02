@@ -481,6 +481,15 @@ impl<T: Copy + Ord> Disjoint<Range<T>> for RangeSet<T> {
     }
 }
 
+/// Asserts that the ranges of the given set are sorted, non-adjacent, non-intersecting, and non-empty.
+#[cfg(test)]
+pub fn assert_invariants<T: Copy + Ord>(set: &RangeSet<T>) {
+    assert!(set.ranges.windows(2).all(|w| w[0].start < w[1].start
+        && w[0].end < w[1].start
+        && w[0].start < w[0].end
+        && w[1].start < w[1].end));
+}
+
 #[cfg(test)]
 #[allow(clippy::all)]
 mod tests {
