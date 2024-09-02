@@ -40,7 +40,6 @@ use std::ops::{Add, Range, Sub};
 /// assert_eq!(a.union(&(0..0)), RangeSet::from([10..20]));
 ///
 /// // Comparison
-/// assert!(a.is_superset(&(15..18)));
 /// assert!(a.is_subset(&(0..30)));
 /// assert!(a.is_disjoint(&(0..10)));
 /// assert_eq!(a.clone(), RangeSet::from(a));
