@@ -1,4 +1,7 @@
-use std::ops::Range;
+use std::{
+    io::{self, BufRead, Read},
+    ops::Range,
+};
 
 use bytes::Bytes;
 
@@ -155,6 +158,9 @@ pub(crate) fn parse_response_from_bytes(
         .find(|w| *w == code.as_bytes())
         .expect("code is present");
 
+    let raw_body = &src[head_end..];
+    dbg!(String::from_utf8(raw_body.to_vec()).unwrap());
+
     let mut response = Response {
         span: Span::new_bytes(src.clone(), offset..head_end),
         status: Status {
@@ -166,10 +172,15 @@ pub(crate) fn parse_response_from_bytes(
         body: None,
     };
 
-    let body_len = response_body_len(&response)?;
+    let body_info = response_body_len(&response, raw_body)?;
+    let content_type = response
+        .headers_with_name("Content-Type")
+        .next()
+        .map(|header| header.value.as_bytes())
+        .unwrap_or_default();
 
-    if body_len > 0 {
-        let range = head_end..head_end + body_len;
+    if body_info.chunked == false && body_info.length > 0 {
+        let range = head_end..head_end + body_info.length;
 
         if range.end > src.len() {
             return Err(ParseError(format!(
@@ -180,14 +191,15 @@ pub(crate) fn parse_response_from_bytes(
             )));
         }
 
-        let content_type = response
-            .headers_with_name("Content-Type")
-            .next()
-            .map(|header| header.value.as_bytes())
-            .unwrap_or_default();
-
         response.body = Some(parse_body(src, range.clone(), content_type)?);
         response.span = Span::new_bytes(src.clone(), offset..range.end);
+    } else if body_info.chunked {
+        response.body = Some(parse_body(
+            &body_info.bytes.unwrap(),
+            0..body_info.length,
+            content_type,
+        )?);
+        response.span = Span::new_bytes(src.clone(), offset..src.len());
     }
 
     Ok(response)
@@ -240,8 +252,20 @@ fn request_body_len(request: &Request) -> Result<usize, ParseError> {
     }
 }
 
+struct ResponseBodyInfo {
+    length: usize,
+    chunked: bool,
+    bytes: Option<Bytes>,
+}
+
+const EMPTY_RESPONSE_BODY_INFO: ResponseBodyInfo = ResponseBodyInfo {
+    length: 0,
+    chunked: false,
+    bytes: None,
+};
+
 /// Calculates the length of the response body according to RFC 9112, section 6.
-fn response_body_len(response: &Response) -> Result<usize, ParseError> {
+fn response_body_len(response: &Response, raw_body: &[u8]) -> Result<ResponseBodyInfo, ParseError> {
     // Any response to a HEAD request and any response with a 1xx (Informational), 204 (No Content), or 304 (Not Modified)
     // status code is always terminated by the first empty line after the header fields, regardless of the header fields
     // present in the message, and thus cannot contain a message body or trailer section.
@@ -252,23 +276,35 @@ fn response_body_len(response: &Response) -> Result<usize, ParseError> {
         .parse::<usize>()
         .expect("code is valid utf-8")
     {
-        100..=199 | 204 | 304 => return Ok(0),
+        100..=199 | 204 | 304 => return Ok(EMPTY_RESPONSE_BODY_INFO),
         _ => {}
     }
 
-    if response
-        .headers_with_name("Transfer-Encoding")
-        .next()
-        .is_some()
-    {
-        Err(ParseError(
-            "Transfer-Encoding not supported yet".to_string(),
-        ))
+    if let Some(h) = response.headers_with_name("Transfer-Encoding").next() {
+        let transfer_encoding = std::str::from_utf8(h.value.0.as_bytes())?;
+        if transfer_encoding.eq_ignore_ascii_case("chunked") {
+            // If Transfer-Encoding is "chunked", calculate the total body length by summing the chunk sizes
+            calculate_chunked_body(raw_body).map(|r| ResponseBodyInfo {
+                length: r.0,
+                chunked: true,
+                bytes: Some(r.1),
+            })
+        } else {
+            Err(ParseError(format!(
+                "Unsupported Transfer-Encoding: {}",
+                transfer_encoding
+            )))
+        }
     } else if let Some(h) = response.headers_with_name("Content-Length").next() {
         // If a valid Content-Length header field is present without Transfer-Encoding, its decimal value
         // defines the expected message body length in octets.
         std::str::from_utf8(h.value.0.as_bytes())?
             .parse::<usize>()
+            .map(|length| ResponseBodyInfo {
+                length,
+                chunked: false,
+                bytes: None,
+            })
             .map_err(|err| ParseError(format!("failed to parse Content-Length value: {err}")))
     } else {
         // If this is a response message and none of the above are true, then there is no way to
@@ -279,6 +315,51 @@ fn response_body_len(response: &Response) -> Result<usize, ParseError> {
             "A response with a body must contain either a Content-Length or Transfer-Encoding header".to_string(),
         ))
     }
+}
+
+fn calculate_chunked_body(raw_body: &[u8]) -> Result<(usize, Bytes), ParseError> {
+    let mut total_size = 0;
+    let mut aggregated_body = Vec::new();
+    let mut body_reader = io::BufReader::new(raw_body);
+
+    loop {
+        let mut chunk_size_str = String::new();
+        body_reader
+            .read_line(&mut chunk_size_str)
+            .map_err(|err| ParseError(format!("Failed to read chunk size line: {}", err)))?;
+
+        // Parse the chunk size from the string
+        let chunk_size = usize::from_str_radix(chunk_size_str.trim(), 16)
+            .map_err(|err| ParseError(format!("Invalid chunk size: {}", err)))?;
+
+        if chunk_size == 0 {
+            // A chunk size of 0 indicates the end of the body
+            break;
+        }
+
+        // Add the chunk size to the total size
+        total_size += chunk_size;
+
+        // Read the chunk data (without the trailing CRLF)
+        let mut chunk_data = vec![0; chunk_size];
+        body_reader
+            .read_exact(&mut chunk_data)
+            .map_err(|err| ParseError(format!("Failed to read chunk data: {}", err)))?;
+
+        // Skip the trailing CRLF
+        let mut crlf = [0; 2];
+        body_reader
+            .read_exact(&mut crlf)
+            .map_err(|err| ParseError(format!("Failed to read CRLF after chunk: {}", err)))?;
+
+        // Append the chunk data to the aggregated body
+        aggregated_body.extend_from_slice(&chunk_data);
+    }
+
+    // Convert the aggregated body to Bytes
+    let aggregated_bytes = Bytes::from(aggregated_body);
+
+    Ok((total_size, aggregated_bytes))
 }
 
 /// Parses a request or response message body.
