@@ -1,5 +1,6 @@
 mod difference;
 mod index;
+mod intersection;
 mod subset;
 mod union;
 
@@ -417,6 +418,14 @@ pub trait Union<Rhs> {
     /// Returns the set union of `self` and `other`.
     #[must_use]
     fn union(&self, other: &Rhs) -> Self::Output;
+}
+
+pub trait Intersection<Rhs> {
+    type Output;
+
+    /// Returns the set intersection of `self` and `other`.
+    #[must_use]
+    fn intersection(&self, other: &Rhs) -> Self::Output;
 }
 
 /// A type which successor and predecessor operations can be performed on.

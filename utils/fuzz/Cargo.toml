@@ -13,10 +13,6 @@ libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 [dependencies.tlsn-utils]
 path = ".."
 
-# Prevent this from interfering with workspaces
-[workspace]
-members = ["."]
-
 [profile.release]
 debug = 1
 
@@ -45,6 +41,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "range_intersection_set"
+path = "fuzz_targets/range_intersection_set.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "range_subset_set"
 path = "fuzz_targets/range_subset_set.rs"
 test = false
@@ -65,6 +67,12 @@ doc = false
 [[bin]]
 name = "set_diff_set"
 path = "fuzz_targets/set_diff_set.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "set_intersection_set"
+path = "fuzz_targets/set_intersection_set.rs"
 test = false
 doc = false
 
