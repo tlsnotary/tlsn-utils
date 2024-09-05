@@ -1,10 +1,8 @@
 use std::ops::Range;
 
-use crate::range::{
-    RangeDifference, RangeDisjoint, RangeSet, RangeSubset, RangeSuperset, RangeUnion,
-};
+use crate::range::{Difference, Disjoint, RangeSet, Subset, Union};
 
-impl<T: Copy + Ord> RangeDifference<Range<T>> for Range<T> {
+impl<T: Copy + Ord> Difference<Range<T>> for Range<T> {
     type Output = RangeSet<T>;
 
     fn difference(&self, other: &Range<T>) -> Self::Output {
@@ -14,8 +12,8 @@ impl<T: Copy + Ord> RangeDifference<Range<T>> for Range<T> {
             return RangeSet::from(self.clone());
         }
 
-        // If other is a superset of self, return an empty set.
-        if other.is_superset(self) {
+        // If other contains self, return an empty set.
+        if self.is_subset(other) {
             return RangeSet::default();
         }
 
@@ -38,9 +36,9 @@ impl<T: Copy + Ord> RangeDifference<Range<T>> for Range<T> {
     }
 }
 
-impl<T: Copy + Ord> RangeDifference<RangeSet<T>> for Range<T>
+impl<T: Copy + Ord> Difference<RangeSet<T>> for Range<T>
 where
-    RangeSet<T>: RangeDifference<Range<T>, Output = RangeSet<T>>,
+    RangeSet<T>: Difference<Range<T>, Output = RangeSet<T>>,
 {
     type Output = RangeSet<T>;
 
@@ -59,7 +57,7 @@ where
     }
 }
 
-impl<T: Copy + Ord> RangeDifference<Range<T>> for RangeSet<T> {
+impl<T: Copy + Ord> Difference<Range<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn difference(&self, other: &Range<T>) -> Self::Output {
@@ -80,7 +78,7 @@ impl<T: Copy + Ord> RangeDifference<Range<T>> for RangeSet<T> {
                 break;
             }
             // If the current range is entirely contained within other
-            else if other.is_superset(&ranges[i]) {
+            else if ranges[i].is_subset(other) {
                 ranges.remove(i);
                 continue;
             }
@@ -113,7 +111,7 @@ impl<T: Copy + Ord> RangeDifference<Range<T>> for RangeSet<T> {
     }
 }
 
-impl<T: Copy + Ord> RangeDifference<RangeSet<T>> for RangeSet<T> {
+impl<T: Copy + Ord> Difference<RangeSet<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn difference(&self, other: &RangeSet<T>) -> Self::Output {
