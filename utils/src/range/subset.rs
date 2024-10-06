@@ -1,4 +1,10 @@
-use crate::range::{Range, RangeSet, Subset};
+use crate::range::{Range, RangeSet};
+
+pub trait Subset<Rhs> {
+    /// Returns `true` if `self` is a subset of `other`.
+    #[must_use]
+    fn is_subset(&self, other: &Rhs) -> bool;
+}
 
 impl<T: Copy + Ord> Subset<Range<T>> for Range<T> {
     fn is_subset(&self, other: &Range<T>) -> bool {

@@ -4,7 +4,11 @@ mod intersection;
 mod subset;
 mod union;
 
+pub use difference::Difference;
 pub use index::IndexRanges;
+pub use intersection::Intersection;
+pub use subset::Subset;
+pub use union::Union;
 
 use std::ops::{Add, Range, Sub};
 
@@ -395,36 +399,6 @@ pub trait Contains<Rhs> {
     /// Returns `true` if `self` contains `other`.
     #[must_use]
     fn contains(&self, other: &Rhs) -> bool;
-}
-
-pub trait Subset<Rhs> {
-    /// Returns `true` if `self` is a subset of `other`.
-    #[must_use]
-    fn is_subset(&self, other: &Rhs) -> bool;
-}
-
-pub trait Difference<Rhs> {
-    type Output;
-
-    /// Returns the set difference of `self` and `other`.
-    #[must_use]
-    fn difference(&self, other: &Rhs) -> Self::Output;
-}
-
-pub trait Union<Rhs> {
-    type Output;
-
-    /// Returns the set union of `self` and `other`.
-    #[must_use]
-    fn union(&self, other: &Rhs) -> Self::Output;
-}
-
-pub trait Intersection<Rhs> {
-    type Output;
-
-    /// Returns the set intersection of `self` and `other`.
-    #[must_use]
-    fn intersection(&self, other: &Rhs) -> Self::Output;
 }
 
 /// A type which successor and predecessor operations can be performed on.

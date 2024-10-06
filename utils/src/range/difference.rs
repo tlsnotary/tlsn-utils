@@ -1,6 +1,14 @@
 use std::ops::Range;
 
-use crate::range::{Difference, Disjoint, RangeSet, Subset, Union};
+use crate::range::{Disjoint, RangeSet, Subset, Union};
+
+pub trait Difference<Rhs> {
+    type Output;
+
+    /// Returns the set difference of `self` and `other`.
+    #[must_use]
+    fn difference(&self, other: &Rhs) -> Self::Output;
+}
 
 impl<T: Copy + Ord> Difference<Range<T>> for Range<T> {
     type Output = RangeSet<T>;

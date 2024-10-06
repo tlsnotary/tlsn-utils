@@ -1,6 +1,14 @@
 use std::ops::Range;
 
-use crate::range::{Disjoint, RangeSet, Subset, Union};
+use crate::range::{Disjoint, RangeSet, Subset};
+
+pub trait Union<Rhs> {
+    type Output;
+
+    /// Returns the set union of `self` and `other`.
+    #[must_use]
+    fn union(&self, other: &Rhs) -> Self::Output;
+}
 
 impl<T: Copy + Ord> Union<Range<T>> for Range<T> {
     type Output = RangeSet<T>;

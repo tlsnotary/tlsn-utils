@@ -1,4 +1,12 @@
-use crate::range::{Intersection, Range, RangeSet};
+use crate::range::{Range, RangeSet};
+
+pub trait Intersection<Rhs> {
+    type Output;
+
+    /// Returns the set intersection of `self` and `other`.
+    #[must_use]
+    fn intersection(&self, other: &Rhs) -> Self::Output;
+}
 
 impl<T: Copy + Ord> Intersection<Range<T>> for Range<T> {
     type Output = Option<Range<T>>;
