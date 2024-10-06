@@ -1,6 +1,6 @@
-use std::ops::Range;
+use std::ops::{Range, Sub, SubAssign};
 
-use crate::range::{Disjoint, RangeSet, Subset, Union};
+use crate::range::{Disjoint, RangeSet, Subset};
 
 pub trait Difference<Rhs> {
     type Output;
@@ -10,71 +10,21 @@ pub trait Difference<Rhs> {
     fn difference(&self, other: &Rhs) -> Self::Output;
 }
 
-impl<T: Copy + Ord> Difference<Range<T>> for Range<T> {
-    type Output = RangeSet<T>;
-
-    fn difference(&self, other: &Range<T>) -> Self::Output {
-        if self.is_empty() {
-            return RangeSet::default();
-        } else if other.is_empty() {
-            return RangeSet::from(self.clone());
-        }
-
-        // If other contains self, return an empty set.
-        if self.is_subset(other) {
-            return RangeSet::default();
-        }
-
-        // If they are disjoint, return self.
-        if self.is_disjoint(other) {
-            return RangeSet::from(self.clone());
-        }
-
-        let mut set = RangeSet::default();
-
-        if self.start < other.start {
-            set.ranges.push(self.start..other.start);
-        }
-
-        if self.end > other.end {
-            set.ranges.push(other.end..self.end);
-        }
-
-        set
-    }
+pub trait DifferenceMut<Rhs> {
+    /// Subtracts `other` from `self`.
+    fn difference_mut(&mut self, other: &Rhs);
 }
 
-impl<T: Copy + Ord> Difference<RangeSet<T>> for Range<T>
-where
-    RangeSet<T>: Difference<Range<T>, Output = RangeSet<T>>,
-{
-    type Output = RangeSet<T>;
-
-    fn difference(&self, other: &RangeSet<T>) -> Self::Output {
-        if self.is_empty() {
-            return RangeSet::default();
-        }
-
-        let mut diff = RangeSet::from(self.clone());
-
-        for range in &other.ranges {
-            diff = diff.difference(range);
-        }
-
-        diff
-    }
-}
-
-impl<T: Copy + Ord> Difference<Range<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn difference(&self, other: &Range<T>) -> Self::Output {
+impl<T: Copy + Ord> DifferenceMut<Range<T>> for RangeSet<T> {
+    fn difference_mut(&mut self, other: &Range<T>) {
         if other.is_empty() {
-            return self.clone();
+            return;
+        } else if self.ranges.is_empty() {
+            return;
         }
 
         let mut i = 0;
-        let mut ranges = self.ranges.clone();
+        let ranges = &mut self.ranges;
         while i < ranges.len() {
             // If the current range is entirely before other
             if ranges[i].end <= other.start {
@@ -114,8 +64,70 @@ impl<T: Copy + Ord> Difference<Range<T>> for RangeSet<T> {
 
             i += 1;
         }
+    }
+}
 
-        RangeSet { ranges }
+impl<T: Copy + Ord> DifferenceMut<RangeSet<T>> for RangeSet<T> {
+    fn difference_mut(&mut self, other: &RangeSet<T>) {
+        for range in &other.ranges {
+            self.difference_mut(range);
+        }
+    }
+}
+
+impl<T: Copy + Ord> Difference<Range<T>> for Range<T> {
+    type Output = RangeSet<T>;
+
+    fn difference(&self, other: &Range<T>) -> Self::Output {
+        if self.is_empty() {
+            return RangeSet::default();
+        } else if other.is_empty() {
+            return RangeSet::from(self.clone());
+        }
+
+        // If other contains self, return an empty set.
+        if self.is_subset(other) {
+            return RangeSet::default();
+        }
+
+        // If they are disjoint, return self.
+        if self.is_disjoint(other) {
+            return RangeSet::from(self.clone());
+        }
+
+        let mut set = RangeSet::default();
+
+        if self.start < other.start {
+            set.ranges.push(self.start..other.start);
+        }
+
+        if self.end > other.end {
+            set.ranges.push(other.end..self.end);
+        }
+
+        set
+    }
+}
+
+impl<T: Copy + Ord> Difference<Range<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn difference(&self, other: &Range<T>) -> Self::Output {
+        let mut diff = self.clone();
+        diff.difference_mut(other);
+        diff
+    }
+}
+
+impl<T: Copy + Ord> Difference<RangeSet<T>> for Range<T> {
+    type Output = RangeSet<T>;
+
+    fn difference(&self, other: &RangeSet<T>) -> Self::Output {
+        let mut diff = RangeSet {
+            ranges: vec![self.clone()],
+        };
+        diff.difference_mut(other);
+        diff
     }
 }
 
@@ -123,11 +135,39 @@ impl<T: Copy + Ord> Difference<RangeSet<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn difference(&self, other: &RangeSet<T>) -> Self::Output {
-        let mut set = RangeSet::default();
-        for range in &self.ranges {
-            set = set.union(&range.difference(other));
-        }
-        set
+        let mut diff = self.clone();
+        diff.difference_mut(other);
+        diff
+    }
+}
+
+impl<T: Copy + Ord> SubAssign<Range<T>> for RangeSet<T> {
+    fn sub_assign(&mut self, rhs: Range<T>) {
+        self.difference_mut(&rhs);
+    }
+}
+
+impl<T: Copy + Ord> Sub<Range<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn sub(mut self, rhs: Range<T>) -> Self::Output {
+        self.difference_mut(&rhs);
+        self
+    }
+}
+
+impl<T: Copy + Ord> SubAssign<RangeSet<T>> for RangeSet<T> {
+    fn sub_assign(&mut self, rhs: RangeSet<T>) {
+        self.difference_mut(&rhs);
+    }
+}
+
+impl<T: Copy + Ord> Sub<RangeSet<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn sub(mut self, rhs: RangeSet<T>) -> Self::Output {
+        self.difference_mut(&rhs);
+        self
     }
 }
 
@@ -135,6 +175,7 @@ impl<T: Copy + Ord> Difference<RangeSet<T>> for RangeSet<T> {
 #[allow(clippy::all)]
 mod tests {
     use super::*;
+    use crate::range::Union;
 
     use itertools::iproduct;
 

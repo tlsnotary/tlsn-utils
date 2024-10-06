@@ -10,7 +10,7 @@ pub use intersection::Intersection;
 pub use subset::Subset;
 pub use union::Union;
 
-use std::ops::{Add, Range, Sub};
+use std::ops::{Add, BitXor, BitXorAssign, Range, Sub};
 
 /// A set of values represented using ranges.
 ///
@@ -94,6 +94,11 @@ impl<T> RangeSet<T> {
     /// Returns the number of ranges in the set.
     pub fn len_ranges(&self) -> usize {
         self.ranges.len()
+    }
+
+    /// Clears the set, removing all ranges.
+    pub fn clear(&mut self) {
+        self.ranges.clear();
     }
 }
 
@@ -451,6 +456,23 @@ impl<T: Copy + Ord> Disjoint<RangeSet<T>> for RangeSet<T> {
 impl<T: Copy + Ord> Disjoint<Range<T>> for RangeSet<T> {
     fn is_disjoint(&self, other: &Range<T>) -> bool {
         other.is_disjoint(self)
+    }
+}
+
+impl<T: Copy + Ord> BitXor<RangeSet<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn bitxor(mut self, rhs: RangeSet<T>) -> Self::Output {
+        let intersection = self.intersection(&rhs);
+        self -= intersection;
+        self
+    }
+}
+
+impl<T: Copy + Ord> BitXorAssign<RangeSet<T>> for RangeSet<T> {
+    fn bitxor_assign(&mut self, rhs: RangeSet<T>) {
+        let intersection = self.intersection(&rhs);
+        *self -= intersection;
     }
 }
 
