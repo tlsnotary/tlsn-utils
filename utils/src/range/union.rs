@@ -128,11 +128,26 @@ impl<T: Copy + Ord> BitOrAssign<Range<T>> for RangeSet<T> {
     }
 }
 
+impl<T: Copy + Ord> BitOrAssign<&Range<T>> for RangeSet<T> {
+    fn bitor_assign(&mut self, other: &Range<T>) {
+        self.union_mut(other);
+    }
+}
+
 impl<T: Copy + Ord> BitOr<Range<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn bitor(mut self, other: Range<T>) -> Self::Output {
         self.union_mut(&other);
+        self
+    }
+}
+
+impl<T: Copy + Ord> BitOr<&Range<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn bitor(mut self, other: &Range<T>) -> Self::Output {
+        self.union_mut(other);
         self
     }
 }
@@ -143,11 +158,26 @@ impl<T: Copy + Ord> BitOrAssign<RangeSet<T>> for RangeSet<T> {
     }
 }
 
+impl<T: Copy + Ord> BitOrAssign<&RangeSet<T>> for RangeSet<T> {
+    fn bitor_assign(&mut self, other: &RangeSet<T>) {
+        self.union_mut(other);
+    }
+}
+
 impl<T: Copy + Ord> BitOr<RangeSet<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn bitor(mut self, other: RangeSet<T>) -> Self::Output {
         self.union_mut(&other);
+        self
+    }
+}
+
+impl<T: Copy + Ord> BitOr<&RangeSet<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn bitor(mut self, other: &RangeSet<T>) -> Self::Output {
+        self.union_mut(other);
         self
     }
 }

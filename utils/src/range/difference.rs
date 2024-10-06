@@ -147,11 +147,26 @@ impl<T: Copy + Ord> SubAssign<Range<T>> for RangeSet<T> {
     }
 }
 
+impl<T: Copy + Ord> SubAssign<&Range<T>> for RangeSet<T> {
+    fn sub_assign(&mut self, rhs: &Range<T>) {
+        self.difference_mut(rhs);
+    }
+}
+
 impl<T: Copy + Ord> Sub<Range<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn sub(mut self, rhs: Range<T>) -> Self::Output {
         self.difference_mut(&rhs);
+        self
+    }
+}
+
+impl<T: Copy + Ord> Sub<&Range<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn sub(mut self, rhs: &Range<T>) -> Self::Output {
+        self.difference_mut(rhs);
         self
     }
 }
@@ -162,11 +177,26 @@ impl<T: Copy + Ord> SubAssign<RangeSet<T>> for RangeSet<T> {
     }
 }
 
+impl<T: Copy + Ord> SubAssign<&RangeSet<T>> for RangeSet<T> {
+    fn sub_assign(&mut self, rhs: &RangeSet<T>) {
+        self.difference_mut(rhs);
+    }
+}
+
 impl<T: Copy + Ord> Sub<RangeSet<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn sub(mut self, rhs: RangeSet<T>) -> Self::Output {
         self.difference_mut(&rhs);
+        self
+    }
+}
+
+impl<T: Copy + Ord> Sub<&RangeSet<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn sub(mut self, rhs: &RangeSet<T>) -> Self::Output {
+        self.difference_mut(rhs);
         self
     }
 }

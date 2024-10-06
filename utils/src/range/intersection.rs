@@ -98,11 +98,25 @@ impl<T: Copy + Ord> BitAndAssign<Range<T>> for RangeSet<T> {
     }
 }
 
+impl<T: Copy + Ord> BitAndAssign<&Range<T>> for RangeSet<T> {
+    fn bitand_assign(&mut self, other: &Range<T>) {
+        *self = self.intersection(other);
+    }
+}
+
 impl<T: Copy + Ord> BitAnd<RangeSet<T>> for Range<T> {
     type Output = RangeSet<T>;
 
     fn bitand(self, other: RangeSet<T>) -> Self::Output {
         self.intersection(&other)
+    }
+}
+
+impl<T: Copy + Ord> BitAnd<&RangeSet<T>> for Range<T> {
+    type Output = RangeSet<T>;
+
+    fn bitand(self, other: &RangeSet<T>) -> Self::Output {
+        self.intersection(other)
     }
 }
 
@@ -114,9 +128,23 @@ impl<T: Copy + Ord> BitAnd<Range<T>> for RangeSet<T> {
     }
 }
 
+impl<T: Copy + Ord> BitAnd<&Range<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn bitand(self, other: &Range<T>) -> Self::Output {
+        other.intersection(&self)
+    }
+}
+
 impl<T: Copy + Ord> BitAndAssign<RangeSet<T>> for RangeSet<T> {
     fn bitand_assign(&mut self, other: RangeSet<T>) {
         *self = self.intersection(&other);
+    }
+}
+
+impl<T: Copy + Ord> BitAndAssign<&RangeSet<T>> for RangeSet<T> {
+    fn bitand_assign(&mut self, other: &RangeSet<T>) {
+        *self = self.intersection(other);
     }
 }
 
@@ -125,6 +153,14 @@ impl<T: Copy + Ord> BitAnd<RangeSet<T>> for RangeSet<T> {
 
     fn bitand(self, other: RangeSet<T>) -> Self::Output {
         self.intersection(&other)
+    }
+}
+
+impl<T: Copy + Ord> BitAnd<&RangeSet<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn bitand(self, other: &RangeSet<T>) -> Self::Output {
+        self.intersection(other)
     }
 }
 

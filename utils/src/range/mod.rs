@@ -469,9 +469,26 @@ impl<T: Copy + Ord> BitXor<RangeSet<T>> for RangeSet<T> {
     }
 }
 
+impl<T: Copy + Ord> BitXor<&RangeSet<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn bitxor(mut self, rhs: &RangeSet<T>) -> Self::Output {
+        let intersection = self.intersection(rhs);
+        self -= intersection;
+        self
+    }
+}
+
 impl<T: Copy + Ord> BitXorAssign<RangeSet<T>> for RangeSet<T> {
     fn bitxor_assign(&mut self, rhs: RangeSet<T>) {
         let intersection = self.intersection(&rhs);
+        *self -= intersection;
+    }
+}
+
+impl<T: Copy + Ord> BitXorAssign<&RangeSet<T>> for RangeSet<T> {
+    fn bitxor_assign(&mut self, rhs: &RangeSet<T>) {
+        let intersection = self.intersection(rhs);
         *self -= intersection;
     }
 }
