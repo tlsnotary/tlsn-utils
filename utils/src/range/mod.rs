@@ -2,15 +2,17 @@ mod difference;
 mod index;
 mod intersection;
 mod subset;
+mod symmetric_difference;
 mod union;
 
-pub use difference::Difference;
+pub use difference::{Difference, DifferenceMut};
 pub use index::IndexRanges;
 pub use intersection::Intersection;
 pub use subset::Subset;
-pub use union::Union;
+pub use symmetric_difference::{SymmetricDifference, SymmetricDifferenceMut};
+pub use union::{Union, UnionMut};
 
-use std::ops::{Add, BitXor, BitXorAssign, Range, Sub};
+use std::ops::{Add, Range, Sub};
 
 /// A set of values represented using ranges.
 ///
@@ -456,40 +458,6 @@ impl<T: Copy + Ord> Disjoint<RangeSet<T>> for RangeSet<T> {
 impl<T: Copy + Ord> Disjoint<Range<T>> for RangeSet<T> {
     fn is_disjoint(&self, other: &Range<T>) -> bool {
         other.is_disjoint(self)
-    }
-}
-
-impl<T: Copy + Ord> BitXor<RangeSet<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn bitxor(mut self, rhs: RangeSet<T>) -> Self::Output {
-        let intersection = self.intersection(&rhs);
-        self -= intersection;
-        self
-    }
-}
-
-impl<T: Copy + Ord> BitXor<&RangeSet<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn bitxor(mut self, rhs: &RangeSet<T>) -> Self::Output {
-        let intersection = self.intersection(rhs);
-        self -= intersection;
-        self
-    }
-}
-
-impl<T: Copy + Ord> BitXorAssign<RangeSet<T>> for RangeSet<T> {
-    fn bitxor_assign(&mut self, rhs: RangeSet<T>) {
-        let intersection = self.intersection(&rhs);
-        *self -= intersection;
-    }
-}
-
-impl<T: Copy + Ord> BitXorAssign<&RangeSet<T>> for RangeSet<T> {
-    fn bitxor_assign(&mut self, rhs: &RangeSet<T>) {
-        let intersection = self.intersection(rhs);
-        *self -= intersection;
     }
 }
 
