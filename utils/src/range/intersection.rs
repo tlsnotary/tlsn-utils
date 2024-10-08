@@ -1,4 +1,14 @@
-use crate::range::{Intersection, Range, RangeSet};
+use std::ops::{BitAnd, BitAndAssign};
+
+use crate::range::{Range, RangeSet};
+
+pub trait Intersection<Rhs> {
+    type Output;
+
+    /// Returns the set intersection of `self` and `other`.
+    #[must_use]
+    fn intersection(&self, other: &Rhs) -> Self::Output;
+}
 
 impl<T: Copy + Ord> Intersection<Range<T>> for Range<T> {
     type Output = Option<Range<T>>;
@@ -79,6 +89,78 @@ impl<T: Copy + Ord> Intersection<RangeSet<T>> for RangeSet<T> {
         }
 
         set
+    }
+}
+
+impl<T: Copy + Ord> BitAndAssign<Range<T>> for RangeSet<T> {
+    fn bitand_assign(&mut self, other: Range<T>) {
+        *self = self.intersection(&other);
+    }
+}
+
+impl<T: Copy + Ord> BitAndAssign<&Range<T>> for RangeSet<T> {
+    fn bitand_assign(&mut self, other: &Range<T>) {
+        *self = self.intersection(other);
+    }
+}
+
+impl<T: Copy + Ord> BitAnd<RangeSet<T>> for Range<T> {
+    type Output = RangeSet<T>;
+
+    fn bitand(self, other: RangeSet<T>) -> Self::Output {
+        self.intersection(&other)
+    }
+}
+
+impl<T: Copy + Ord> BitAnd<&RangeSet<T>> for Range<T> {
+    type Output = RangeSet<T>;
+
+    fn bitand(self, other: &RangeSet<T>) -> Self::Output {
+        self.intersection(other)
+    }
+}
+
+impl<T: Copy + Ord> BitAnd<Range<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn bitand(self, other: Range<T>) -> Self::Output {
+        other.intersection(&self)
+    }
+}
+
+impl<T: Copy + Ord> BitAnd<&Range<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn bitand(self, other: &Range<T>) -> Self::Output {
+        other.intersection(&self)
+    }
+}
+
+impl<T: Copy + Ord> BitAndAssign<RangeSet<T>> for RangeSet<T> {
+    fn bitand_assign(&mut self, other: RangeSet<T>) {
+        *self = self.intersection(&other);
+    }
+}
+
+impl<T: Copy + Ord> BitAndAssign<&RangeSet<T>> for RangeSet<T> {
+    fn bitand_assign(&mut self, other: &RangeSet<T>) {
+        *self = self.intersection(other);
+    }
+}
+
+impl<T: Copy + Ord> BitAnd<RangeSet<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn bitand(self, other: RangeSet<T>) -> Self::Output {
+        self.intersection(&other)
+    }
+}
+
+impl<T: Copy + Ord> BitAnd<&RangeSet<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn bitand(self, other: &RangeSet<T>) -> Self::Output {
+        self.intersection(other)
     }
 }
 

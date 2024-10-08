@@ -2,9 +2,15 @@ mod difference;
 mod index;
 mod intersection;
 mod subset;
+mod symmetric_difference;
 mod union;
 
+pub use difference::{Difference, DifferenceMut};
 pub use index::IndexRanges;
+pub use intersection::Intersection;
+pub use subset::Subset;
+pub use symmetric_difference::{SymmetricDifference, SymmetricDifferenceMut};
+pub use union::{Union, UnionMut};
 
 use std::ops::{Add, Range, Sub};
 
@@ -90,6 +96,11 @@ impl<T> RangeSet<T> {
     /// Returns the number of ranges in the set.
     pub fn len_ranges(&self) -> usize {
         self.ranges.len()
+    }
+
+    /// Clears the set, removing all ranges.
+    pub fn clear(&mut self) {
+        self.ranges.clear();
     }
 }
 
@@ -395,36 +406,6 @@ pub trait Contains<Rhs> {
     /// Returns `true` if `self` contains `other`.
     #[must_use]
     fn contains(&self, other: &Rhs) -> bool;
-}
-
-pub trait Subset<Rhs> {
-    /// Returns `true` if `self` is a subset of `other`.
-    #[must_use]
-    fn is_subset(&self, other: &Rhs) -> bool;
-}
-
-pub trait Difference<Rhs> {
-    type Output;
-
-    /// Returns the set difference of `self` and `other`.
-    #[must_use]
-    fn difference(&self, other: &Rhs) -> Self::Output;
-}
-
-pub trait Union<Rhs> {
-    type Output;
-
-    /// Returns the set union of `self` and `other`.
-    #[must_use]
-    fn union(&self, other: &Rhs) -> Self::Output;
-}
-
-pub trait Intersection<Rhs> {
-    type Output;
-
-    /// Returns the set intersection of `self` and `other`.
-    #[must_use]
-    fn intersection(&self, other: &Rhs) -> Self::Output;
 }
 
 /// A type which successor and predecessor operations can be performed on.
