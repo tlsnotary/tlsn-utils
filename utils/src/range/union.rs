@@ -1,18 +1,78 @@
-use std::ops::Range;
+use std::ops::{BitOr, BitOrAssign, Range};
 
-use crate::range::{RangeDisjoint, RangeSet, RangeSuperset, RangeUnion};
+use crate::range::{Disjoint, RangeSet, Subset};
 
-impl<T: Copy + Ord> RangeUnion<Range<T>> for Range<T> {
+pub trait UnionMut<Rhs> {
+    /// Replaces `self` with the set union of `self` and `other`.
+    fn union_mut(&mut self, other: &Rhs);
+}
+
+pub trait Union<Rhs> {
+    type Output;
+
+    /// Returns the set union of `self` and `other`.
+    #[must_use]
+    fn union(&self, other: &Rhs) -> Self::Output;
+}
+
+impl<T: Copy + Ord> UnionMut<Range<T>> for RangeSet<T> {
+    fn union_mut(&mut self, other: &Range<T>) {
+        if other.is_empty() {
+            return;
+        } else if self.ranges.is_empty() {
+            self.ranges.push(other.clone());
+            return;
+        }
+
+        let ranges = &mut self.ranges;
+
+        let mut i = 0;
+        let mut new_range = other.clone();
+        while i < ranges.len() {
+            // If the new_range comes before the current range without overlapping
+            if new_range.end < ranges[i].start {
+                ranges.insert(i, new_range);
+
+                return;
+            }
+            // If the new_range overlaps or is adjacent with the current range
+            else if new_range.start <= ranges[i].end {
+                // Expand new_range to include the current range
+                new_range.start = new_range.start.min(ranges[i].start);
+                new_range.end = new_range.end.max(ranges[i].end);
+                // Remove the current range as it is now included in new_range
+                ranges.remove(i);
+            }
+            // If the new_range comes after the current range
+            else {
+                i += 1;
+            }
+        }
+
+        // If the new_range comes after all the ranges, add it to the end
+        ranges.push(new_range);
+    }
+}
+
+impl<T: Copy + Ord> UnionMut<RangeSet<T>> for RangeSet<T> {
+    fn union_mut(&mut self, other: &RangeSet<T>) {
+        for range in &other.ranges {
+            self.union_mut(range);
+        }
+    }
+}
+
+impl<T: Copy + Ord> Union<Range<T>> for Range<T> {
     type Output = RangeSet<T>;
 
     fn union(&self, other: &Range<T>) -> Self::Output {
         // If the two are equal, or other is a subset, return self.
-        if self == other || self.is_superset(other) {
+        if self == other || other.is_subset(self) {
             return RangeSet::from(self.clone());
         }
 
-        // If other is a superset, return other.
-        if other.is_superset(self) {
+        // If other contains self, return other.
+        if self.is_subset(other) {
             return RangeSet::from(other.clone());
         }
 
@@ -34,47 +94,17 @@ impl<T: Copy + Ord> RangeUnion<Range<T>> for Range<T> {
     }
 }
 
-impl<T: Copy + Ord> RangeUnion<RangeSet<T>> for Range<T> {
+impl<T: Copy + Ord> Union<RangeSet<T>> for Range<T> {
     type Output = RangeSet<T>;
 
     fn union(&self, other: &RangeSet<T>) -> Self::Output {
-        if self.is_empty() {
-            return other.clone();
-        }
-
-        let mut ranges = other.ranges.clone();
-
-        let mut i = 0;
-        let mut new_range = self.clone();
-        while i < ranges.len() {
-            // If the new_range comes before the current range without overlapping
-            if new_range.end < ranges[i].start {
-                ranges.insert(i, new_range);
-
-                return RangeSet { ranges };
-            }
-            // If the new_range overlaps or is adjacent with the current range
-            else if new_range.start <= ranges[i].end {
-                // Expand new_range to include the current range
-                new_range.start = new_range.start.min(ranges[i].start);
-                new_range.end = new_range.end.max(ranges[i].end);
-                // Remove the current range as it is now included in new_range
-                ranges.remove(i);
-            }
-            // If the new_range comes after the current range
-            else {
-                i += 1;
-            }
-        }
-
-        // If the new_range comes after all the ranges, add it to the end
-        ranges.push(new_range);
-
-        RangeSet { ranges }
+        let mut other = other.clone();
+        other.union_mut(self);
+        other
     }
 }
 
-impl<T: Copy + Ord> RangeUnion<Range<T>> for RangeSet<T> {
+impl<T: Copy + Ord> Union<Range<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn union(&self, other: &Range<T>) -> Self::Output {
@@ -82,15 +112,73 @@ impl<T: Copy + Ord> RangeUnion<Range<T>> for RangeSet<T> {
     }
 }
 
-impl<T: Copy + Ord> RangeUnion<RangeSet<T>> for RangeSet<T> {
+impl<T: Copy + Ord> Union<RangeSet<T>> for RangeSet<T> {
     type Output = RangeSet<T>;
 
     fn union(&self, other: &RangeSet<T>) -> Self::Output {
         let mut union = self.clone();
-        for range in &other.ranges {
-            union = union.union(range);
-        }
+        union.union_mut(other);
         union
+    }
+}
+
+impl<T: Copy + Ord> BitOrAssign<Range<T>> for RangeSet<T> {
+    fn bitor_assign(&mut self, other: Range<T>) {
+        self.union_mut(&other);
+    }
+}
+
+impl<T: Copy + Ord> BitOrAssign<&Range<T>> for RangeSet<T> {
+    fn bitor_assign(&mut self, other: &Range<T>) {
+        self.union_mut(other);
+    }
+}
+
+impl<T: Copy + Ord> BitOr<Range<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn bitor(mut self, other: Range<T>) -> Self::Output {
+        self.union_mut(&other);
+        self
+    }
+}
+
+impl<T: Copy + Ord> BitOr<&Range<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn bitor(mut self, other: &Range<T>) -> Self::Output {
+        self.union_mut(other);
+        self
+    }
+}
+
+impl<T: Copy + Ord> BitOrAssign<RangeSet<T>> for RangeSet<T> {
+    fn bitor_assign(&mut self, other: RangeSet<T>) {
+        self.union_mut(&other);
+    }
+}
+
+impl<T: Copy + Ord> BitOrAssign<&RangeSet<T>> for RangeSet<T> {
+    fn bitor_assign(&mut self, other: &RangeSet<T>) {
+        self.union_mut(other);
+    }
+}
+
+impl<T: Copy + Ord> BitOr<RangeSet<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn bitor(mut self, other: RangeSet<T>) -> Self::Output {
+        self.union_mut(&other);
+        self
+    }
+}
+
+impl<T: Copy + Ord> BitOr<&RangeSet<T>> for RangeSet<T> {
+    type Output = RangeSet<T>;
+
+    fn bitor(mut self, other: &RangeSet<T>) -> Self::Output {
+        self.union_mut(other);
+        self
     }
 }
 

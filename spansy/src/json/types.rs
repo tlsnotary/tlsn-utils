@@ -1,6 +1,6 @@
 use std::ops::{Index, Range};
 
-use utils::range::{RangeDifference, RangeSet, ToRangeSet};
+use utils::range::{Difference, RangeSet, ToRangeSet};
 
 use crate::{Span, Spanned};
 
