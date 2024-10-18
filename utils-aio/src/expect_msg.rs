@@ -27,6 +27,7 @@ mod tests {
     use futures_util::StreamExt;
 
     #[derive(Debug)]
+    #[allow(dead_code)]
     enum Msg {
         Foo(u8),
         Bar(u8),
