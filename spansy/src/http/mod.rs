@@ -2,6 +2,7 @@
 
 mod span;
 mod types;
+mod parse;
 
 use bytes::Bytes;
 
@@ -10,6 +11,7 @@ pub use types::{
     Body, BodyContent, Code, Header, HeaderName, HeaderValue, Method, Reason, Request, RequestLine,
     Response, Status, Target,
 };
+pub use parse::{parse_chunked_body, parse_deflate_body, parse_gzip_body, parse_identity_body};
 
 use crate::ParseError;
 
