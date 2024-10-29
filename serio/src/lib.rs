@@ -20,14 +20,14 @@ pub use sink::{IoSink, Sink, SinkExt};
 pub use stream::{IoStream, Stream, StreamExt};
 
 /// A serializable type.
-pub trait Serialize: serde::Serialize + Send + Sync + Unpin + 'static {}
+pub trait Serialize: serde::Serialize + Send + Sync + 'static {}
 
-impl<T> Serialize for T where T: serde::Serialize + Send + Sync + Unpin + 'static {}
+impl<T> Serialize for T where T: serde::Serialize + Send + Sync + 'static {}
 
 /// A deserializable type.
-pub trait Deserialize: serde::de::DeserializeOwned + Send + Sync + Unpin + 'static {}
+pub trait Deserialize: serde::de::DeserializeOwned + Send + Sync + 'static {}
 
-impl<T> Deserialize for T where T: serde::de::DeserializeOwned + Send + Sync + Unpin + 'static {}
+impl<T> Deserialize for T where T: serde::de::DeserializeOwned + Send + Sync + 'static {}
 
 /// A duplex.
 pub trait Duplex: Sink + Stream {}
