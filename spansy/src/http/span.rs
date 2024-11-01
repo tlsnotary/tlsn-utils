@@ -222,12 +222,23 @@ fn request_body_len(request: &Request) -> Result<usize, ParseError> {
     // the Transfer-Encoding overrides the Content-Length
     if request
         .headers_with_name("Transfer-Encoding")
-        .next()
-        .is_some()
+        .any(|h| {
+            std::str::from_utf8(h.value.0.as_bytes())
+                .unwrap_or("")
+                .split(',')
+                .any(|v| v.trim() != "identity")
+        })
     {
-        Err(ParseError(
-            "Transfer-Encoding not supported yet".to_string(),
-        ))
+        let bad_values = request
+            .headers_with_name("Transfer-Encoding")
+            .map(|h| std::str::from_utf8(h.value.0.as_bytes()).unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        Err(ParseError(format!(
+            "Transfer-Encoding other than identity not supported yet: {:?}",
+            bad_values
+        )))
     } else if let Some(h) = request.headers_with_name("Content-Length").next() {
         // If a valid Content-Length header field is present without Transfer-Encoding, its decimal value
         // defines the expected message body length in octets.
@@ -258,12 +269,23 @@ fn response_body_len(response: &Response) -> Result<usize, ParseError> {
 
     if response
         .headers_with_name("Transfer-Encoding")
-        .next()
-        .is_some()
+        .any(|h| {
+            std::str::from_utf8(h.value.0.as_bytes())
+                .unwrap_or("")
+                .split(',')
+                .any(|v| v.trim() != "identity")
+        })
     {
-        Err(ParseError(
-            "Transfer-Encoding not supported yet".to_string(),
-        ))
+        let bad_values = response
+            .headers_with_name("Transfer-Encoding")
+            .map(|h| std::str::from_utf8(h.value.0.as_bytes()).unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        Err(ParseError(format!(
+            "Transfer-Encoding other than identity not supported yet: {:?}",
+            bad_values
+        )))
     } else if let Some(h) = response.headers_with_name("Content-Length").next() {
         // If a valid Content-Length header field is present without Transfer-Encoding, its decimal value
         // defines the expected message body length in octets.
@@ -362,6 +384,46 @@ mod tests {
                         Content-Type: application/json\r\n\
                         Content-Length: 14\r\n\r\n\
                         {\"foo\": \"bar\"}";
+
+    const TEST_REQUEST_TRANSFER_ENCODING_IDENTITY: &[u8] = b"\
+                        POST / HTTP/1.1\r\n\
+                        Transfer-Encoding: identity\r\n\
+                        Content-Length: 12\r\n\r\n\
+                        Hello World!";
+
+    const TEST_RESPONSE_TRANSFER_ENCODING_IDENTITY: &[u8] = b"\
+                        HTTP/1.1 200 OK\r\n\
+                        Transfer-Encoding: identity\r\n\
+                        Content-Length: 12\r\n\r\n\
+                        Hello World!";
+
+    const TEST_REQUEST_TRANSFER_ENCODING_CHUNKED: &[u8] = b"\
+                        POST / HTTP/1.1\r\n\
+                        Transfer-Encoding: chunked\r\n\r\n\
+                        a\r\n\
+                        Hello World!\r\n\
+                        0\r\n\r\n";
+
+    const TEST_RESPONSE_TRANSFER_ENCODING_CHUNKED: &[u8] = b"\
+                        HTTP/1.1 200 OK\r\n\
+                        Transfer-Encoding: chunked\r\n\r\n\
+                        a\r\n\
+                        Hello World!\r\n\
+                        0\r\n\r\n";
+
+    const TEST_REQUEST_TRANSFER_ENCODING_MULTIPLE: &[u8] = b"\
+                        POST / HTTP/1.1\r\n\
+                        Transfer-Encoding: chunked, identity\r\n\r\n\
+                        a\r\n\
+                        Hello World!\r\n\
+                        0\r\n\r\n";
+
+    const TEST_RESPONSE_TRANSFER_ENCODING_MULTIPLE: &[u8] = b"\
+                        HTTP/1.1 200 OK\r\n\
+                        Transfer-Encoding: chunked, identity\r\n\r\n\
+                        a\r\n\
+                        Hello World!\r\n\
+                        0\r\n\r\n";
 
     #[test]
     fn test_parse_request() {
@@ -495,5 +557,45 @@ mod tests {
         };
 
         assert_eq!(value.span(), "{\"foo\": \"bar\"}");
+    }
+
+    #[test]
+    fn test_parse_request_transfer_encoding_identity() {
+        let req = parse_request(TEST_REQUEST_TRANSFER_ENCODING_IDENTITY).unwrap();
+        assert_eq!(req.body.unwrap().span(), b"Hello World!".as_slice());
+    }
+
+    #[test]
+    fn test_parse_response_transfer_encoding_identity() {
+        let res = parse_response(TEST_RESPONSE_TRANSFER_ENCODING_IDENTITY).unwrap();
+        assert_eq!(res.body.unwrap().span(), b"Hello World!".as_slice());
+    }
+
+    #[test]
+    fn test_parse_request_transfer_encoding_chunked() {
+        let err = parse_request(TEST_REQUEST_TRANSFER_ENCODING_CHUNKED).unwrap_err();
+        assert!(matches!(err, ParseError(_)));
+        assert!(err.to_string().contains("Transfer-Encoding other than identity not supported yet"));
+    }
+
+    #[test]
+    fn test_parse_response_transfer_encoding_chunked() {
+        let err = parse_response(TEST_RESPONSE_TRANSFER_ENCODING_CHUNKED).unwrap_err();
+        assert!(matches!(err, ParseError(_)));
+        assert!(err.to_string().contains("Transfer-Encoding other than identity not supported yet"));
+    }
+
+    #[test]
+    fn test_parse_request_transfer_encoding_multiple() {
+        let err = parse_request(TEST_REQUEST_TRANSFER_ENCODING_MULTIPLE).unwrap_err();
+        assert!(matches!(err, ParseError(_)));
+        assert!(err.to_string().contains("Transfer-Encoding other than identity not supported yet"));
+    }
+
+    #[test]
+    fn test_parse_response_transfer_encoding_multiple() {
+        let err = parse_response(TEST_RESPONSE_TRANSFER_ENCODING_MULTIPLE).unwrap_err();
+        assert!(matches!(err, ParseError(_)));
+        assert!(err.to_string().contains("Transfer-Encoding other than identity not supported yet"));
     }
 }
