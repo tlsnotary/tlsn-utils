@@ -112,7 +112,7 @@ impl Sink for UnboundedMemorySink {
     }
 }
 
-/// An Unbounded memory stream that can be used to receive any deserializable type from the sender.
+/// An unbounded memory stream that can be used to receive any deserializable type from the sender.
 #[derive(Debug)]
 pub struct UnboundedMemoryStream(mpsc::UnboundedReceiver<Item>);
 
