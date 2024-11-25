@@ -133,7 +133,7 @@ impl Stream for UnboundedMemoryStream {
     }
 }
 
-/// Creates a new memory channel with the specified buffer size.
+/// Creates a new unbounded memory channel.
 pub fn unbounded() -> (UnboundedMemorySink, UnboundedMemoryStream) {
     let (sender, receiver) = mpsc::unbounded();
     (UnboundedMemorySink(sender), UnboundedMemoryStream(receiver))
@@ -204,6 +204,74 @@ pub fn duplex(buffer: usize) -> (MemoryDuplex, MemoryDuplex) {
     (
         MemoryDuplex { sink: a, stream: d },
         MemoryDuplex { sink: c, stream: b },
+    )
+}
+
+/// An unbounded memory duplex that can be used to send and receive any serializable types.
+#[derive(Debug)]
+pub struct UnboundedMemoryDuplex {
+    sink: UnboundedMemorySink,
+    stream: UnboundedMemoryStream,
+}
+
+impl UnboundedMemoryDuplex {
+    /// Returns the inner sink and stream.
+    pub fn into_inner(self) -> (UnboundedMemorySink, UnboundedMemoryStream) {
+        (self.sink, self.stream)
+    }
+
+    /// Returns a reference to the inner sink.
+    pub fn sink_mut(&mut self) -> &mut UnboundedMemorySink {
+        &mut self.sink
+    }
+
+    /// Returns a reference to the inner stream.
+    pub fn stream_mut(&mut self) -> &mut UnboundedMemoryStream {
+        &mut self.stream
+    }
+}
+
+impl Sink for UnboundedMemoryDuplex {
+    type Error = Error;
+
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.sink).poll_ready(cx)
+    }
+
+    fn start_send<Item: Serialize>(
+        mut self: Pin<&mut Self>,
+        item: Item,
+    ) -> Result<(), Self::Error> {
+        Pin::new(&mut self.sink).start_send(item)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.sink).poll_flush(cx)
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.sink).poll_close(cx)
+    }
+}
+
+impl Stream for UnboundedMemoryDuplex {
+    type Error = Error;
+
+    fn poll_next<Item: Deserialize>(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Item, Self::Error>>> {
+        Pin::new(&mut self.stream).poll_next(cx)
+    }
+}
+
+/// Creates a new unbounded memory duplex.
+pub fn unbounded_duplex() -> (UnboundedMemoryDuplex, UnboundedMemoryDuplex) {
+    let (a, b) = unbounded();
+    let (c, d) = unbounded();
+    (
+        UnboundedMemoryDuplex { sink: a, stream: d },
+        UnboundedMemoryDuplex { sink: c, stream: b },
     )
 }
 
