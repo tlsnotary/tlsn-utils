@@ -22,6 +22,11 @@ impl<T: Copy + Ord> Subset<RangeSet<T>> for Range<T> {
             return false;
         }
 
+        if self.start < other.min().unwrap() || self.end > other.end().unwrap() {
+            // Check if self's start & end are contained within (or same as) other's.
+            return false;
+        }
+
         for other in &other.ranges {
             if self.start >= other.end {
                 // self is rightward of other, proceed to next other
@@ -54,6 +59,12 @@ impl<T: Copy + Ord> Subset<RangeSet<T>> for RangeSet<T> {
             return true;
         } else if other.ranges.is_empty() {
             // non-empty set is not subset of empty set
+            return false;
+        }
+
+        if self.min().unwrap() < other.min().unwrap() || self.end().unwrap() > other.end().unwrap()
+        {
+            // Check if self's start & end are contained within (or same as) other's.
             return false;
         }
 
