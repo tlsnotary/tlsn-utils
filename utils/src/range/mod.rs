@@ -315,7 +315,7 @@ pub struct RangeSetIter<'a, T> {
     current: Option<Range<T>>,
 }
 
-impl<'a, T> Iterator for RangeSetIter<'a, T>
+impl<T> Iterator for RangeSetIter<'_, T>
 where
     T: Copy + Ord,
     Range<T>: Iterator<Item = T>,
@@ -346,7 +346,7 @@ pub struct RangeIter<'a, T> {
     iter: std::slice::Iter<'a, Range<T>>,
 }
 
-impl<'a, T> Iterator for RangeIter<'a, T>
+impl<T> Iterator for RangeIter<'_, T>
 where
     T: Copy + Ord,
     Range<T>: Iterator<Item = T>,
@@ -358,7 +358,7 @@ where
     }
 }
 
-impl<'a, T> ExactSizeIterator for RangeIter<'a, T>
+impl<T> ExactSizeIterator for RangeIter<'_, T>
 where
     T: Copy + Ord,
     Range<T>: Iterator<Item = T>,
@@ -368,7 +368,7 @@ where
     }
 }
 
-impl<'a, T> DoubleEndedIterator for RangeIter<'a, T>
+impl<T> DoubleEndedIterator for RangeIter<'_, T>
 where
     T: Copy + Ord,
     Range<T>: Iterator<Item = T>,
