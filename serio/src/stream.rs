@@ -264,7 +264,7 @@ pub struct ExpectNext<'a, St: ?Sized, Item> {
 
 impl<St: ?Sized + Unpin, Item> Unpin for ExpectNext<'_, St, Item> {}
 
-impl<'a, St: ?Sized + IoStream + Unpin, Item: Deserialize> Future for ExpectNext<'a, St, Item> {
+impl<St: ?Sized + IoStream + Unpin, Item: Deserialize> Future for ExpectNext<'_, St, Item> {
     type Output = Result<Item, St::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
