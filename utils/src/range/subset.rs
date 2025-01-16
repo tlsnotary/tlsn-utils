@@ -22,6 +22,7 @@ impl<T: Copy + Ord> Subset<RangeSet<T>> for Range<T> {
             return false;
         }
 
+        // Boundary short circuit.
         if self.start < other.min().unwrap() || self.end > other.end().unwrap() {
             // Check if self's start & end are contained within (or same as) other's.
             return false;
@@ -62,6 +63,7 @@ impl<T: Copy + Ord> Subset<RangeSet<T>> for RangeSet<T> {
             return false;
         }
 
+        // Boundary short circuit.
         if self.min().unwrap() < other.min().unwrap() || self.end().unwrap() > other.end().unwrap()
         {
             // Check if self's start & end are contained within (or same as) other's.
