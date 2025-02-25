@@ -6,7 +6,8 @@ members = [
     "utils",
     "utils-aio",
     "utils/fuzz",
-    "websocket-relay"
+    "websocket-relay",
+    "web-spawn",
 ]
 
 [workspace.dependencies]
