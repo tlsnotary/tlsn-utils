@@ -1,0 +1,23 @@
+[package]
+name = "futures-limit"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bytes = { workspace = true }
+futures = { workspace = true, features = ["bilock", "unstable"] }
+futures-timer = { version = "3" }
+pin-project-lite = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures-timer = { version = "3", features = ["wasm-bindgen"] }
+
+[dev-dependencies]
+criterion = { workspace = true }
+pollster = { workspace = true, features = ["macro"] }
+mock_instant = "0.5"
+futures-plex = { workspace = true }
+
+[[bench]]
+name = "bench"
+harness = false
