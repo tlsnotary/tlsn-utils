@@ -7,10 +7,13 @@ members = [
     "utils-aio",
     "utils/fuzz",
     "websocket-relay",
+    "futures-limit",
+    "futures-plex",
     "web-spawn",
 ]
 
 [workspace.dependencies]
+futures-plex = { path = "futures-plex" }
 serio = { path = "serio" }
 spansy = { path = "spansy" }
 tlsn-utils = { path = "utils" }
@@ -23,6 +26,7 @@ async-tungstenite = "0.16"
 bincode = "1.3"
 bytes = "1"
 cfg-if = "1"
+criterion = "0.5"
 futures = "0.3"
 futures-channel = "0.3"
 futures-core = "0.3"
@@ -30,6 +34,7 @@ futures-io = "0.3"
 futures-sink = "0.3"
 futures-util = "0.3"
 pin-project-lite = "0.2"
+pollster = "0.4"
 prost = "0.9"
 prost-build = "0.9"
 rand = "0.8"
