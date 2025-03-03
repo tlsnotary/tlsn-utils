@@ -10,8 +10,10 @@ pub use rate::Rate;
 use futures::{AsyncRead, AsyncWrite};
 #[cfg(test)]
 pub(crate) use mock_instant::thread_local::Instant;
-#[cfg(not(test))]
+#[cfg(all(not(test), not(target_arch = "wasm32")))]
 pub(crate) use std::time::Instant;
+#[cfg(all(not(test), target_arch = "wasm32"))]
+pub(crate) use web_time::Instant;
 
 /// Extension trait for `AsyncWrite`.
 pub trait AsyncWriteLimitExt: AsyncWrite {
