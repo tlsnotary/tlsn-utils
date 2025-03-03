@@ -3,7 +3,7 @@ name = "web-spawn"
 version = "0.1.0"
 edition = "2024"
 description = "`std` spawn replacement for WASM in the browser."
-repository = "https://github.com/tlsnotary/web-spawn"
+repository = "https://github.com/tlsnotary/tlsn-utils"
 license = "MIT OR Apache-2.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
