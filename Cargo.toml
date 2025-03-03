@@ -9,6 +9,7 @@ members = [
     "websocket-relay",
     "futures-limit",
     "futures-plex",
+    "web-spawn",
 ]
 
 [workspace.dependencies]
