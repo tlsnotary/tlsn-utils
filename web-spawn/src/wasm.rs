@@ -21,16 +21,24 @@ pub(crate) type Closure = dyn FnOnce() + Send;
 /// Global sender channel for spawning threads.
 pub(crate) static SENDER: OnceLock<UnboundedSender<(Builder, Box<Closure>)>> = OnceLock::new();
 
-/// Initializes the thread spawner.
-#[wasm_bindgen(js_name = initSpawner)]
-pub fn init_spawner() -> Spawner {
-    Spawner::new()
+#[cfg_attr(not(feature = "no-bundler"), wasm_bindgen(module = "/js/spawn.js"))]
+#[cfg_attr(
+    feature = "no-bundler",
+    wasm_bindgen(module = "/js/spawn.no-bundler.js")
+)]
+extern "C" {
+    #[wasm_bindgen(js_name = startSpawnerWorker)]
+    fn start_spawner_worker(module: JsValue, memory: JsValue, spawner: Spawner) -> Promise;
 }
 
 /// Starts the thread spawner on a dedicated worker thread.
 #[wasm_bindgen(js_name = startSpawner)]
 pub fn start_spawner() -> Promise {
-    Spawner::new().spawn()
+    start_spawner_worker(
+        wasm_bindgen::module(),
+        wasm_bindgen::memory(),
+        Spawner::new(),
+    )
 }
 
 /// Spawns a closure onto a new thread.

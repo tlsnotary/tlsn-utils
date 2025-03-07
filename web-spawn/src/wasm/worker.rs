@@ -19,6 +19,8 @@ impl WorkerData {
 
         if let Some(name) = builder.name {
             options.set_name(&name);
+        } else {
+            options.set_name("web-spawn-worker");
         }
 
         let worker = web_sys::Worker::new_with_options(script_url, &options).unwrap_throw();
@@ -26,9 +28,15 @@ impl WorkerData {
         let data = js_sys::Array::new();
         data.push(&wasm_bindgen::module());
         data.push(&wasm_bindgen::memory());
+        #[cfg(feature = "no-bundler")]
+        data.push(&crate::utils::get_url());
         data.push(&JsValue::from(Box::into_raw(Box::new(self))));
 
-        worker.post_message(&data).unwrap_throw();
+        let msg = js_sys::Object::new();
+        js_sys::Reflect::set(&msg, &"type".into(), &"web_spawn_start_worker".into()).unwrap_throw();
+        js_sys::Reflect::set(&msg, &"data".into(), &data).unwrap_throw();
+
+        worker.post_message(&msg).unwrap_throw();
     }
 }
 
