@@ -15,7 +15,7 @@ Add `web-spawn` as a dependency in your `Cargo.toml`:
 
 ```toml
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-web-spawn = { version = "0.1" }
+web-spawn = { version = "0.2" }
 ```
 
 Then **you must ensure that spawning is initialized**. One way to do this is to re-export the following function:
