@@ -218,6 +218,7 @@ mod tests {
         assert!(cover_sets.contains(&RangeSet::from(vec![12..15, 23..25])));
     }
 
+    #[allow(clippy::single_range_in_vec_init)]
     #[test]
     fn test_complex_nested_subsets() {
         // Target with multiple ranges
