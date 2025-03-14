@@ -1,3 +1,4 @@
+mod cover;
 mod difference;
 mod index;
 mod intersection;
@@ -5,6 +6,7 @@ mod subset;
 mod symmetric_difference;
 mod union;
 
+pub use cover::{Cover, RangeSetCoverError};
 pub use difference::{Difference, DifferenceMut};
 pub use index::IndexRanges;
 pub use intersection::Intersection;

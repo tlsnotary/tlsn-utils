@@ -12,6 +12,7 @@ name = "utils"
 
 [dependencies]
 serde = { workspace = true, optional = true, features = ["derive"] }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 criterion = { version = "0.5" }
