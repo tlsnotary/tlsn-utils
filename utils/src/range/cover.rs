@@ -150,10 +150,12 @@ mod tests {
     #[test]
     fn test_no_subset_in_others() {
         let target = RangeSet::from(5..10);
-        let others = [RangeSet::from(1..4),   // Completely outside target
-            RangeSet::from(3..7),   // Partially overlaps but not a subset
-            RangeSet::from(8..15),  // Partially overlaps but not a subset
-            RangeSet::from(11..20)];
+        let others = [
+            RangeSet::from(1..4),  // Completely outside target
+            RangeSet::from(3..7),  // Partially overlaps but not a subset
+            RangeSet::from(8..15), // Partially overlaps but not a subset
+            RangeSet::from(11..20),
+        ];
 
         let result = target.cover(others.iter());
         assert!(matches!(
@@ -205,9 +207,11 @@ mod tests {
         let target = RangeSet::from(vec![1..5, 10..15, 20..25]);
 
         // Others with multiple ranges in each RangeSet
-        let others = [RangeSet::from(vec![1..3, 20..23]), // Covers part of first and third ranges
+        let others = [
+            RangeSet::from(vec![1..3, 20..23]), // Covers part of first and third ranges
             RangeSet::from(vec![3..5, 10..12]), // Covers rest of first and part of second
-            RangeSet::from(vec![12..15, 23..25])];
+            RangeSet::from(vec![12..15, 23..25]),
+        ];
 
         let result = target.cover(others.iter()).unwrap();
         let cover_sets = result.collect::<Vec<_>>();
@@ -225,12 +229,14 @@ mod tests {
         let target = RangeSet::from(vec![1..10, 15..20]);
 
         // Collection with nested subsets
-        let others = [RangeSet::from(vec![1..9, 16..20]),
+        let others = [
+            RangeSet::from(vec![1..9, 16..20]),
             RangeSet::from(vec![1..5, 16..18]),
             RangeSet::from(2..3),
             RangeSet::from(8..20), // Not a subset
             RangeSet::from(vec![9..10, 15..17]),
-            RangeSet::from(vec![21..30])];
+            RangeSet::from(vec![21..30]),
+        ];
 
         let result = target.cover(others.iter()).unwrap();
         let cover_sets = result.collect::<Vec<_>>();
@@ -261,10 +267,12 @@ mod tests {
         let target = RangeSet::from(vec![1..10, 15..25, 30..35]);
 
         // Collection with multiple ranges in each RangeSet
-        let others = [RangeSet::from(vec![1..5, 16..20]), // Covers part of first and second ranges
+        let others = [
+            RangeSet::from(vec![1..5, 16..20]), // Covers part of first and second ranges
             RangeSet::from(vec![5..8, 21..25]), // Covers part of first and second ranges
             RangeSet::from(vec![15..16, 30..33]), // Covers part of second and third ranges
-            RangeSet::from(vec![9..10, 34..35])];
+            RangeSet::from(vec![9..10, 34..35]),
+        ];
 
         let result = target.cover(others.iter());
         assert!(matches!(
