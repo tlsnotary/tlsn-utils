@@ -4,7 +4,6 @@ on:
   push:
     branches: [dev]
   pull_request:
-    branches: [dev]
 
 env:
   CARGO_TERM_COLOR: always
@@ -26,7 +25,7 @@ jobs:
           components: clippy
 
       - name: Use caching
-        uses: Swatinem/rust-cache@v2.7.3
+        uses: Swatinem/rust-cache@v2.7.7
 
       - name: Clippy
         run: cargo clippy --all-features --all-targets -- -D warnings
@@ -50,6 +49,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.7.3
+      - uses: Swatinem/rust-cache@v2.7.7
       - name: Check formatting
         run: cargo fmt --check --all
+
+  wasm:
+    name: Build and Test web-spawn (wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install nightly rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown,x86_64-unknown-linux-gnu
+          toolchain: nightly
+          components: rust-src
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Use caching
+        uses: Swatinem/rust-cache@v2.7.7
+
+      - name: Run tests
+        run: |
+          cd web-spawn
+          ./run_tests.sh
