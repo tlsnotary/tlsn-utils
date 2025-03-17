@@ -1,0 +1,18 @@
+[package]
+name = "rand06-compat"
+version = "0.1.0"
+edition = "2024"
+description = "Compatibility wrapper between `rand_core` 0.6 and 0.9"
+keywords = ["rand_core", "rand", "compat", "compatibility"]
+
+[features]
+default = ["std"]
+std = ["rand_core_06/std", "rand_core/std"]
+
+[dependencies]
+rand_core = { version = "0.9", default-features = false }
+rand_core_06 = { package = "rand_core", version = "0.6", default-features = false }
+
+[dev-dependencies]
+rand_core = { version = "0.9", default-features = true }
+rand = { version = "0.9" }
