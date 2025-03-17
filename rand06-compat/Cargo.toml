@@ -2,6 +2,9 @@
 name = "rand06-compat"
 version = "0.1.0"
 edition = "2024"
+authors = ["TLSNotary Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tlsnotary/tlsn-utils"
 description = "Compatibility wrapper between `rand_core` 0.6 and 0.9"
 keywords = ["rand_core", "rand", "compat", "compatibility"]
 
