@@ -13,6 +13,20 @@ pub trait Cover<Rhs> {
     fn cover<'a>(&self, others: impl IntoIterator<Item = &'a Rhs>) -> Option<Vec<&'a Rhs>>
     where
         Rhs: 'a;
+
+    /// Returns the fewest sets from `others` which exactly cover `self`.
+    ///
+    /// # Arguments
+    ///
+    /// * `others` - The collection of items to cover `self`.
+    /// * `f` - A function that extracts a set from an item.
+    fn cover_by<'a, T>(
+        &self,
+        others: impl IntoIterator<Item = &'a T>,
+        f: impl Fn(&T) -> &Rhs,
+    ) -> Option<Vec<&'a T>>
+    where
+        T: 'a;
 }
 
 impl<T> Cover<RangeSet<T>> for RangeSet<T>
@@ -27,7 +41,7 @@ where
     where
         RangeSet<T>: 'a,
     {
-        cover(self, others).map(|sets| sets.into_iter().map(|(pos, _)| pos).collect())
+        cover(self, |set| set, others).map(|sets| sets.into_iter().map(|(pos, _)| pos).collect())
     }
 
     fn cover<'a>(
@@ -37,7 +51,18 @@ where
     where
         RangeSet<T>: 'a,
     {
-        cover(self, others).map(|sets| sets.into_iter().map(|(_, set)| set).collect())
+        cover(self, |set| set, others).map(|sets| sets.into_iter().map(|(_, set)| set).collect())
+    }
+
+    fn cover_by<'a, U>(
+        &self,
+        others: impl IntoIterator<Item = &'a U>,
+        f: impl Fn(&U) -> &RangeSet<T>,
+    ) -> Option<Vec<&'a U>>
+    where
+        T: 'a,
+    {
+        cover(self, f, others).map(|sets| sets.into_iter().map(|(_, item)| item).collect())
     }
 }
 
@@ -46,7 +71,7 @@ struct Candidate<'a, T> {
     i: usize,
     /// Position in the original collection.
     pos: usize,
-    set: &'a RangeSet<T>,
+    item: &'a T,
     /// The number of elements in the intersection of the set and the uncovered elements.
     cover: usize,
 }
@@ -54,10 +79,17 @@ struct Candidate<'a, T> {
 /// Greedy set cover algorithm.
 ///
 /// Returns the fewest sets from `others` which exactly cover `query`.
-fn cover<'a, T: Copy + Ord + 'static>(
+///
+/// # Arguments
+///
+/// * `query` - The set to cover.
+/// * `f` - A function that extracts a set from an item.
+/// * `others` - The collection of items to cover `query`.
+fn cover<'a, T: Copy + Ord + 'static, U: 'a>(
     query: &RangeSet<T>,
-    others: impl IntoIterator<Item = &'a RangeSet<T>>,
-) -> Option<Vec<(usize, &'a RangeSet<T>)>>
+    f: impl Fn(&U) -> &RangeSet<T>,
+    others: impl IntoIterator<Item = &'a U>,
+) -> Option<Vec<(usize, &'a U)>>
 where
     Range<T>: ExactSizeIterator<Item = T>,
 {
@@ -70,7 +102,7 @@ where
         .into_iter()
         .enumerate()
         .filter_map(|(pos, other)| {
-            if other.is_subset(query) {
+            if f(other).is_subset(query) {
                 Some((pos, other))
             } else {
                 None
@@ -84,29 +116,29 @@ where
 
     let mut uncovered = query.clone();
     let mut candidates = Vec::new();
-    let mut candidate: Option<Candidate<'_, T>> = None;
+    let mut candidate: Option<Candidate<'_, U>> = None;
     while !uncovered.is_empty() {
         // Find the set with the most coverage.
-        for (i, (pos, set)) in others.iter().enumerate() {
-            let cover = set.intersection(&uncovered).len();
+        for (i, (pos, item)) in others.iter().enumerate() {
+            let cover = f(item).intersection(&uncovered).len();
             // If cover is non-empty or greater than the current candidate, update the candidate.
             if cover > candidate.as_ref().map_or(1, |c| c.cover) {
                 candidate = Some(Candidate {
                     i,
                     pos: *pos,
-                    set,
+                    item,
                     cover,
                 });
             }
         }
 
-        if let Some(Candidate { i, pos, set, .. }) = candidate.take() {
+        if let Some(Candidate { i, pos, item, .. }) = candidate.take() {
             // Remove the set from the uncovered elements.
-            uncovered.difference_mut(set);
+            uncovered.difference_mut(f(item));
             // Remove the set from the remaining sets.
             others.swap_remove(i);
             // Add the set to the candidates.
-            candidates.push((pos, set));
+            candidates.push((pos, item));
         } else {
             // If no set was found, we cannot cover the query.
             return None;
