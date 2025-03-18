@@ -6,7 +6,7 @@ mod subset;
 mod symmetric_difference;
 mod union;
 
-pub use cover::{Cover, RangeSetCoverError};
+pub use cover::Cover;
 pub use difference::{Difference, DifferenceMut};
 pub use index::IndexRanges;
 pub use intersection::Intersection;
@@ -93,6 +93,11 @@ impl<T> RangeSet<T> {
     /// Returns the ranges of the set.
     pub fn into_inner(self) -> Vec<Range<T>> {
         self.ranges
+    }
+
+    /// Returns `true` if the set is empty.
+    pub fn is_empty(&self) -> bool {
+        self.ranges.is_empty()
     }
 
     /// Returns the number of ranges in the set.
@@ -240,12 +245,6 @@ where
     #[must_use]
     pub fn len(&self) -> usize {
         self.ranges.iter().map(|range| range.len()).sum()
-    }
-
-    /// Returns `true` if the set is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 }
 
