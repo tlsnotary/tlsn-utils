@@ -2,9 +2,9 @@
 
 use libfuzzer_sys::fuzz_target;
 
-use tlsn_utils_fuzz::{assert_invariants, SmallSet};
+use rangeset_fuzz::{assert_invariants, SmallSet};
 
-use utils::range::*;
+use rangeset::*;
 
 fn expected_union(a: RangeSet<u8>, b: RangeSet<u8>) -> Vec<u8> {
     let mut expected_values = a.iter().chain(b.iter()).collect::<Vec<_>>();

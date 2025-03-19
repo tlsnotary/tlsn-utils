@@ -1,5 +1,5 @@
 [package]
-name = "tlsn-utils-fuzz"
+name = "rangeset-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 
-[dependencies.tlsn-utils]
+[dependencies.rangeset]
 path = ".."
 
 [profile.release]

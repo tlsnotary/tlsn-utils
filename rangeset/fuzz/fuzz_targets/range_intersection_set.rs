@@ -5,9 +5,9 @@ use std::ops::Range;
 
 use libfuzzer_sys::fuzz_target;
 
-use tlsn_utils_fuzz::{assert_invariants, SmallSet};
+use rangeset_fuzz::{assert_invariants, SmallSet};
 
-use utils::range::*;
+use rangeset::*;
 
 fuzz_target!(|r: (Range<u8>, SmallSet)| {
     let s1 = r.0;

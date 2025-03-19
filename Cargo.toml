@@ -5,12 +5,13 @@ members = [
     "uid-mux",
     "utils",
     "utils-aio",
-    "utils/fuzz",
     "websocket-relay",
     "futures-limit",
     "futures-plex",
     "web-spawn",
     "rand06-compat",
+    "rangeset",
+    "rangeset/fuzz",
 ]
 
 [workspace.dependencies]
@@ -20,6 +21,7 @@ spansy = { path = "spansy" }
 tlsn-utils = { path = "utils" }
 tlsn-utils-aio = { path = "utils-aio" }
 uid-mux = { path = "uid-mux" }
+rangeset = { path = "rangeset" }
 
 async-std = "1"
 async-trait = "0.1"

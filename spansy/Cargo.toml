@@ -8,10 +8,10 @@ license = "MIT OR Apache-2.0"
 
 [features]
 default = []
-serde = ["dep:serde", "bytes/serde"]
+serde = ["dep:serde", "bytes/serde", "rangeset/serde"]
 
 [dependencies]
-tlsn-utils.workspace = true
+rangeset = { workspace = true, version = "0.1" }
 
 bytes.workspace = true
 serde = { workspace = true, features = ["derive"], optional = true }

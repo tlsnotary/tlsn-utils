@@ -14,7 +14,7 @@ pub trait IndexRanges<T: Copy + Ord = usize> {
     /// # Examples
     ///
     /// ```
-    /// use utils::range::{RangeSet, IndexRanges};
+    /// use rangeset::{RangeSet, IndexRanges};
     ///
     /// let data = [1, 2, 3, 4, 5, 6, 7, 8, 9];
     /// let index = RangeSet::from([(0..3), (5..8)]);

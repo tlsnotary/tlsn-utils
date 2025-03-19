@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use libfuzzer_sys::arbitrary::{Arbitrary, Result, Unstructured};
 
-use utils::range::*;
+use rangeset::*;
 
 #[derive(Debug)]
 pub struct SmallSet {

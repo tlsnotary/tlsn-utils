@@ -1,6 +1,6 @@
 use std::ops::{Range, Sub, SubAssign};
 
-use crate::range::{Disjoint, RangeSet, Subset};
+use crate::{Disjoint, RangeSet, Subset};
 
 pub trait Difference<Rhs> {
     type Output;
@@ -203,7 +203,7 @@ impl<T: Copy + Ord> Sub<&RangeSet<T>> for RangeSet<T> {
 #[allow(clippy::all)]
 mod tests {
     use super::*;
-    use crate::range::Union;
+    use crate::Union;
 
     use itertools::iproduct;
 

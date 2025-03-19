@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 mod cover;
 mod difference;
 mod index;
@@ -35,7 +37,7 @@ use std::ops::{Add, Range, Sub};
 /// # Examples
 ///
 /// ```
-/// use utils::range::*;
+/// use rangeset::*;
 ///
 /// let a = 10..20;
 ///
@@ -436,7 +438,9 @@ macro_rules! impl_step {
     };
 }
 
-impl_step!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
+impl_step!(
+    u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize
+);
 
 impl<T: Copy + Ord> Disjoint<Range<T>> for Range<T> {
     fn is_disjoint(&self, other: &Range<T>) -> bool {
@@ -538,16 +542,18 @@ mod tests {
         let mut a = set.clone();
         let b = a.split_off(&at);
 
-        assert!(a
-            .ranges
-            .last()
-            .map(|range| !range.is_empty())
-            .unwrap_or(true));
-        assert!(b
-            .ranges
-            .first()
-            .map(|range| !range.is_empty())
-            .unwrap_or(true));
+        assert!(
+            a.ranges
+                .last()
+                .map(|range| !range.is_empty())
+                .unwrap_or(true)
+        );
+        assert!(
+            b.ranges
+                .first()
+                .map(|range| !range.is_empty())
+                .unwrap_or(true)
+        );
         assert_eq!(a.len() + b.len(), set.len());
         assert!(a.iter().chain(b.iter()).eq(set.iter()));
     }

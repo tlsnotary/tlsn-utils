@@ -1,6 +1,6 @@
 use std::ops::{BitOr, BitOrAssign, Range};
 
-use crate::range::{Disjoint, RangeSet, Subset};
+use crate::{Disjoint, RangeSet, Subset};
 
 pub trait UnionMut<Rhs> {
     /// Replaces `self` with the set union of `self` and `other`.

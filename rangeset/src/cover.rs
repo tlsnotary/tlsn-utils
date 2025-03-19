@@ -1,5 +1,5 @@
-use crate::range::{
-    difference::DifferenceMut, intersection::Intersection, subset::Subset, Range, RangeSet,
+use crate::{
+    Range, RangeSet, difference::DifferenceMut, intersection::Intersection, subset::Subset,
 };
 
 /// Set cover methods.

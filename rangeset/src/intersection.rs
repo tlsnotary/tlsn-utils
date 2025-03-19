@@ -1,6 +1,6 @@
 use std::ops::{BitAnd, BitAndAssign};
 
-use crate::range::{Range, RangeSet};
+use crate::{Range, RangeSet};
 
 pub trait Intersection<Rhs> {
     type Output;
@@ -171,7 +171,7 @@ mod tests {
 
     use itertools::iproduct;
 
-    use crate::range::assert_invariants;
+    use crate::assert_invariants;
 
     use super::*;
 

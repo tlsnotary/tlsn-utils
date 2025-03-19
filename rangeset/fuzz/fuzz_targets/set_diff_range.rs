@@ -4,9 +4,9 @@ use std::ops::Range;
 
 use libfuzzer_sys::fuzz_target;
 
-use tlsn_utils_fuzz::{assert_invariants, SmallSet};
+use rangeset_fuzz::{assert_invariants, SmallSet};
 
-use utils::range::*;
+use rangeset::*;
 
 fn expected_difference(a: RangeSet<u8>, b: Range<u8>) -> Vec<u8> {
     a.iter().filter(|x| !b.contains(x)).collect::<Vec<_>>()
