@@ -1,6 +1,6 @@
 use std::ops::{BitXor, BitXorAssign, Range};
 
-use crate::range::{DifferenceMut, Intersection, RangeSet, UnionMut};
+use crate::{DifferenceMut, Intersection, RangeSet, UnionMut};
 
 pub trait SymmetricDifferenceMut<Rhs> {
     /// Replaces `self` with the set symmetric difference of `self` and `other`.

@@ -1,4 +1,4 @@
-use crate::range::{Range, RangeSet};
+use crate::{Range, RangeSet};
 
 pub trait Subset<Rhs> {
     /// Returns `true` if `self` is a subset of `other`.

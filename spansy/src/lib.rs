@@ -11,7 +11,7 @@ pub(crate) mod helpers;
 pub mod http;
 pub mod json;
 
-use utils::range::{RangeSet, ToRangeSet};
+use rangeset::{RangeSet, ToRangeSet};
 
 /// A parsing error.
 #[derive(Debug, thiserror::Error)]

@@ -1,6 +1,6 @@
 use std::ops::{Index, Range};
 
-use utils::range::{Difference, RangeSet, ToRangeSet};
+use rangeset::{Difference, RangeSet, ToRangeSet};
 
 use crate::{Span, Spanned};
 
@@ -443,7 +443,7 @@ impl_type!(KeyValue, span);
 
 #[cfg(test)]
 mod tests {
-    use utils::range::IndexRanges;
+    use rangeset::IndexRanges;
 
     use crate::json::parse_str;
 
