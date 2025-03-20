@@ -11,7 +11,7 @@ default = []
 serde = ["dep:serde", "bytes/serde", "rangeset/serde"]
 
 [dependencies]
-rangeset = { workspace = true, version = "0.1" }
+rangeset = { version = "0.1" }
 
 bytes.workspace = true
 serde = { workspace = true, features = ["derive"], optional = true }
