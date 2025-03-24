@@ -122,7 +122,7 @@ where
         for (i, (pos, item)) in others.iter().enumerate() {
             let cover = f(item).intersection(&uncovered).len();
             // If cover is non-empty or greater than the current candidate, update the candidate.
-            if cover > candidate.as_ref().map_or(1, |c| c.cover) {
+            if cover > candidate.as_ref().map_or(0, |c| c.cover) {
                 candidate = Some(Candidate {
                     i,
                     pos: *pos,
@@ -282,5 +282,17 @@ mod tests {
 
         let result = query.cover(others.iter());
         assert!(result.is_none());
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn test_length_one_subset() {
+        let query: RangeSet<i32> = RangeSet::from(vec![1..2]);
+
+        // A subset with a range of length 1.
+        let others = [RangeSet::from(vec![1..2])];
+
+        let result = query.cover(others.iter());
+        assert!(result.is_some());
     }
 }
