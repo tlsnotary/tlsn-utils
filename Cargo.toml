@@ -4,7 +4,6 @@ members = [
     "spansy",
     "uid-mux",
     "utils",
-    "utils-aio",
     "websocket-relay",
     "futures-limit",
     "futures-plex",
@@ -23,9 +22,7 @@ tlsn-utils-aio = { path = "utils-aio" }
 uid-mux = { path = "uid-mux" }
 rangeset = { path = "rangeset" }
 
-async-std = "1"
 async-trait = "0.1"
-async-tungstenite = "0.16"
 bincode = "1.3"
 bytes = "1"
 cfg-if = "1"
@@ -38,8 +35,6 @@ futures-sink = "0.3"
 futures-util = "0.3"
 pin-project-lite = "0.2"
 pollster = "0.4"
-prost = "0.9"
-prost-build = "0.9"
 rand = "0.8"
 rayon = "1"
 serde = "1"
