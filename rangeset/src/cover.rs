@@ -80,7 +80,7 @@ where
         f: impl Fn(&U) -> &RangeSet<T>,
     ) -> Result<Vec<&'a U>, (Vec<&'a U>, RangeSet<T>)>
     where
-        U: 'a,
+        T: 'a,
     {
         cover(self, f, others)
             .map(|sets| sets.into_iter().map(|(_, item)| item).collect())
