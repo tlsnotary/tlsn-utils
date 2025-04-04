@@ -305,7 +305,7 @@ mod tests {
         let query = RangeSet::from(1..10);
         let others = [&RangeSet::from(1..5), &RangeSet::from(6..10)];
 
-        let (partial, uncovered) = query.cover(others.into_iter()).unwrap_err();
+        let (partial, uncovered) = query.cover(others).unwrap_err();
         assert_eq!(partial, others);
         assert_eq!(uncovered, RangeSet::from(5..6));
     }
@@ -323,7 +323,7 @@ mod tests {
             &RangeSet::from(vec![9..10, 34..35]), // Covers part of first and third ranges
         ];
 
-        let (partial, uncovered) = query.cover(others.into_iter()).unwrap_err();
+        let (partial, uncovered) = query.cover(others).unwrap_err();
         assert_eq!(partial, others);
         assert_eq!(uncovered, RangeSet::from([8..9, 20..21, 33..34,]));
     }
