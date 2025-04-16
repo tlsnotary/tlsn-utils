@@ -4,29 +4,30 @@ use crate::{
 
 /// Set cover methods.
 pub trait Cover<Rhs> {
-    /// Returns the positions of the fewest sets from `others` which exactly
-    /// cover `self`. If failed, returns the positions of the sets that
-    /// partially cover `self` and the uncovered values.
-    fn find_cover<'a>(
-        &self,
-        others: impl IntoIterator<Item = &'a Rhs>,
-    ) -> Result<Vec<usize>, (Vec<usize>, Rhs)>
+    /// Finds the positions of the fewest sets from `others` which exactly
+    /// cover `self`.
+    ///
+    /// Returns a tuple containing:
+    /// * A vector of indices of the sets that cover `self` (empty if no coverage at all).
+    /// * Any uncovered elements (empty if complete coverage is achieved).
+    fn find_cover<'a>(&self, others: impl IntoIterator<Item = &'a Rhs>) -> (Vec<usize>, Rhs)
     where
         Rhs: 'a;
 
-    /// Returns the fewest sets from `others` which exactly cover `self`.
-    /// If failed, returns the sets that partially cover `self` and the
-    /// uncovered values.
-    fn cover<'a>(
-        &self,
-        others: impl IntoIterator<Item = &'a Rhs>,
-    ) -> Result<Vec<&'a Rhs>, (Vec<&'a Rhs>, Rhs)>
+    /// Finds the fewest sets from `others` which exactly cover `self`.
+    ///
+    /// Returns a tuple containing:
+    /// * A vector of sets that cover `self` (empty if no coverage at all).
+    /// * Any uncovered elements (empty if complete coverage is achieved).
+    fn cover<'a>(&self, others: impl IntoIterator<Item = &'a Rhs>) -> (Vec<&'a Rhs>, Rhs)
     where
         Rhs: 'a;
 
-    /// Returns the fewest sets from `others` which exactly cover `self`.
-    /// If failed, returns the sets that partially cover `self` and the
-    /// uncovered values.
+    /// Finds the fewest sets from `others` which exactly cover `self`.
+    ///
+    /// Returns a tuple containing:
+    /// * A vector of items that cover `self` (empty if no coverage at all).
+    /// * Any uncovered elements (empty if complete coverage is achieved).
     ///
     /// # Arguments
     ///
@@ -36,7 +37,7 @@ pub trait Cover<Rhs> {
         &self,
         others: impl IntoIterator<Item = &'a T>,
         f: impl Fn(&T) -> &Rhs,
-    ) -> Result<Vec<&'a T>, (Vec<&'a T>, Rhs)>
+    ) -> (Vec<&'a T>, Rhs)
     where
         T: 'a;
 }
@@ -49,47 +50,38 @@ where
     fn find_cover<'a>(
         &self,
         others: impl IntoIterator<Item = &'a RangeSet<T>>,
-    ) -> Result<Vec<usize>, (Vec<usize>, RangeSet<T>)>
+    ) -> (Vec<usize>, RangeSet<T>)
     where
         RangeSet<T>: 'a,
     {
-        cover(self, |set| set, others)
-            .map(|sets| sets.into_iter().map(|(pos, _)| pos).collect())
-            .map_err(|PartialCover { covered, uncovered }| {
-                (covered.into_iter().map(|(pos, _)| pos).collect(), uncovered)
-            })
+        let CoverResult { covered, uncovered } = cover(self, |set| set, others);
+        (covered.into_iter().map(|(pos, _)| pos).collect(), uncovered)
     }
 
     fn cover<'a>(
         &self,
         others: impl IntoIterator<Item = &'a RangeSet<T>>,
-    ) -> Result<Vec<&'a RangeSet<T>>, (Vec<&'a RangeSet<T>>, RangeSet<T>)>
+    ) -> (Vec<&'a RangeSet<T>>, RangeSet<T>)
     where
         RangeSet<T>: 'a,
     {
-        cover(self, |set| set, others)
-            .map(|sets| sets.into_iter().map(|(_, set)| set).collect())
-            .map_err(|PartialCover { covered, uncovered }| {
-                (covered.into_iter().map(|(_, set)| set).collect(), uncovered)
-            })
+        let CoverResult { covered, uncovered } = cover(self, |set| set, others);
+        (covered.into_iter().map(|(_, set)| set).collect(), uncovered)
     }
 
     fn cover_by<'a, U>(
         &self,
         others: impl IntoIterator<Item = &'a U>,
         f: impl Fn(&U) -> &RangeSet<T>,
-    ) -> Result<Vec<&'a U>, (Vec<&'a U>, RangeSet<T>)>
+    ) -> (Vec<&'a U>, RangeSet<T>)
     where
         T: 'a,
     {
-        cover(self, f, others)
-            .map(|sets| sets.into_iter().map(|(_, item)| item).collect())
-            .map_err(|PartialCover { covered, uncovered }| {
-                (
-                    covered.into_iter().map(|(_, item)| item).collect(),
-                    uncovered,
-                )
-            })
+        let CoverResult { covered, uncovered } = cover(self, f, others);
+        (
+            covered.into_iter().map(|(_, item)| item).collect(),
+            uncovered,
+        )
     }
 }
 
@@ -104,14 +96,23 @@ struct Candidate<'a, T> {
     cover: usize,
 }
 
-struct PartialCover<'a, T, U> {
+struct CoverResult<'a, T, U> {
     covered: Vec<(usize, &'a U)>,
     uncovered: RangeSet<T>,
 }
 
+impl<T: Copy + Ord, U> Default for CoverResult<'_, T, U> {
+    fn default() -> Self {
+        Self {
+            covered: Vec::default(),
+            uncovered: RangeSet::default(),
+        }
+    }
+}
+
 /// Greedy set cover algorithm.
 ///
-/// Returns the fewest sets from `others` which exactly cover `query`.
+/// Finds the fewest sets from `others` which exactly cover `query`.
 ///
 /// # Arguments
 ///
@@ -122,12 +123,12 @@ fn cover<'a, T: Copy + Ord + 'static, U: 'a>(
     query: &RangeSet<T>,
     f: impl Fn(&U) -> &RangeSet<T>,
     others: impl IntoIterator<Item = &'a U>,
-) -> Result<Vec<(usize, &'a U)>, PartialCover<'a, T, U>>
+) -> CoverResult<'a, T, U>
 where
     Range<T>: ExactSizeIterator<Item = T>,
 {
     if query.is_empty() {
-        return Ok(Default::default());
+        return Default::default();
     }
 
     // Filter out rangesets that are not a subset of query.
@@ -144,10 +145,10 @@ where
         .collect();
 
     if others.is_empty() {
-        return Err(PartialCover {
+        return CoverResult {
             covered: Vec::default(),
             uncovered: query.clone(),
-        });
+        };
     }
 
     let mut uncovered = query.clone();
@@ -178,14 +179,17 @@ where
             candidates.push((pos, item));
         } else {
             // If no set was found, we cannot cover the query.
-            return Err(PartialCover {
+            return CoverResult {
                 covered: candidates,
                 uncovered,
-            });
+            };
         }
     }
 
-    Ok(candidates)
+    CoverResult {
+        covered: candidates,
+        uncovered: RangeSet::default(),
+    }
 }
 
 #[cfg(test)]
@@ -197,8 +201,9 @@ mod tests {
         let query = RangeSet::<u32>::default();
         let others = [RangeSet::from(1..5), RangeSet::from(6..10)];
 
-        let result = query.cover(others.iter()).unwrap();
-        assert!(result.is_empty());
+        let (covered, uncovered) = query.cover(others.iter());
+        assert!(covered.is_empty());
+        assert!(uncovered.is_empty());
     }
 
     #[test]
@@ -206,8 +211,8 @@ mod tests {
         let query = RangeSet::from(1..5);
         let others: Vec<RangeSet<u32>> = vec![];
 
-        let (partial, uncovered) = query.cover(others.iter()).unwrap_err();
-        assert!(partial.is_empty());
+        let (covered, uncovered) = query.cover(others.iter());
+        assert!(covered.is_empty());
         assert_eq!(uncovered, query);
     }
 
@@ -221,8 +226,8 @@ mod tests {
             RangeSet::from(11..20), // Completely outside query
         ];
 
-        let (partial, uncovered) = query.cover(others.iter()).unwrap_err();
-        assert!(partial.is_empty());
+        let (covered, uncovered) = query.cover(others.iter());
+        assert!(covered.is_empty());
         assert_eq!(uncovered, query);
     }
 
@@ -231,9 +236,10 @@ mod tests {
         let query = RangeSet::from(1..5);
         let others = [query.clone()];
 
-        let result = query.cover(others.iter()).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], &query);
+        let (covered, uncovered) = query.cover(others.iter());
+        assert_eq!(covered.len(), 1);
+        assert_eq!(covered[0], &query);
+        assert!(uncovered.is_empty());
     }
 
     #[test]
@@ -241,9 +247,10 @@ mod tests {
         let query = RangeSet::from(vec![1..5, 10..15]);
         let others = [query.clone()];
 
-        let result = query.cover(others.iter()).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], &query);
+        let (covered, uncovered) = query.cover(others.iter());
+        assert_eq!(covered.len(), 1);
+        assert_eq!(covered[0], &query);
+        assert!(uncovered.is_empty());
     }
 
     #[test]
@@ -251,10 +258,11 @@ mod tests {
         let query = RangeSet::from(1..10);
         let others = [RangeSet::from(1..5), RangeSet::from(5..10)];
 
-        let result = query.cover(others.iter()).unwrap();
-        assert_eq!(result.len(), 2);
-        assert!(result.contains(&&others[0]));
-        assert!(result.contains(&&others[1]));
+        let (covered, uncovered) = query.cover(others.iter());
+        assert_eq!(covered.len(), 2);
+        assert!(covered.contains(&&others[0]));
+        assert!(covered.contains(&&others[1]));
+        assert!(uncovered.is_empty());
     }
 
     #[test]
@@ -269,12 +277,12 @@ mod tests {
             RangeSet::from(vec![12..15, 23..25]), // Covers part of second and third ranges
         ];
 
-        let result = query.cover(others.iter()).unwrap();
-
-        assert_eq!(result.len(), 3);
-        assert!(result.contains(&&others[0]));
-        assert!(result.contains(&&others[1]));
-        assert!(result.contains(&&others[2]));
+        let (covered, uncovered) = query.cover(others.iter());
+        assert_eq!(covered.len(), 3);
+        assert!(covered.contains(&&others[0]));
+        assert!(covered.contains(&&others[1]));
+        assert!(covered.contains(&&others[2]));
+        assert!(uncovered.is_empty());
     }
 
     #[allow(clippy::single_range_in_vec_init)]
@@ -293,11 +301,11 @@ mod tests {
             RangeSet::from(vec![21..30]), // Not a subset
         ];
 
-        let result = query.cover(others.iter()).unwrap();
-
-        assert_eq!(result.len(), 2);
-        assert!(result.contains(&&others[0]));
-        assert!(result.contains(&&others[4]));
+        let (covered, uncovered) = query.cover(others.iter());
+        assert_eq!(covered.len(), 2);
+        assert!(covered.contains(&&others[0]));
+        assert!(covered.contains(&&others[4]));
+        assert!(uncovered.is_empty());
     }
 
     #[test]
@@ -305,8 +313,8 @@ mod tests {
         let query = RangeSet::from(1..10);
         let others = [&RangeSet::from(1..5), &RangeSet::from(6..10)];
 
-        let (partial, uncovered) = query.cover(others).unwrap_err();
-        assert_eq!(partial, others);
+        let (covered, uncovered) = query.cover(others);
+        assert_eq!(covered, others);
         assert_eq!(uncovered, RangeSet::from(5..6));
     }
 
@@ -323,8 +331,8 @@ mod tests {
             &RangeSet::from(vec![9..10, 34..35]), // Covers part of first and third ranges
         ];
 
-        let (partial, uncovered) = query.cover(others).unwrap_err();
-        assert_eq!(partial, others);
+        let (covered, uncovered) = query.cover(others);
+        assert_eq!(covered, others);
         assert_eq!(uncovered, RangeSet::from([8..9, 20..21, 33..34,]));
     }
 
@@ -336,7 +344,8 @@ mod tests {
         // A subset with a range of length 1.
         let others = [RangeSet::from(vec![1..2])];
 
-        let result = query.cover(others.iter());
-        assert!(result.is_ok());
+        let (covered, uncovered) = query.cover(others.iter());
+        assert_eq!(covered.len(), 1);
+        assert!(uncovered.is_empty());
     }
 }
