@@ -75,6 +75,7 @@ impl_from_pair!(types::Number, number);
 impl_from_pair!(types::Bool, bool);
 impl_from_pair!(types::Null, null);
 impl_from_pair!(types::String, string);
+impl_from_pair!(types::Redacted, redacted);
 
 impl types::KeyValue {
     fn from_pair(src: Bytes, pair: PestPair<'_, Rule>) -> Self {
@@ -129,6 +130,7 @@ impl types::JsonValue {
             Rule::object => Self::Object(types::Object::from_pair(src, pair)),
             Rule::array => Self::Array(types::Array::from_pair(src, pair)),
             Rule::string => Self::String(types::String::from_pair(src, pair)),
+            Rule::redacted => Self::Redacted(types::Redacted::from_pair(src, pair)),
             Rule::number => Self::Number(types::Number::from_pair(src, pair)),
             Rule::bool => Self::Bool(types::Bool::from_pair(src, pair)),
             Rule::null => Self::Null(types::Null::from_pair(src, pair)),
@@ -144,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_json_spanner() {
-        let src = r#"{"foo": "bar", "baz": 123, "quux": { "a": "b", "c": "d" }, "arr": [1, 2, 3]}"#;
+        let src = r#"{"foo": "bar", "baz": 123, "quux": { "a": "b", "c": "d" }, "arr": [1, 2, 3], "r_one": \0, "r_many": \0\0\0\0 }"#;
 
         let value = parse_str(src).unwrap();
 
@@ -152,6 +154,8 @@ mod tests {
         assert_eq!(value.get("baz").unwrap().span(), "123");
         assert_eq!(value.get("quux.a").unwrap().span(), "b");
         assert_eq!(value.get("arr").unwrap().span(), "[1, 2, 3]");
+        assert_eq!(value.get("r_one").unwrap().span(), r#"\0"#);
+        assert_eq!(value.get("r_many").unwrap().span(), r#"\0\0\0\0"#);
     }
 
     #[test]
@@ -167,5 +171,17 @@ mod tests {
             parse_str(src).err().unwrap().to_string(),
             "parsing error: trailing characters are present in source"
         );
+    }
+
+    #[test]
+    fn test_redaction_in_key() {
+        let src = r#"{"\0": "bar"}"#;
+        assert!(parse_str(src).is_err());
+    }
+
+    #[test]
+    fn test_redaction_in_value() {
+        let src = r#"{"foo": 1\0\0\0}"#;
+        assert!(parse_str(src).is_err());
     }
 }

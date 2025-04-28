@@ -16,6 +16,8 @@ pub enum JsonValue {
     Number(Number),
     /// A string value.
     String(String),
+    /// A redacted value.
+    Redacted(Redacted),
     /// An array value.
     Array(Array),
     /// An object value.
@@ -30,6 +32,7 @@ impl JsonValue {
             JsonValue::Bool(v) => v.0,
             JsonValue::Number(v) => v.0,
             JsonValue::String(v) => v.0,
+            JsonValue::Redacted(v) => v.0,
             JsonValue::Array(v) => v.span,
             JsonValue::Object(v) => v.span,
         }
@@ -42,6 +45,7 @@ impl JsonValue {
             JsonValue::Bool(v) => v.0.offset(offset),
             JsonValue::Number(v) => v.0.offset(offset),
             JsonValue::String(v) => v.0.offset(offset),
+            JsonValue::Redacted(v) => v.0.offset(offset),
             JsonValue::Array(v) => {
                 v.span.offset(offset);
                 v.elems.iter_mut().for_each(|v| v.offset(offset))
@@ -79,6 +83,7 @@ impl JsonValue {
             JsonValue::Bool(_) => None,
             JsonValue::Number(_) => None,
             JsonValue::String(_) => None,
+            JsonValue::Redacted(_) => None,
             JsonValue::Array(v) => v.get(path),
             JsonValue::Object(v) => v.get(path),
         }
@@ -92,6 +97,7 @@ impl Spanned<str> for JsonValue {
             JsonValue::Bool(v) => v.span(),
             JsonValue::Number(v) => v.span(),
             JsonValue::String(v) => v.span(),
+            JsonValue::Redacted(v) => v.span(),
             JsonValue::Array(v) => v.span(),
             JsonValue::Object(v) => v.span(),
         }
@@ -105,6 +111,7 @@ impl AsRef<str> for JsonValue {
             JsonValue::Bool(v) => v.as_ref(),
             JsonValue::Number(v) => v.as_ref(),
             JsonValue::String(v) => v.as_ref(),
+            JsonValue::Redacted(v) => v.as_ref(),
             JsonValue::Array(v) => v.as_ref(),
             JsonValue::Object(v) => v.as_ref(),
         }
@@ -118,6 +125,7 @@ impl AsRef<[u8]> for JsonValue {
             JsonValue::Bool(v) => v.as_ref(),
             JsonValue::Number(v) => v.as_ref(),
             JsonValue::String(v) => v.as_ref(),
+            JsonValue::Redacted(v) => v.as_ref(),
             JsonValue::Array(v) => v.as_ref(),
             JsonValue::Object(v) => v.as_ref(),
         }
@@ -131,6 +139,7 @@ impl AsRef<RangeSet<usize>> for JsonValue {
             JsonValue::Bool(v) => v.as_ref(),
             JsonValue::Number(v) => v.as_ref(),
             JsonValue::String(v) => v.as_ref(),
+            JsonValue::Redacted(v) => v.as_ref(),
             JsonValue::Array(v) => v.as_ref(),
             JsonValue::Object(v) => v.as_ref(),
         }
@@ -144,6 +153,7 @@ impl ToRangeSet<usize> for JsonValue {
             JsonValue::Bool(v) => v.to_range_set(),
             JsonValue::Number(v) => v.to_range_set(),
             JsonValue::String(v) => v.to_range_set(),
+            JsonValue::Redacted(v) => v.to_range_set(),
             JsonValue::Array(v) => v.to_range_set(),
             JsonValue::Object(v) => v.to_range_set(),
         }
@@ -157,6 +167,7 @@ impl PartialEq<str> for JsonValue {
             JsonValue::Bool(v) => v == other,
             JsonValue::Number(v) => v == other,
             JsonValue::String(v) => v == other,
+            JsonValue::Redacted(v) => v == other,
             JsonValue::Array(v) => v == other,
             JsonValue::Object(v) => v == other,
         }
@@ -176,6 +187,7 @@ impl PartialEq<&str> for JsonValue {
             JsonValue::Bool(v) => v == other,
             JsonValue::Number(v) => v == other,
             JsonValue::String(v) => v == other,
+            JsonValue::Redacted(v) => v == other,
             JsonValue::Array(v) => v == other,
             JsonValue::Object(v) => v == other,
         }
@@ -233,6 +245,11 @@ pub struct Number(pub(crate) Span<str>);
 ///
 /// This span does not capture the quotation marks around the string.
 pub struct String(pub(crate) Span<str>);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// A redacted value.
+pub struct Redacted(pub(crate) Span<str>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -437,6 +454,7 @@ impl_type!(Null, 0);
 impl_type!(Bool, 0);
 impl_type!(Number, 0);
 impl_type!(String, 0);
+impl_type!(Redacted, 0);
 impl_type!(Array, span);
 impl_type!(Object, span);
 impl_type!(KeyValue, span);
@@ -514,4 +532,27 @@ mod tests {
 
         assert_eq!(src.index_ranges(&indices), "{\n}");
     }
+
+    #[test]
+    fn test_redacted_value() {
+        let src = r#"\0\0\0"#;
+        let value = parse_str(src).unwrap();
+        assert_eq!(value.span(), r#"\0\0\0"#);
+    }
+
+    #[test]
+    fn test_redacted_value_in_object() {
+        let src = r#"{"foo": \0\0\0}"#;
+        let value = parse_str(src).unwrap();
+        assert_eq!(value.get("foo").unwrap().span(), r#"\0\0\0"#);
+    }
+
+    #[test]
+    fn test_redacted_value_in_array() {
+        let src = r#"[1, \0\0\0]"#;
+        let value = parse_str(src).unwrap();
+        assert_eq!(value.get("1").unwrap().span(), r#"\0\0\0"#);
+    }
+    
+    
 }

@@ -51,6 +51,7 @@ pub trait JsonVisit {
             JsonValue::Bool(value) => self.visit_bool(value),
             JsonValue::Number(value) => self.visit_number(value),
             JsonValue::String(value) => self.visit_string(value),
+            JsonValue::Redacted(value) => self.visit_redacted(value),
             JsonValue::Array(value) => self.visit_array(value),
             JsonValue::Object(value) => self.visit_object(value),
         }
@@ -81,4 +82,7 @@ pub trait JsonVisit {
 
     /// Visit a string value.
     fn visit_string(&mut self, _node: &types::String) {}
+
+    /// Visit a redacted value.
+    fn visit_redacted(&mut self, _node: &types::Redacted) {}
 }
