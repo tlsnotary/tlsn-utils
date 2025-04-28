@@ -222,22 +222,23 @@ fn request_body_len(request: &Request) -> Result<usize, ParseError> {
     // the Transfer-Encoding overrides the Content-Length
     if request
         .headers_with_name("Transfer-Encoding")
-        .any(|h| {
+        .next()
+        .map(|h| {
             std::str::from_utf8(h.value.0.as_bytes())
                 .unwrap_or("")
                 .split(',')
                 .any(|v| v.trim() != "identity")
         })
+        .unwrap_or(false)
     {
         let bad_values = request
             .headers_with_name("Transfer-Encoding")
-            .map(|h| std::str::from_utf8(h.value.0.as_bytes()).unwrap_or(""))
+            .map(|h| std::str::from_utf8(h.value.0.as_bytes()).unwrap_or("{invalid utf-8}"))
             .collect::<Vec<_>>()
             .join(", ");
 
         Err(ParseError(format!(
-            "Transfer-Encoding other than identity not supported yet: {:?}",
-            bad_values
+            "Transfer-Encoding other than identity not supported yet: {bad_values}"
         )))
     } else if let Some(h) = request.headers_with_name("Content-Length").next() {
         // If a valid Content-Length header field is present without Transfer-Encoding, its decimal value
