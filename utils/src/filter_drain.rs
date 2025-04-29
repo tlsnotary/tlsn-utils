@@ -340,8 +340,7 @@ mod tests {
         for (index, count) in drop_counts.iter().cloned().enumerate() {
             assert_eq!(
                 1, count,
-                "unexpected drop count at index: {} (count: {})",
-                index, count
+                "unexpected drop count at index: {index} (count: {count})"
             );
         }
     }
@@ -399,8 +398,7 @@ mod tests {
         for (index, count) in drop_counts.iter().cloned().enumerate() {
             assert_eq!(
                 1, count,
-                "unexpected drop count at index: {} (count: {})",
-                index, count
+                "unexpected drop count at index: {index} (count: {count})"
             );
         }
     }

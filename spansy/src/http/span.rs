@@ -28,7 +28,7 @@ pub(crate) fn parse_request_from_bytes(src: &Bytes, offset: usize) -> Result<Req
         let head_end = match request.parse(&src[offset..]) {
             Ok(httparse::Status::Complete(head_end)) => head_end + offset,
             Ok(httparse::Status::Partial) => {
-                return Err(ParseError(format!("incomplete request: {:?}", src)))
+                return Err(ParseError(format!("incomplete request: {src:?}")))
             }
             Err(err) => return Err(ParseError(err.to_string())),
         };
@@ -120,7 +120,7 @@ pub(crate) fn parse_response_from_bytes(
         let head_end = match response.parse(&src[offset..]) {
             Ok(httparse::Status::Complete(head_end)) => head_end + offset,
             Ok(httparse::Status::Partial) => {
-                return Err(ParseError(format!("incomplete response: {:?}", src)))
+                return Err(ParseError(format!("incomplete response: {src:?}")))
             }
             Err(err) => return Err(ParseError(err.to_string())),
         };
