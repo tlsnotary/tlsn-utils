@@ -22,7 +22,8 @@ impl<T: ?Sized> IoStream for T where T: Stream<Error = std::io::Error> {}
 /// A stream producing any kind of value which implements `Deserialize`.
 ///
 /// This trait is similar to [`futures::Stream`](https://docs.rs/futures/latest/futures/stream/trait.Stream.html),
-/// but facilitates receiving of any deserializable type instead of a single type.
+/// but facilitates receiving of any deserializable type instead of a single
+/// type.
 #[must_use = "streams do nothing unless polled"]
 pub trait Stream {
     /// The type of value produced by the stream when an error occurs.
@@ -37,8 +38,8 @@ pub trait Stream {
     /// There are several possible return values, each indicating a distinct
     /// stream state:
     ///
-    /// - `Poll::Pending` means that this stream's next value is not ready
-    ///   yet. Implementations will ensure that the current task will be notified
+    /// - `Poll::Pending` means that this stream's next value is not ready yet.
+    ///   Implementations will ensure that the current task will be notified
     ///   when the next value may be ready.
     ///
     /// - `Poll::Ready(Some(val))` means that the stream has successfully
@@ -57,9 +58,10 @@ pub trait Stream {
     /// Specifically, `size_hint()` returns a tuple where the first element
     /// is the lower bound, and the second element is the upper bound.
     ///
-    /// The second half of the tuple that is returned is an [`Option`]`<`[`usize`]`>`.
-    /// A [`None`] here means that either there is no known upper bound, or the
-    /// upper bound is larger than [`usize`].
+    /// The second half of the tuple that is returned is an
+    /// [`Option`]`<`[`usize`]`>`. A [`None`] here means that either there
+    /// is no known upper bound, or the upper bound is larger than
+    /// [`usize`].
     ///
     /// # Implementation notes
     ///
@@ -76,8 +78,8 @@ pub trait Stream {
     /// That said, the implementation should provide a correct estimation,
     /// because otherwise it would be a violation of the trait's protocol.
     ///
-    /// The default implementation returns `(0, `[`None`]`)` which is correct for any
-    /// stream.
+    /// The default implementation returns `(0, `[`None`]`)` which is correct
+    /// for any stream.
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         (0, None)
@@ -147,7 +149,8 @@ where
     }
 }
 
-/// An extension trait for Streams that provides a variety of convenient functions.
+/// An extension trait for Streams that provides a variety of convenient
+/// functions.
 pub trait StreamExt: Stream {
     /// Creates a future that resolves to the next item in the stream.
     ///
@@ -237,7 +240,8 @@ impl<St: ?Sized + Stream + Unpin, Item: Deserialize> Future for Next<'_, St, Ite
     }
 }
 
-/// An extension trait for [`IoStream`] which provides a variety of convenient functions.
+/// An extension trait for [`IoStream`] which provides a variety of convenient
+/// functions.
 pub trait IoStreamExt: IoStream {
     /// Creates a future that resolves to the next item in the stream, returning
     /// an error if the stream is exhausted.

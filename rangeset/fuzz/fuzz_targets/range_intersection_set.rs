@@ -1,7 +1,6 @@
 #![no_main]
 
-use std::collections::HashSet;
-use std::ops::Range;
+use std::{collections::HashSet, ops::Range};
 
 use libfuzzer_sys::fuzz_target;
 

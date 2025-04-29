@@ -127,7 +127,8 @@ impl<T: ?Sized> Span<T> {
 
     /// Returns the length of the span in bytes.
     ///
-    /// Just like `str::len()`, this is not necessarily the number of characters.
+    /// Just like `str::len()`, this is not necessarily the number of
+    /// characters.
     pub fn len(&self) -> usize {
         self.indices.len()
     }

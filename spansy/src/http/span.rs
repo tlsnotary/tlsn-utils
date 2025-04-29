@@ -218,8 +218,8 @@ fn request_body_len(request: &Request) -> Result<usize, ParseError> {
     // The presence of a message body in a request is signaled by a Content-Length
     // or Transfer-Encoding header field.
 
-    // If a message is received with both a Transfer-Encoding and a Content-Length header field,
-    // the Transfer-Encoding overrides the Content-Length
+    // If a message is received with both a Transfer-Encoding and a Content-Length
+    // header field, the Transfer-Encoding overrides the Content-Length
     if request
         .headers_with_name("Transfer-Encoding")
         .next()
@@ -229,22 +229,25 @@ fn request_body_len(request: &Request) -> Result<usize, ParseError> {
             "Transfer-Encoding not supported yet".to_string(),
         ))
     } else if let Some(h) = request.headers_with_name("Content-Length").next() {
-        // If a valid Content-Length header field is present without Transfer-Encoding, its decimal value
-        // defines the expected message body length in octets.
+        // If a valid Content-Length header field is present without Transfer-Encoding,
+        // its decimal value defines the expected message body length in octets.
         std::str::from_utf8(h.value.0.as_bytes())?
             .parse::<usize>()
             .map_err(|err| ParseError(format!("failed to parse Content-Length value: {err}")))
     } else {
-        // If this is a request message and none of the above are true, then the message body length is zero
+        // If this is a request message and none of the above are true, then the message
+        // body length is zero
         Ok(0)
     }
 }
 
 /// Calculates the length of the response body according to RFC 9112, section 6.
 fn response_body_len(response: &Response) -> Result<usize, ParseError> {
-    // Any response to a HEAD request and any response with a 1xx (Informational), 204 (No Content), or 304 (Not Modified)
-    // status code is always terminated by the first empty line after the header fields, regardless of the header fields
-    // present in the message, and thus cannot contain a message body or trailer section.
+    // Any response to a HEAD request and any response with a 1xx (Informational),
+    // 204 (No Content), or 304 (Not Modified) status code is always terminated
+    // by the first empty line after the header fields, regardless of the header
+    // fields present in the message, and thus cannot contain a message body or
+    // trailer section.
     match response
         .status
         .code
@@ -265,16 +268,18 @@ fn response_body_len(response: &Response) -> Result<usize, ParseError> {
             "Transfer-Encoding not supported yet".to_string(),
         ))
     } else if let Some(h) = response.headers_with_name("Content-Length").next() {
-        // If a valid Content-Length header field is present without Transfer-Encoding, its decimal value
-        // defines the expected message body length in octets.
+        // If a valid Content-Length header field is present without Transfer-Encoding,
+        // its decimal value defines the expected message body length in octets.
         std::str::from_utf8(h.value.0.as_bytes())?
             .parse::<usize>()
             .map_err(|err| ParseError(format!("failed to parse Content-Length value: {err}")))
     } else {
-        // If this is a response message and none of the above are true, then there is no way to
-        // determine the length of the message body except by reading it until the connection is closed.
+        // If this is a response message and none of the above are true, then there is
+        // no way to determine the length of the message body except by reading
+        // it until the connection is closed.
 
-        // We currently consider this an error because we have no outer context information.
+        // We currently consider this an error because we have no outer context
+        // information.
         Err(ParseError(
             "A response with a body must contain either a Content-Length or Transfer-Encoding header".to_string(),
         ))

@@ -20,8 +20,9 @@ use std::ops::{Add, Range, Sub};
 
 /// A set of values represented using ranges.
 ///
-/// A `RangeSet` is similar to any other kind of set, such as `HashSet`, with the difference being that the
-/// values in the set are represented using ranges rather than storing each value individually.
+/// A `RangeSet` is similar to any other kind of set, such as `HashSet`, with
+/// the difference being that the values in the set are represented using ranges
+/// rather than storing each value individually.
 ///
 /// # Invariants
 ///
@@ -32,7 +33,8 @@ use std::ops::{Add, Range, Sub};
 /// - The ranges are non-intersecting.
 /// - The ranges are non-empty.
 ///
-/// This is enforced in the constructor, and guaranteed to hold after applying any operation on a range or set.
+/// This is enforced in the constructor, and guaranteed to hold after applying
+/// any operation on a range or set.
 ///
 /// # Examples
 ///
@@ -67,7 +69,8 @@ use std::ops::{Add, Range, Sub};
 pub struct RangeSet<T> {
     /// The ranges of the set.
     ///
-    /// The ranges *MUST* be sorted, non-adjacent, non-intersecting, and non-empty.
+    /// The ranges *MUST* be sorted, non-adjacent, non-intersecting, and
+    /// non-empty.
     ranges: Vec<Range<T>>,
 }
 
@@ -116,7 +119,8 @@ impl<T> RangeSet<T> {
 impl<T: Copy + Ord> RangeSet<T> {
     /// Returns a new `RangeSet` from the given ranges.
     ///
-    /// The `RangeSet` is constructed by computing the union of the given ranges.
+    /// The `RangeSet` is constructed by computing the union of the given
+    /// ranges.
     pub fn new(ranges: &[Range<T>]) -> Self
     where
         Self: Union<Range<T>, Output = Self>,
@@ -155,12 +159,13 @@ impl<T: Copy + Ord> RangeSet<T> {
         self.ranges.first().map(|range| range.start)
     }
 
-    /// Returns the end of right-most range in the set, or `None` if the set is empty.
+    /// Returns the end of right-most range in the set, or `None` if the set is
+    /// empty.
     ///
     /// # Note
     ///
-    /// This is the *non-inclusive* bound of the right-most range. See `RangeSet::max` for the
-    /// maximum value in the set.
+    /// This is the *non-inclusive* bound of the right-most range. See
+    /// `RangeSet::max` for the maximum value in the set.
     pub fn end(&self) -> Option<T> {
         self.ranges.last().map(|range| range.end)
     }
@@ -178,8 +183,9 @@ impl<T: Copy + Ord + Step + Sub<Output = T>> RangeSet<T> {
 
     /// Splits the set into two at the provided value.
     ///
-    /// Returns a new set containing all the existing elements `>= at`. After the call,
-    /// the original set will be left containing the elements `< at`.
+    /// Returns a new set containing all the existing elements `>= at`. After
+    /// the call, the original set will be left containing the elements `<
+    /// at`.
     ///
     /// # Panics
     ///
@@ -253,8 +259,8 @@ where
 impl<T: Copy + Ord> TryFrom<RangeSet<T>> for Range<T> {
     type Error = RangeSet<T>;
 
-    /// Attempts to convert a `RangeSet` into a single `Range`, returning the set if it
-    /// does not contain exactly one range.
+    /// Attempts to convert a `RangeSet` into a single `Range`, returning the
+    /// set if it does not contain exactly one range.
     fn try_from(set: RangeSet<T>) -> Result<Self, Self::Error> {
         if set.len_ranges() == 1 {
             Ok(set.ranges.into_iter().next().unwrap())
@@ -466,7 +472,8 @@ impl<T: Copy + Ord> Disjoint<Range<T>> for RangeSet<T> {
     }
 }
 
-/// Asserts that the ranges of the given set are sorted, non-adjacent, non-intersecting, and non-empty.
+/// Asserts that the ranges of the given set are sorted, non-adjacent,
+/// non-intersecting, and non-empty.
 #[cfg(test)]
 pub fn assert_invariants<T: Copy + Ord>(set: &RangeSet<T>) {
     assert!(set.ranges.windows(2).all(|w| w[0].start < w[1].start

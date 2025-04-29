@@ -32,8 +32,8 @@ pub trait Sink {
     ///
     /// This method returns `Poll::Ready` once the underlying sink is ready to
     /// receive data. If this method returns `Poll::Pending`, the current task
-    /// is registered to be notified (via `cx.waker().wake_by_ref()`) when `poll_ready`
-    /// should be called again.
+    /// is registered to be notified (via `cx.waker().wake_by_ref()`) when
+    /// `poll_ready` should be called again.
     ///
     /// In most cases, if the sink encounters an error, the sink will
     /// permanently be unable to receive items.
@@ -67,8 +67,8 @@ pub trait Sink {
     /// via `start_send` have been flushed.
     ///
     /// Returns `Poll::Pending` if there is more work left to do, in which
-    /// case the current task is scheduled (via `cx.waker().wake_by_ref()`) to wake up when
-    /// `poll_flush` should be called again.
+    /// case the current task is scheduled (via `cx.waker().wake_by_ref()`) to
+    /// wake up when `poll_flush` should be called again.
     ///
     /// In most cases, if the sink encounters an error, the sink will
     /// permanently be unable to receive items.
@@ -80,8 +80,8 @@ pub trait Sink {
     /// has been successfully closed.
     ///
     /// Returns `Poll::Pending` if there is more work left to do, in which
-    /// case the current task is scheduled (via `cx.waker().wake_by_ref()`) to wake up when
-    /// `poll_close` should be called again.
+    /// case the current task is scheduled (via `cx.waker().wake_by_ref()`) to
+    /// wake up when `poll_close` should be called again.
     ///
     /// If this function encounters an error, the sink should be considered to
     /// have failed permanently, and no more `Sink` methods should be called.
@@ -135,7 +135,8 @@ where
     }
 }
 
-/// An extension trait for Sinks that provides a variety of convenient functions.
+/// An extension trait for Sinks that provides a variety of convenient
+/// functions.
 pub trait SinkExt: Sink {
     /// Close the sink.
     fn close(&mut self) -> Close<'_, Self>

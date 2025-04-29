@@ -344,7 +344,8 @@ pub struct YamuxCtrl {
 impl YamuxCtrl {
     /// Allocates `count` streams.
     ///
-    /// This can be used to efficiently pre-allocate streams prior to assigning ids to them.
+    /// This can be used to efficiently pre-allocate streams prior to assigning
+    /// ids to them.
     ///
     /// # Note
     ///
@@ -497,7 +498,8 @@ mod tests {
         fut.await.unwrap();
     }
 
-    // Test the case where the client closes the connection while the server is expecting a new stream.
+    // Test the case where the client closes the connection while the server is
+    // expecting a new stream.
     #[tokio::test]
     async fn test_yamux_client_close_early() {
         let (client_io, server_io) = duplex(1024);
@@ -539,7 +541,8 @@ mod tests {
         fut.await.unwrap();
     }
 
-    // Test the case where the server closes the connection while the client is opening a new stream.
+    // Test the case where the server closes the connection while the client is
+    // opening a new stream.
     #[tokio::test]
     async fn test_yamux_server_close_early() {
         let (client_io, server_io) = duplex(1024);

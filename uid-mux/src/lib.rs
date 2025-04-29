@@ -105,5 +105,9 @@ pub(crate) mod log {
         };
     }
 
-    pub(crate) use {debug, error, info, trace, warn_ as warn};
+    pub(crate) use debug;
+    pub(crate) use error;
+    pub(crate) use info;
+    pub(crate) use trace;
+    pub(crate) use warn_ as warn;
 }

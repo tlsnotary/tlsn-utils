@@ -1,11 +1,11 @@
 //! JSON span parsing.
 //!
-//! This module provides a JSON parser that can be used to parse span information for each JSON value within
-//! a source string.
+//! This module provides a JSON parser that can be used to parse span
+//! information for each JSON value within a source string.
 //!
-//! Note that the parser does *not* fully parse values, it simply computes the span of the corresponding
-//! characters in the source string. Thus, this parser should not be expected to perform any kind of
-//! validation of the JSON.
+//! Note that the parser does *not* fully parse values, it simply computes the
+//! span of the corresponding characters in the source string. Thus, this parser
+//! should not be expected to perform any kind of validation of the JSON.
 //!
 //! # Example
 //!

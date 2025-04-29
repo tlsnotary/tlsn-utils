@@ -13,7 +13,8 @@ pub trait Rand0_6CompatExt {
 
     /// Wraps `self` in a compatibility wrapper that implements `0.6` traits.
     ///
-    /// Same as [`Rand0_6CompatExt::compat`] but instead of taking ownership it borrows.
+    /// Same as [`Rand0_6CompatExt::compat`] but instead of taking ownership it
+    /// borrows.
     fn compat_by_ref(&mut self) -> Rand0_6CompatWrapper<&mut Self>
     where
         Self: Sized,
