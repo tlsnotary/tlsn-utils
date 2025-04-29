@@ -29,7 +29,7 @@ quoted_string  = _{ "\"" ~ string ~ "\"" }
 string   = @{ (!("\"" | "\\") ~ ANY)* ~ (escape ~ string)? }
 escape  = @{ "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | unicode) }
 unicode = @{ "u" ~ ASCII_HEX_DIGIT{4} }
-redacted = @{ "\\0"+ }
+redacted = @{ "\0"+ }
 
 number = @{ "-"? ~ int ~ ("." ~ ASCII_DIGIT+ ~ exp? | exp)? }
 int    = @{ "0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }

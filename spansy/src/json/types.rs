@@ -534,24 +534,31 @@ mod tests {
     }
 
     #[test]
-    fn test_redacted_value() {
-        let src = r#"\0\0\0"#;
+    fn test_redacted_one_byte() {
+        let src = "\0";
         let value = parse_str(src).unwrap();
-        assert_eq!(value.span(), r#"\0\0\0"#);
+        assert_eq!(value.span(), "\0");
+    }
+
+    #[test]
+    fn test_redacted_value() {
+        let src = "\0\0\0";
+        let value = parse_str(src).unwrap();
+        assert_eq!(value.span(), "\0\0\0");
     }
 
     #[test]
     fn test_redacted_value_in_object() {
-        let src = r#"{"foo": \0\0\0}"#;
+        let src = "{\"foo\": \0\0\0}";
         let value = parse_str(src).unwrap();
-        assert_eq!(value.get("foo").unwrap().span(), r#"\0\0\0"#);
+        assert_eq!(value.get("foo").unwrap().span(), "\0\0\0");
     }
 
     #[test]
     fn test_redacted_value_in_array() {
-        let src = r#"[1, \0\0\0]"#;
+        let src = "[1, \0\0\0]";
         let value = parse_str(src).unwrap();
-        assert_eq!(value.get("1").unwrap().span(), r#"\0\0\0"#);
+        assert_eq!(value.get("1").unwrap().span(), "\0\0\0");
     }
     
     

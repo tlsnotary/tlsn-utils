@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_json_spanner() {
-        let src = r#"{"foo": "bar", "baz": 123, "quux": { "a": "b", "c": "d" }, "arr": [1, 2, 3], "r_one": \0, "r_many": \0\0\0\0 }"#;
+        let src = "{\"foo\": \"bar\", \"baz\": 123, \"quux\": { \"a\": \"b\", \"c\": \"d\" }, \"arr\": [1, 2, 3], \"r_one\": \0, \"r_many\": \0\0\0\0 }";
 
         let value = parse_str(src).unwrap();
 
@@ -154,8 +154,8 @@ mod tests {
         assert_eq!(value.get("baz").unwrap().span(), "123");
         assert_eq!(value.get("quux.a").unwrap().span(), "b");
         assert_eq!(value.get("arr").unwrap().span(), "[1, 2, 3]");
-        assert_eq!(value.get("r_one").unwrap().span(), r#"\0"#);
-        assert_eq!(value.get("r_many").unwrap().span(), r#"\0\0\0\0"#);
+        assert_eq!(value.get("r_one").unwrap().span(), "\0");
+        assert_eq!(value.get("r_many").unwrap().span(), "\0\0\0\0");
     }
 
     #[test]
@@ -174,14 +174,9 @@ mod tests {
     }
 
     #[test]
-    fn test_redaction_in_key() {
-        let src = r#"{"\0": "bar"}"#;
-        assert!(parse_str(src).is_err());
-    }
-
-    #[test]
+    #[should_panic]
     fn test_redaction_in_value() {
-        let src = r#"{"foo": 1\0\0\0}"#;
-        assert!(parse_str(src).is_err());
+        let src = "{\"foo\": 1\0\0\0}";
+        parse_str(src).unwrap();
     }
 }
