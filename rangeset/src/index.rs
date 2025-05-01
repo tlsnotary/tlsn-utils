@@ -9,7 +9,8 @@ pub trait IndexRanges<T: Copy + Ord = usize> {
     ///
     /// # Panics
     ///
-    /// Panics if any of the indices in the range set are out of bounds of the collection.
+    /// Panics if any of the indices in the range set are out of bounds of the
+    /// collection.
     ///
     /// # Examples
     ///

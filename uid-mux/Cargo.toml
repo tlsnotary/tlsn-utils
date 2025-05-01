@@ -1,13 +1,13 @@
 [package]
 name = "uid-mux"
 version = "0.2.0"
+edition = "2024"
 authors = ["TLSNotary Contributors"]
 description = "Async multiplexing library with user provided stream ids."
 keywords = ["multiplex", "futures", "async"]
 categories = ["network-programming", "asynchronous"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tlsnotary/tlsn-utils"
-edition = "2021"
 
 [features]
 default = ["tracing", "serio"]

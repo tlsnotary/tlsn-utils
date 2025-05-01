@@ -24,7 +24,8 @@ pub fn choose<T: Copy>(items: &[[T; 2]], choice: &[bool]) -> Vec<T> {
         .collect()
 }
 
-/// Returns a subset of items in a collection which corresponds to provided indices
+/// Returns a subset of items in a collection which corresponds to provided
+/// indices
 ///
 /// Panics if index is out of bounds
 #[inline]
@@ -32,7 +33,8 @@ pub fn pick<T: Copy>(items: &[T], idx: &[usize]) -> Vec<T> {
     idx.iter().map(|i| items[*i]).collect()
 }
 
-/// This trait provides a helper method to determine whether an Iterator contains any duplicates.
+/// This trait provides a helper method to determine whether an Iterator
+/// contains any duplicates.
 pub trait DuplicateCheck<'a, T>
 where
     Self: Iterator<Item = &'a T>,
@@ -60,8 +62,8 @@ where
 {
 }
 
-/// This trait provides a helper method to determine whether an Iterator contains any duplicates
-/// using an accessor function.
+/// This trait provides a helper method to determine whether an Iterator
+/// contains any duplicates using an accessor function.
 pub trait DuplicateCheckBy<'a, F, T, U>
 where
     Self: Iterator<Item = &'a T>,

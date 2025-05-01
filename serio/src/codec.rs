@@ -1,9 +1,10 @@
-//! Utilities for converting framed transports to streams and sinks using a codec.
+//! Utilities for converting framed transports to streams and sinks using a
+//! codec.
 
 use std::{
     io::{Error, ErrorKind},
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 use bytes::{Bytes, BytesMut};

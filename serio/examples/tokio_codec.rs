@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serio::{
-    codec::{Bincode, Framed},
     IoSink, IoStream, SinkExt as _, StreamExt as _,
+    codec::{Bincode, Framed},
 };
 use std::io::Result;
 use tokio::io::duplex;

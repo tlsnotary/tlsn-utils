@@ -10,7 +10,8 @@ use core::{ptr, slice};
 ///
 /// See [tracking issue](https://github.com/rust-lang/rust/issues/43244)
 ///
-/// We call this `FilterDrain` to avoid the naming conflict with the standard library.
+/// We call this `FilterDrain` to avoid the naming conflict with the standard
+/// library.
 pub trait FilterDrain<'a, T, F> {
     type Item;
     type Iter: Iterator<Item = Self::Item> + 'a;
@@ -44,7 +45,8 @@ where
     }
 }
 
-/// An iterator which uses a closure to determine if an element should be removed.
+/// An iterator which uses a closure to determine if an element should be
+/// removed.
 #[derive(Debug)]
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct FilterDrainIter<'a, T, F>
@@ -291,8 +293,7 @@ mod tests {
     #[cfg(not(target_os = "emscripten"))]
     #[cfg_attr(not(panic = "unwind"), ignore = "test requires unwinding support")]
     fn filter_drain_consumed_panic() {
-        use std::rc::Rc;
-        use std::sync::Mutex;
+        use std::{rc::Rc, sync::Mutex};
 
         struct Check {
             index: usize,
@@ -340,8 +341,7 @@ mod tests {
         for (index, count) in drop_counts.iter().cloned().enumerate() {
             assert_eq!(
                 1, count,
-                "unexpected drop count at index: {} (count: {})",
-                index, count
+                "unexpected drop count at index: {index} (count: {count})"
             );
         }
     }
@@ -351,8 +351,7 @@ mod tests {
     #[cfg(not(target_os = "emscripten"))]
     #[cfg_attr(not(panic = "unwind"), ignore = "test requires unwinding support")]
     fn filter_drain_unconsumed_panic() {
-        use std::rc::Rc;
-        use std::sync::Mutex;
+        use std::{rc::Rc, sync::Mutex};
 
         struct Check {
             index: usize,
@@ -399,8 +398,7 @@ mod tests {
         for (index, count) in drop_counts.iter().cloned().enumerate() {
             assert_eq!(
                 1, count,
-                "unexpected drop count at index: {} (count: {})",
-                index, count
+                "unexpected drop count at index: {index} (count: {count})"
             );
         }
     }

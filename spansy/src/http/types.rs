@@ -1,6 +1,6 @@
 use rangeset::{Difference, RangeSet, ToRangeSet};
 
-use crate::{json::JsonValue, Span, Spanned};
+use crate::{Span, Spanned, json::JsonValue};
 
 /// An HTTP header name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -209,17 +209,19 @@ pub struct Request {
 }
 
 impl Request {
-    /// Returns an iterator of request headers with the given name (case-insensitive).
+    /// Returns an iterator of request headers with the given name
+    /// (case-insensitive).
     ///
-    /// This method returns an iterator because it is valid for HTTP records to contain
-    /// duplicate header names.
+    /// This method returns an iterator because it is valid for HTTP records to
+    /// contain duplicate header names.
     pub fn headers_with_name<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a Header> {
         self.headers
             .iter()
             .filter(|h| h.name.0.as_str().eq_ignore_ascii_case(name))
     }
 
-    /// Returns the indices of the request excluding the target, headers and body.
+    /// Returns the indices of the request excluding the target, headers and
+    /// body.
     pub fn without_data(&self) -> RangeSet<usize> {
         let mut indices = self.span.indices.difference(&self.request.target.0.indices);
         for header in &self.headers {
@@ -361,10 +363,11 @@ pub struct Response {
 }
 
 impl Response {
-    /// Returns an iterator of response headers with the given name (case-insensitive).
+    /// Returns an iterator of response headers with the given name
+    /// (case-insensitive).
     ///
-    /// This method returns an iterator because it is valid for HTTP records to contain
-    /// duplicate header names.
+    /// This method returns an iterator because it is valid for HTTP records to
+    /// contain duplicate header names.
     pub fn headers_with_name<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a Header> {
         self.headers
             .iter()

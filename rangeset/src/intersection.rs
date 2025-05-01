@@ -36,8 +36,9 @@ impl<T: Copy + Ord> Intersection<RangeSet<T>> for Range<T> {
                 // `self` is leftward of `other`, so we can break early.
                 break;
             } else if let Some(intersection) = self.intersection(other) {
-                // Given that `other` contains sorted, non-adjacent, non-intersecting, and non-empty
-                // ranges, the new set will also have these properties.
+                // Given that `other` contains sorted, non-adjacent, non-intersecting, and
+                // non-empty ranges, the new set will also have these
+                // properties.
                 set.ranges.push(intersection);
             }
         }
@@ -74,8 +75,9 @@ impl<T: Copy + Ord> Intersection<RangeSet<T>> for RangeSet<T> {
                 // `b` is leftward of `a`, so we can proceed to the next range in `other`.
                 j += 1;
             } else if let Some(intersection) = a.intersection(b) {
-                // Given that `self` and `other` contain sorted, non-adjacent, non-intersecting, and
-                // non-empty ranges, the new set will also have these properties.
+                // Given that `self` and `other` contain sorted, non-adjacent, non-intersecting,
+                // and non-empty ranges, the new set will also have these
+                // properties.
                 set.ranges.push(intersection);
 
                 if a.end <= b.end {

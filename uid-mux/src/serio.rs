@@ -1,4 +1,4 @@
-use ::serio::{codec::Codec, IoDuplex};
+use ::serio::{IoDuplex, codec::Codec};
 use async_trait::async_trait;
 
 use crate::UidMux;
@@ -90,7 +90,7 @@ mod tests {
     use crate::yamux::{Config, Mode, Yamux};
 
     use ::serio::codec::Bincode;
-    use serio::{stream::IoStreamExt, SinkExt};
+    use serio::{SinkExt, stream::IoStreamExt};
     use tokio::io::duplex;
     use tokio_util::compat::TokioAsyncReadCompatExt;
 

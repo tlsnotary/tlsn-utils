@@ -35,7 +35,7 @@ impl InternalId {
 impl fmt::Display for InternalId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in &self.0[..4] {
-            write!(f, "{:02x}", byte)?;
+            write!(f, "{byte:02x}")?;
         }
         Ok(())
     }
@@ -105,5 +105,9 @@ pub(crate) mod log {
         };
     }
 
-    pub(crate) use {debug, error, info, trace, warn_ as warn};
+    pub(crate) use debug;
+    pub(crate) use error;
+    pub(crate) use info;
+    pub(crate) use trace;
+    pub(crate) use warn_ as warn;
 }

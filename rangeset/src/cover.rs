@@ -8,7 +8,8 @@ pub trait Cover<Rhs> {
     /// cover `self`.
     ///
     /// Returns a tuple containing:
-    /// * A vector of indices of the sets that cover `self` (empty if no coverage at all).
+    /// * A vector of indices of the sets that cover `self` (empty if no
+    ///   coverage at all).
     /// * Any uncovered elements (empty if complete coverage is achieved).
     fn find_cover<'a>(&self, others: impl IntoIterator<Item = &'a Rhs>) -> (Vec<usize>, Rhs)
     where

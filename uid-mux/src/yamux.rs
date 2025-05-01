@@ -8,21 +8,21 @@ use std::{
     future::IntoFuture,
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     task::{Context, Poll, Waker},
 };
 
 use async_trait::async_trait;
-use futures::{stream::FuturesUnordered, AsyncRead, AsyncWrite, Future, FutureExt, StreamExt};
-use tokio::sync::{oneshot, Notify};
+use futures::{AsyncRead, AsyncWrite, Future, FutureExt, StreamExt, stream::FuturesUnordered};
+use tokio::sync::{Notify, oneshot};
 use yamux::Connection;
 
 use crate::{
+    InternalId, UidMux,
     future::{ReadId, ReturnStream},
     log::{debug, error, info, trace, warn},
-    InternalId, UidMux,
 };
 
 pub use yamux::{Config, ConnectionError, Mode, Stream};
@@ -344,7 +344,8 @@ pub struct YamuxCtrl {
 impl YamuxCtrl {
     /// Allocates `count` streams.
     ///
-    /// This can be used to efficiently pre-allocate streams prior to assigning ids to them.
+    /// This can be used to efficiently pre-allocate streams prior to assigning
+    /// ids to them.
     ///
     /// # Note
     ///
@@ -497,7 +498,8 @@ mod tests {
         fut.await.unwrap();
     }
 
-    // Test the case where the client closes the connection while the server is expecting a new stream.
+    // Test the case where the client closes the connection while the server is
+    // expecting a new stream.
     #[tokio::test]
     async fn test_yamux_client_close_early() {
         let (client_io, server_io) = duplex(1024);
@@ -539,7 +541,8 @@ mod tests {
         fut.await.unwrap();
     }
 
-    // Test the case where the server closes the connection while the client is opening a new stream.
+    // Test the case where the server closes the connection while the client is
+    // opening a new stream.
     #[tokio::test]
     async fn test_yamux_server_close_early() {
         let (client_io, server_io) = duplex(1024);

@@ -1,12 +1,12 @@
 //! Test utilities.
 
-use tokio::io::{duplex, DuplexStream};
+use tokio::io::{DuplexStream, duplex};
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 use yamux::{Config, Mode};
 
 use crate::{
-    yamux::{Yamux, YamuxCtrl},
     FramedMux,
+    yamux::{Yamux, YamuxCtrl},
 };
 
 /// Creates a test pair of yamux instances.
@@ -56,7 +56,7 @@ mod serio {
     };
 
     use async_trait::async_trait;
-    use serio::channel::{duplex, MemoryDuplex};
+    use serio::channel::{MemoryDuplex, duplex};
 
     use crate::serio::FramedUidMux;
 

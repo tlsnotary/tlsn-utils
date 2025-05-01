@@ -1,4 +1,5 @@
-//! Memory channels for sending and receiving serializable types. Useful for testing.
+//! Memory channels for sending and receiving serializable types. Useful for
+//! testing.
 
 use std::{
     any::Any,
@@ -15,7 +16,8 @@ use crate::{Deserialize, Serialize, Sink, Stream};
 
 type Item = Box<dyn Any + Send + Sync + 'static>;
 
-/// A memory sink that can be used to send any serializable type to the receiver.
+/// A memory sink that can be used to send any serializable type to the
+/// receiver.
 #[derive(Debug, Clone)]
 pub struct MemorySink(mpsc::Sender<Item>);
 
@@ -50,7 +52,8 @@ impl Sink for MemorySink {
     }
 }
 
-/// A memory stream that can be used to receive any deserializable type from the sender.
+/// A memory stream that can be used to receive any deserializable type from the
+/// sender.
 #[derive(Debug)]
 pub struct MemoryStream(mpsc::Receiver<Item>);
 
@@ -77,7 +80,8 @@ pub fn channel(buffer: usize) -> (MemorySink, MemoryStream) {
     (MemorySink(sender), MemoryStream(receiver))
 }
 
-/// An unbounded memory sink that can be used to send any serializable type to the receiver.
+/// An unbounded memory sink that can be used to send any serializable type to
+/// the receiver.
 #[derive(Debug, Clone)]
 pub struct UnboundedMemorySink(mpsc::UnboundedSender<Item>);
 
@@ -112,7 +116,8 @@ impl Sink for UnboundedMemorySink {
     }
 }
 
-/// An unbounded memory stream that can be used to receive any deserializable type from the sender.
+/// An unbounded memory stream that can be used to receive any deserializable
+/// type from the sender.
 #[derive(Debug)]
 pub struct UnboundedMemoryStream(mpsc::UnboundedReceiver<Item>);
 
@@ -207,7 +212,8 @@ pub fn duplex(buffer: usize) -> (MemoryDuplex, MemoryDuplex) {
     )
 }
 
-/// An unbounded memory duplex that can be used to send and receive any serializable types.
+/// An unbounded memory duplex that can be used to send and receive any
+/// serializable types.
 #[derive(Debug)]
 pub struct UnboundedMemoryDuplex {
     sink: UnboundedMemorySink,
