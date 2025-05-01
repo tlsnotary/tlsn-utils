@@ -5,14 +5,14 @@ use std::{
     marker::PhantomData,
     ops::DerefMut,
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 use futures_core::FusedFuture;
 
 #[cfg(feature = "compat")]
 use crate::FuturesCompat;
-use crate::{future::assert_future, Deserialize};
+use crate::{Deserialize, future::assert_future};
 
 /// A stream with an error type of `std::io::Error`.
 pub trait IoStream: Stream<Error = std::io::Error> {}

@@ -4,12 +4,12 @@ use std::{
     future::Future,
     ops::DerefMut,
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 #[cfg(feature = "compat")]
 use crate::FuturesCompat;
-use crate::{future::assert_future, Serialize};
+use crate::{Serialize, future::assert_future};
 
 /// A sink with an error type of `std::io::Error`.
 pub trait IoSink: Sink<Error = std::io::Error> {}

@@ -1,6 +1,6 @@
 use rangeset::{Difference, RangeSet, ToRangeSet};
 
-use crate::{json::JsonValue, Span, Spanned};
+use crate::{Span, Spanned, json::JsonValue};
 
 /// An HTTP header name.
 #[derive(Debug, Clone, PartialEq, Eq)]

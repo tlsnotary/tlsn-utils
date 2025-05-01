@@ -2,12 +2,12 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures::{SinkExt, StreamExt as _};
 use once_cell::sync::Lazy;
 use tokio::{
@@ -15,9 +15,8 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 use tokio_tungstenite::{
-    accept_hdr_async,
-    tungstenite::{http::Request, Message},
-    WebSocketStream,
+    WebSocketStream, accept_hdr_async,
+    tungstenite::{Message, http::Request},
 };
 use tracing::{debug, info, instrument};
 

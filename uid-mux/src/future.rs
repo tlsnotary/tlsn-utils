@@ -1,14 +1,14 @@
 use std::{
-    pin::{pin, Pin},
+    pin::{Pin, pin},
     task::{Context, Poll},
 };
 
-use futures::{ready, AsyncRead, AsyncWrite, Future};
+use futures::{AsyncRead, AsyncWrite, Future, ready};
 use tokio::sync::oneshot;
 
 use crate::{
-    log::{error, trace},
     InternalId,
+    log::{error, trace},
 };
 
 const BUF: usize = 32;

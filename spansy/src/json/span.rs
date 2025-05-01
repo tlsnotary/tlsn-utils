@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use pest::{iterators::Pair as PestPair, Parser};
+use pest::{Parser, iterators::Pair as PestPair};
 use types::KeyValue;
 
 use super::types::{self, JsonValue};

@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use libfuzzer_sys::fuzz_target;
 
-use rangeset_fuzz::{assert_invariants, SmallSet};
+use rangeset_fuzz::{SmallSet, assert_invariants};
 
 use rangeset::*;
 
