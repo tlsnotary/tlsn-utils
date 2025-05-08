@@ -10,6 +10,8 @@ use std::{
 use bytes::{Bytes, BytesMut};
 use futures_core::stream::TryStream;
 use futures_io::{AsyncRead, AsyncWrite};
+use pin_project_lite::pin_project;
+use tokio_util::codec::{Framed as TokioFramed, LengthDelimitedCodec};
 
 use crate::{Deserialize, IoDuplex, Serialize, Sink, Stream};
 
@@ -101,6 +103,23 @@ impl<T, C> Framed<T, C> {
     }
 }
 
+impl<T, U> Framed<TokioFramed<T, LengthDelimitedCodec>, U> {
+    /// Sets a new maximum frame length and returns a [`WithFrameLimit`].
+    ///
+    /// # Arguments
+    ///
+    /// * `max_frame_len` - The new maximum frame length.
+    pub fn with_max_frame_limit(&mut self, max_frame_len: usize) -> WithFrameLimit<'_, T, U> {
+        let old_frame_limit = self.inner.codec().max_frame_length();
+        self.inner.codec_mut().set_max_frame_length(max_frame_len);
+
+        WithFrameLimit {
+            old_frame_limit,
+            framed: self,
+        }
+    }
+}
+
 impl<T, C> Sink for Framed<T, C>
 where
     T: futures_sink::Sink<Bytes, Error = Error> + Unpin,
@@ -156,6 +175,69 @@ where
             .map_err(|e| Error::new(ErrorKind::InvalidData, e));
 
         Poll::Ready(Some(item))
+    }
+}
+
+pin_project! {
+/// Wrapper around [`Framed`] to temporarily set a new maximum frame length.
+pub struct WithFrameLimit<'a, T, U> {
+    old_frame_limit: usize,
+    #[pin]
+    framed: &'a mut Framed<TokioFramed<T, LengthDelimitedCodec>, U>,
+}
+
+impl<'a, T, U> PinnedDrop for WithFrameLimit<'a, T, U> {
+    fn drop(this: Pin<&mut Self>) {
+        let frame_limit = this.old_frame_limit;
+        this.project().framed
+            .inner
+            .codec_mut()
+            .set_max_frame_length(frame_limit);
+    }
+}
+}
+
+impl<T, U> Stream for WithFrameLimit<'_, T, U>
+where
+    TokioFramed<T, LengthDelimitedCodec>: TryStream<Ok = BytesMut, Error = Error> + Unpin,
+    U: Deserializer + Unpin,
+    <U as Deserializer>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    type Error = Error;
+
+    fn poll_next<Item: Deserialize>(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Item, Error>>> {
+        self.project().framed.poll_next(cx)
+    }
+}
+
+impl<T, U> Sink for WithFrameLimit<'_, T, U>
+where
+    TokioFramed<T, LengthDelimitedCodec>: futures_sink::Sink<Bytes, Error = Error> + Unpin,
+    U: Serializer + Unpin,
+    <U as Serializer>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    type Error = Error;
+
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().framed.poll_ready(cx)
+    }
+
+    fn start_send<I: Serialize>(
+        self: std::pin::Pin<&mut Self>,
+        item: I,
+    ) -> Result<(), Self::Error> {
+        self.project().framed.start_send(item)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().framed.poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().framed.poll_close(cx)
     }
 }
 
