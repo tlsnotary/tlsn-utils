@@ -99,6 +99,31 @@ impl<T, C> Framed<T, C> {
     pub fn new(inner: T, codec: C) -> Self {
         Self { inner, codec }
     }
+
+    /// Returns a reference to `inner`.
+    pub fn inner(&self) -> &T {
+        &self.inner
+    }
+
+    /// Returns a mutable reference to `inner`.
+    pub fn inner_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+
+    /// Returns a reference to `codec`.
+    pub fn codec(&self) -> &C {
+        &self.codec
+    }
+
+    /// Returns a mutable reference to `codec`.
+    pub fn codec_mut(&mut self) -> &mut C {
+        &mut self.codec
+    }
+
+    /// Returns `inner` and `codec`.
+    pub fn into_parts(self) -> (T, C) {
+        (self.inner, self.codec)
+    }
 }
 
 impl<T, C> Sink for Framed<T, C>
