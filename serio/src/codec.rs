@@ -108,7 +108,7 @@ impl<T, U> Framed<TokioFramed<T, LengthDelimitedCodec>, U> {
     ///
     /// # Arguments
     ///
-    /// * `max_frame_len` - The new maximum frame length.
+    /// * `max_frame_len` - The new maximum frame length in bytes.
     pub fn with_max_frame_limit(&mut self, max_frame_len: usize) -> WithFrameLimit<'_, T, U> {
         let old_frame_limit = self.inner.codec().max_frame_length();
         self.inner.codec_mut().set_max_frame_length(max_frame_len);
@@ -179,22 +179,22 @@ where
 }
 
 pin_project! {
-/// Wrapper around [`Framed`] to temporarily set a new maximum frame length.
-pub struct WithFrameLimit<'a, T, U> {
-    old_frame_limit: usize,
-    #[pin]
-    framed: &'a mut Framed<TokioFramed<T, LengthDelimitedCodec>, U>,
-}
-
-impl<'a, T, U> PinnedDrop for WithFrameLimit<'a, T, U> {
-    fn drop(this: Pin<&mut Self>) {
-        let frame_limit = this.old_frame_limit;
-        this.project().framed
-            .inner
-            .codec_mut()
-            .set_max_frame_length(frame_limit);
+    /// Wrapper around [`Framed`] to temporarily set a new maximum frame length.
+    pub struct WithFrameLimit<'a, T, U> {
+        old_frame_limit: usize,
+        #[pin]
+        framed: &'a mut Framed<TokioFramed<T, LengthDelimitedCodec>, U>,
     }
-}
+
+    impl<'a, T, U> PinnedDrop for WithFrameLimit<'a, T, U> {
+        fn drop(this: Pin<&mut Self>) {
+            let frame_limit = this.old_frame_limit;
+            this.project().framed
+                .inner
+                .codec_mut()
+                .set_max_frame_length(frame_limit);
+        }
+    }
 }
 
 impl<T, U> Stream for WithFrameLimit<'_, T, U>
@@ -271,6 +271,41 @@ mod tests {
 
         let b = async {
             b.next::<Ping>().await.unwrap().unwrap();
+            b.send(Pong).await.unwrap();
+        };
+
+        futures::executor::block_on(async {
+            futures::join!(a, b);
+        });
+    }
+
+    #[test]
+    fn test_with_frame_limit() {
+        let (a, b) = duplex(1024);
+        let new_limit = 32 * 1024 * 1024;
+
+        let mut a = Bincode.new_framed(a.compat());
+        let mut b = Bincode.new_framed(b.compat());
+
+        let a = async {
+            a.send(Ping).await.unwrap();
+            a.with_max_frame_limit(new_limit)
+                .next::<Pong>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            assert_ne!(a.inner.codec().max_frame_length(), new_limit);
+        };
+
+        let b = async {
+            b.with_max_frame_limit(new_limit)
+                .next::<Ping>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            assert_ne!(b.inner.codec().max_frame_length(), new_limit);
             b.send(Pong).await.unwrap();
         };
 
