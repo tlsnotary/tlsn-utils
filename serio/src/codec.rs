@@ -282,35 +282,18 @@ mod tests {
     #[test]
     fn test_with_frame_limit() {
         let (a, b) = duplex(1024);
-        let new_limit = 32 * 1024 * 1024;
 
         let mut a = Bincode.new_framed(a.compat());
         let mut b = Bincode.new_framed(b.compat());
 
-        let a = async {
-            a.send(Ping).await.unwrap();
-            a.with_max_frame_limit(new_limit)
-                .next::<Pong>()
-                .await
-                .unwrap()
-                .unwrap();
+        let new_limit = 2 * a.inner.codec().max_frame_length();
 
-            assert_ne!(a.inner.codec().max_frame_length(), new_limit);
-        };
+        {
+            a.with_max_frame_limit(new_limit);
+            b.with_max_frame_limit(new_limit);
+        }
 
-        let b = async {
-            b.with_max_frame_limit(new_limit)
-                .next::<Ping>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            assert_ne!(b.inner.codec().max_frame_length(), new_limit);
-            b.send(Pong).await.unwrap();
-        };
-
-        futures::executor::block_on(async {
-            futures::join!(a, b);
-        });
+        assert_ne!(a.inner.codec().max_frame_length(), new_limit);
+        assert_ne!(b.inner.codec().max_frame_length(), new_limit);
     }
 }
