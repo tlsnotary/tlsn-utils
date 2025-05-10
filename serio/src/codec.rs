@@ -100,27 +100,27 @@ impl<T, C> Framed<T, C> {
         Self { inner, codec }
     }
 
-    /// Returns a reference to `inner`.
+    /// Returns a reference to the inner transport.
     pub fn inner(&self) -> &T {
         &self.inner
     }
 
-    /// Returns a mutable reference to `inner`.
+    /// Returns a mutable reference to the inner transport.
     pub fn inner_mut(&mut self) -> &mut T {
         &mut self.inner
     }
 
-    /// Returns a reference to `codec`.
+    /// Returns a reference to the codec.
     pub fn codec(&self) -> &C {
         &self.codec
     }
 
-    /// Returns a mutable reference to `codec`.
+    /// Returns a mutable reference to the codec.
     pub fn codec_mut(&mut self) -> &mut C {
         &mut self.codec
     }
 
-    /// Returns `inner` and `codec`.
+    /// Returns the inner transport and codec.
     pub fn into_parts(self) -> (T, C) {
         (self.inner, self.codec)
     }
