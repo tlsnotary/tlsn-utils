@@ -286,14 +286,15 @@ mod tests {
         let mut a = Bincode.new_framed(a.compat());
         let mut b = Bincode.new_framed(b.compat());
 
-        let new_limit = 2 * a.inner.codec().max_frame_length();
+        let old_limit = a.inner.codec().max_frame_length();
+        let new_limit = 2 * old_limit;
 
         {
             a.with_max_frame_limit(new_limit);
             b.with_max_frame_limit(new_limit);
         }
 
-        assert_ne!(a.inner.codec().max_frame_length(), new_limit);
-        assert_ne!(b.inner.codec().max_frame_length(), new_limit);
+        assert_eq!(a.inner.codec().max_frame_length(), old_limit);
+        assert_eq!(b.inner.codec().max_frame_length(), old_limit);
     }
 }
