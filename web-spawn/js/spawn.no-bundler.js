@@ -14,9 +14,11 @@ registerMessageListener(self, 'web_spawn_start_spawner', async (data) => {
     const [module, memory, workerUrl, wasmUrl, spawner] = data;
     const wasm = await import(`${wasmUrl}`);
 
-    wasm.initSync({ module, memory });
+    const exports = wasm.initSync({ module, memory });
     postMessage('web_spawn_spawner_ready');
     await wasm.web_spawn_recover_spawner(spawner).run(workerUrl);
+
+    exports.__wbindgen_thread_destroy();
 
     URL.revokeObjectURL(workerUrl);
 
@@ -28,8 +30,10 @@ registerMessageListener(self, 'web_spawn_start_worker', async (data) => {
     const [module, memory, wasmUrl, worker] = data;
     const wasm = await import(`${wasmUrl}`);
 
-    wasm.initSync({ module, memory });
+    const exports = wasm.initSync({ module, memory });
     wasm.web_spawn_start_worker(worker);
+
+    exports.__wbindgen_thread_destroy();
 
     close();
 });

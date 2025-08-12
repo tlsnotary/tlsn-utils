@@ -17,11 +17,13 @@ registerMessageListener(self, 'web_spawn_start_spawner', async (data) => {
     );
     const [module, memory, spawnerPtr] = data;
     const pkg = await import('../../..');
-    await pkg.default({ module, memory });
+    const exports = await pkg.default({ module, memory });
 
     const spawner = pkg.web_spawn_recover_spawner(spawnerPtr);
     postMessage('web_spawn_spawner_ready');
     await spawner.run(workerUrl.toString());
+
+    exports.__wbindgen_thread_destroy();
 
     close();
 });
@@ -31,9 +33,11 @@ registerMessageListener(self, 'web_spawn_start_worker', async (data) => {
     const [module, memory, workerPtr] = data;
 
     const pkg = await import('../../..');
-    await pkg.default({ module, memory });
+    const exports = await pkg.default({ module, memory });
 
     pkg.web_spawn_start_worker(workerPtr);
+
+    exports.__wbindgen_thread_destroy();
 
     close();
 });
