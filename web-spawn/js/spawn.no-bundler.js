@@ -31,6 +31,8 @@ registerMessageListener(self, 'web_spawn_start_worker', async (data) => {
     wasm.initSync({ module, memory });
     wasm.web_spawn_start_worker(worker);
 
+    wasm.wasm_exports().__wbindgen_thread_destroy();
+
     close();
 });
 

@@ -1,4 +1,4 @@
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::{JsValue, prelude::*};
 
 use crate::wasm::{Closure, thread::Builder};
 
@@ -50,4 +50,10 @@ pub fn web_spawn_start_worker(worker: *mut WorkerData) {
     let WorkerData { f } = unsafe { *Box::from_raw(worker) };
 
     f();
+}
+
+#[wasm_bindgen]
+#[doc(hidden)]
+pub fn wasm_exports() -> JsValue {
+    wasm_bindgen::exports()
 }

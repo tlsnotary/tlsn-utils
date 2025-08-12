@@ -35,6 +35,7 @@ registerMessageListener(self, 'web_spawn_start_worker', async (data) => {
 
     pkg.web_spawn_start_worker(workerPtr);
 
+    wasm.wasm_exports().__wbindgen_thread_destroy();
     close();
 });
 
