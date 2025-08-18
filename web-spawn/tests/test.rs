@@ -10,13 +10,10 @@ use wasm_bindgen_futures::JsFuture;
 static INIT: AtomicBool = AtomicBool::new(false);
 
 async fn init() {
-    // If it is set return immediately.
-    if INIT.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return;
+    if !INIT.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        #[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
+        JsFuture::from(web_spawn::start_spawner()).await.unwrap();
     }
-
-    #[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
-    JsFuture::from(web_spawn::start_spawner()).await.unwrap();
 }
 
 #[cfg_attr(
