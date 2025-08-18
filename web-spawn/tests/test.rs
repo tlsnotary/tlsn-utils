@@ -1,11 +1,11 @@
-#![cfg(target_arch = "wasm32")]
-
 use std::sync::atomic::AtomicBool;
 
 use futures::channel::oneshot;
+
+use web_spawn::spawn;
+
+#[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
 use wasm_bindgen_futures::JsFuture;
-use wasm_bindgen_test::*;
-use web_spawn::{spawn, start_spawner};
 
 static INIT: AtomicBool = AtomicBool::new(false);
 
@@ -15,10 +15,18 @@ async fn init() {
         return;
     }
 
-    JsFuture::from(start_spawner()).await.unwrap();
+    #[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
+    JsFuture::from(web_spawn::start_spawner()).await.unwrap();
 }
 
-#[wasm_bindgen_test]
+#[cfg_attr(
+    not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))),
+    pollster::test
+)]
+#[cfg_attr(
+    all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")),
+    wasm_bindgen_test::wasm_bindgen_test
+)]
 async fn test_pass() {
     init().await;
 
@@ -29,7 +37,14 @@ async fn test_pass() {
     assert_eq!(value, 42);
 }
 
-#[wasm_bindgen_test]
+#[cfg_attr(
+    not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))),
+    pollster::test
+)]
+#[cfg_attr(
+    all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")),
+    wasm_bindgen_test::wasm_bindgen_test
+)]
 async fn test_join() {
     init().await;
 
