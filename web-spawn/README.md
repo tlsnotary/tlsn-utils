@@ -14,17 +14,18 @@ Most notably, spawning is explicitly delegated to run in a background task and m
 Add `web-spawn` as a dependency in your `Cargo.toml`:
 
 ```toml
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-web-spawn = { version = "0.2" }
+web-spawn = { version = "0.3" }
 ```
 
-Then **you must ensure that spawning is initialized**. One way to do this is to re-export the following function:
+Then **you must ensure that spawning is initialized**. One way to do this is to start the spawner from within your WASM module:
 
 ```rust,ignore
-pub use web_spawn::start_spawner;
+use wasm_bindgen_futures::JsFuture;
+
+JsFuture::from(web_spawn::start_spawner()).await.unwrap();
 ```
 
-On the javascript side this can be awaited:
+Alternatively, this can be done on the javascript side:
 
 ```javascript
 import init, { startSpawner } from /* your package */;
@@ -35,11 +36,10 @@ await init();
 await startSpawner();
 ```
 
-Now, in the rest of your Rust code you can conditionally use `web-spawn` anywhere you would otherwise use `std::thread::spawn`:
+Now, in the rest of your Rust code you can use `web_spawn::spawn` anywhere you would otherwise use `std::thread::spawn`:
 
-```rust,ignore
-#[cfg(target_arch = "wasm32")]
-use web_spawn as thread;
-#[cfg(not(target_arch = "wasm32"))]
-use std::thread;
+```rust
+use web_spawn::spawn;
+
+assert_eq!(spawn(|| 1 + 1).join().unwrap(), 2);
 ```
