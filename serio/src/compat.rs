@@ -4,7 +4,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::{Deserialize, Stream};
+use crate::Stream;
 
 use super::*;
 
@@ -45,7 +45,7 @@ impl<T, Item> FuturesCompat<T, Item> {
 impl<T, Item> futures_sink::Sink<Item> for FuturesCompat<T, Item>
 where
     T: Sink,
-    Item: Serialize,
+    Item: Message,
 {
     type Error = T::Error;
 
@@ -69,7 +69,7 @@ where
 impl<T, Item> futures_core::Stream for FuturesCompat<T, Item>
 where
     T: Stream,
-    Item: Deserialize,
+    Item: Message,
 {
     type Item = Result<Item, T::Error>;
 
