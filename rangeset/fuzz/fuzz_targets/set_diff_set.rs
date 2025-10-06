@@ -4,7 +4,7 @@ use libfuzzer_sys::fuzz_target;
 
 use rangeset_fuzz::{SmallSet, assert_invariants};
 
-use rangeset::*;
+use rangeset::prelude::*;
 
 fn expected_difference(a: RangeSet<u8>, b: RangeSet<u8>) -> Vec<u8> {
     a.iter().filter(|x| !b.contains(x)).collect::<Vec<_>>()
@@ -16,7 +16,7 @@ fuzz_target!(|r: (SmallSet, SmallSet)| {
 
     let expected_values = expected_difference(s1.clone(), s2.clone());
 
-    let diff = s1.difference(&s2);
+    let diff = s1.difference(&s2).into_set();
 
     let actual_values = diff.iter().collect::<Vec<_>>();
 

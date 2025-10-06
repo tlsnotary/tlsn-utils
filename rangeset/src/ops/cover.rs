@@ -1,5 +1,8 @@
+use core::ops::Range;
+
 use crate::{
-    Range, RangeSet, difference::DifferenceMut, intersection::Intersection, subset::Subset,
+    ops::{DifferenceMut, Intersection, Subset},
+    set::RangeSet,
 };
 
 /// Set cover methods.
@@ -158,7 +161,7 @@ where
     while !uncovered.is_empty() {
         // Find the set with the most coverage.
         for (i, (pos, item)) in others.iter().enumerate() {
-            let cover = f(item).intersection(&uncovered).len();
+            let cover = f(item).intersection(&uncovered).map(|r| r.len()).sum();
             // If cover is non-empty or greater than the current candidate, update the
             // candidate.
             if cover > candidate.as_ref().map_or(0, |c| c.cover) {

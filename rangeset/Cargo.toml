@@ -1,6 +1,6 @@
 [package]
 name = "rangeset"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["TLSNotary Contributors"]
 license = "MIT OR Apache-2.0"
@@ -9,7 +9,9 @@ description = "Integer collection backed by ranges with set operation support."
 keywords = ["range", "set"]
 
 [features]
-default = []
+default = ["std"]
+alloc = []
+std = ["alloc"]
 serde = ["dep:serde"]
 
 [dependencies]
@@ -17,8 +19,6 @@ serde = { workspace = true, optional = true, features = ["derive"] }
 
 [dev-dependencies]
 criterion = { version = "0.5" }
-rstest = "0.12"
-itertools = "0.11.0"
 
 [[bench]]
 name = "range"

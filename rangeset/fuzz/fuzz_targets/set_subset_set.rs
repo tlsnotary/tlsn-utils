@@ -6,7 +6,7 @@ use libfuzzer_sys::fuzz_target;
 
 use rangeset_fuzz::SmallSet;
 
-use rangeset::*;
+use rangeset::prelude::*;
 
 fuzz_target!(|r: (SmallSet, SmallSet)| {
     let s1: RangeSet<u8> = r.0.into();
