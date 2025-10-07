@@ -279,7 +279,7 @@ where
     }
 }
 
-impl<'a, T> IntoRangeIterator<T> for &'a Range<T>
+impl<T> IntoRangeIterator<T> for &Range<T>
 where
     T: Copy + Ord,
 {

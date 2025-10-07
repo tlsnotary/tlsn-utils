@@ -22,6 +22,7 @@ pub trait RangeIterator<T>: Iterator<Item = Range<T>> {
     ///
     /// If `n` is not present in the iterator it will yield `None`. Afterwards,
     /// the iterator may still yield ranges with values greater than `n`.
+    #[inline]
     fn seek(&mut self, n: &T) -> Option<Range<T>>
     where
         T: Ord,
@@ -42,11 +43,13 @@ pub trait RangeIterator<T>: Iterator<Item = Range<T>> {
     ///
     /// Slice-backed iterators can override this method to improve performance
     /// using binary search.
+    #[inline]
+    #[allow(clippy::manual_find)]
     fn seek_end_ge(&mut self, n: &T) -> Option<Range<T>>
     where
         T: Ord,
     {
-        while let Some(range) = self.next() {
+        for range in self {
             if &range.end >= n {
                 return Some(range);
             }
@@ -93,7 +96,8 @@ pub trait RangeIterator<T>: Iterator<Item = Range<T>> {
 
     /// Returns true if `self` is a subset of `other`.
     #[inline]
-    fn is_subset<I>(mut self, other: I) -> bool
+    #[allow(clippy::wrong_self_convention)]
+    fn is_subset<I>(self, other: I) -> bool
     where
         Self: Sized,
         I: IntoRangeIterator<T>,
@@ -102,8 +106,8 @@ pub trait RangeIterator<T>: Iterator<Item = Range<T>> {
         let mut b_iter = other.into_range_iter();
         let mut b: Option<Range<T>> = None;
 
-        while let Some(a) = self.next() {
-            if b.as_ref().map_or(true, |b| b.end < a.start) {
+        for a in self {
+            if b.as_ref().is_none_or(|b| b.end < a.start) {
                 b = b_iter.seek_end_ge(&a.start);
             }
 
@@ -118,17 +122,18 @@ pub trait RangeIterator<T>: Iterator<Item = Range<T>> {
 
     /// Returns true if `self` is a superset of `other`.
     #[inline]
+    #[allow(clippy::wrong_self_convention)]
     fn is_superset<I>(mut self, other: I) -> bool
     where
         Self: Sized,
         I: IntoRangeIterator<T>,
         T: Ord,
     {
-        let mut a_iter = other.into_range_iter();
+        let a_iter = other.into_range_iter();
         let mut b: Option<Range<T>> = None;
 
-        while let Some(a) = a_iter.next() {
-            if b.as_ref().map_or(true, |b| b.end < a.start) {
+        for a in a_iter {
+            if b.as_ref().is_none_or(|b| b.end < a.start) {
                 b = self.seek_end_ge(&a.start);
             }
 
@@ -143,6 +148,7 @@ pub trait RangeIterator<T>: Iterator<Item = Range<T>> {
 
     /// Returns true if `self` is disjoint from `other`.
     #[inline]
+    #[allow(clippy::wrong_self_convention)]
     fn is_disjoint<I>(mut self, other: I) -> bool
     where
         Self: Sized,
@@ -291,7 +297,7 @@ where
                     }
                 }
 
-                return Some(current);
+                Some(current)
             }
             (Some(x), None) | (None, Some(x)) => Some(x),
             (None, None) => None,
@@ -435,28 +441,20 @@ where
         T: Ord,
     {
         // If we have a buffered `this` that ends before `n`, drop it.
-        if let Some(t) = self.this.take() {
-            if &t.end >= n {
-                self.this = Some(t);
-            }
+        if let Some(t) = self.this.take()
+            && &t.end >= n
+        {
+            self.this = Some(t);
         }
 
         // Ensure `this` is positioned at the first range with end >= n.
         if self.this.is_none() {
             self.this = self.this_iter.seek_end_ge(n);
-            if self.this.is_none() {
-                return None;
-            }
+            self.this.as_ref()?;
         }
 
         // Iterate until we find one with end >= n.
-        while let Some(out) = self.next() {
-            if &out.end >= n {
-                return Some(out);
-            }
-        }
-
-        None
+        self.by_ref().find(|out| &out.end >= n)
     }
 }
 
@@ -682,10 +680,8 @@ where
                             if right_start < b.end {
                                 self.b = Some(right_start..b.end);
                             }
-                        } else {
-                            if right_start < a.end {
-                                self.a = Some(right_start..a.end);
-                            }
+                        } else if right_start < a.end {
+                            self.a = Some(right_start..a.end);
                         }
                         continue;
                     };

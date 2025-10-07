@@ -716,7 +716,7 @@ impl<T: Copy + Ord> Subset<Range<T>> for RangeSet<T> {
             range.start >= other.start && range.end <= other.end
         } else {
             // empty set is subset of any set
-            return true;
+            true
         }
     }
 }
