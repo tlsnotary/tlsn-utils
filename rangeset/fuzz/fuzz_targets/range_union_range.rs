@@ -1,10 +1,10 @@
 #![no_main]
 
-use std::ops::Range;
+use core::ops::Range;
 
 use libfuzzer_sys::fuzz_target;
 
-use rangeset::*;
+use rangeset::prelude::*;
 use rangeset_fuzz::assert_invariants;
 
 fn expected_range_union(a: Range<u8>, b: Range<u8>) -> Vec<u8> {
@@ -21,7 +21,7 @@ fuzz_target!(|r: (Range<u8>, Range<u8>)| {
 
     let expected_values = expected_range_union(r1.clone(), r2.clone());
 
-    let union = r1.union(&r2);
+    let union = r1.union(&r2).into_set();
 
     let actual_values = union.iter().collect::<Vec<_>>();
 
