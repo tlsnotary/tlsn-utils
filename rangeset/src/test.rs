@@ -184,7 +184,7 @@ impl Universe {
 
     /// Returns an iterator over all sets of the universe.
     pub fn iter_sets(&self) -> impl Iterator<Item = Set> {
-        (0..(1 << self.0)).map(move |mask| Set::new(mask))
+        (0..(1 << self.0)).map(Set::new)
     }
 }
 

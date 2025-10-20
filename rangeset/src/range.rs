@@ -445,20 +445,12 @@ mod tests {
 
     #[test]
     fn test_range_union_iter() {
-        assert_pairwise_ranges(
-            TEST_DOMAIN_SIZE,
-            |a, b| a | b,
-            |a, b| RangeUnionIter::new(a, b),
-        );
+        assert_pairwise_ranges(TEST_DOMAIN_SIZE, |a, b| a | b, RangeUnionIter::new);
     }
 
     #[test]
     fn test_range_diff_iter() {
-        assert_pairwise_ranges(
-            TEST_DOMAIN_SIZE,
-            |a, b| a - b,
-            |a, b| RangeDiffIter::new(a, b),
-        );
+        assert_pairwise_ranges(TEST_DOMAIN_SIZE, |a, b| a - b, RangeDiffIter::new);
     }
 
     #[test]
