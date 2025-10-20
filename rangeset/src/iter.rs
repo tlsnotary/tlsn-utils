@@ -406,7 +406,7 @@ where
                 let left = this.start..other.start;
 
                 // Store the remainder.
-                let rem_start = this.start.max(other.end);
+                let rem_start = other.end;
                 if rem_start < this.end {
                     self.this = Some(rem_start..this.end);
                 }
@@ -415,8 +415,8 @@ where
 
                 return Some(left);
             } else {
-                // The other range precedes this range.
-                let right_start = this.start.max(other.end);
+                // The other range precedes this range or ranges are equal.
+                let right_start = other.end;
                 if right_start < this.end {
                     self.this = Some(right_start..this.end);
                 }

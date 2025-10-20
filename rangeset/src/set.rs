@@ -242,7 +242,7 @@ impl<T: Copy + Ord + Step + Sub<Output = T>> RangeSet<T> {
         let idx = self.ranges.partition_point(|range| range.start < *at);
         if idx > 0 {
             let prev = &mut self.ranges[idx - 1];
-            if &prev.start < at && at < &prev.end {
+            if at < &prev.end {
                 let old_end = prev.end;
                 prev.end = *at;
 

@@ -44,10 +44,10 @@ impl<T: Copy + Ord> Iterator for RangeDiffIter<T> {
             Some(this)
         } else if this.start < self.other.start {
             // This range precedes the other range.
-            let left = this.start..this.end.min(self.other.start);
+            let left = this.start..self.other.start;
 
             // Store the remainder.
-            let rem_start = this.start.max(self.other.end);
+            let rem_start = self.other.end;
             if rem_start < this.end {
                 self.this = Some(rem_start..this.end);
                 // Empty the other range to speed up the next iteration.
@@ -57,7 +57,7 @@ impl<T: Copy + Ord> Iterator for RangeDiffIter<T> {
             Some(left)
         } else {
             // The other range precedes this range.
-            let right_start = this.start.max(self.other.end);
+            let right_start = self.other.end;
             if right_start < this.end {
                 Some(right_start..this.end)
             } else {
