@@ -205,6 +205,20 @@ impl KeyValue {
     pub fn without_value(&self) -> RangeSet<usize> {
         self.span.indices.difference(&self.value.span().indices)
     }
+
+    /// Returns the indices of the key value pair, excluding the trailing
+    /// separator.
+    pub fn without_separator(&self) -> RangeSet<usize> {
+        let range = self.span.indices.clone();
+        if self.span.data().last().expect("span cannot be empty") == &b',' {
+            let mut ranges = range.into_inner();
+            let last = ranges.pop().expect("at least one range");
+            ranges.push(last.start..last.end - 1);
+            ranges.into()
+        } else {
+            range
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -487,6 +501,19 @@ mod tests {
         let indices = value.elems[0].without_value();
 
         assert_eq!(src.index_ranges(&indices), "\"foo\": \"\"");
+    }
+
+    #[test]
+    fn test_key_value_without_separator() {
+        let src = "{\"foo\": \"bar\", \"baz\": \"buzz\"\n}";
+
+        let JsonValue::Object(value) = parse_str(src).unwrap() else {
+            panic!("expected object");
+        };
+
+        let indices = value.elems[0].without_separator();
+
+        assert_eq!(src.index_ranges(&indices), "\"foo\": \"bar\"");
     }
 
     #[test]
