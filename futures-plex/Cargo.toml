@@ -7,4 +7,4 @@ description = "Port of tokio's `SimplexStream` and `DuplexStream` for the `futur
 [dependencies]
 bytes = { version = "1" }
 futures-io = { version = "0.3" }
-futures-util = { version = "0.3", default-features = false, features = ["io"] }
+futures-util = { version = "0.3", default-features = false, features = ["io", "unstable", "bilock"] }

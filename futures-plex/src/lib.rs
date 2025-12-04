@@ -1,16 +1,16 @@
 #![doc = include_str!("../README.md")]
 
 use std::{
+    io::{Read, Write},
     pin::Pin,
     task::{self, Poll, Waker},
 };
 
 use bytes::{Buf, BytesMut};
 use futures_io::{AsyncRead, AsyncWrite};
-use futures_util::{
-    AsyncReadExt,
-    io::{ReadHalf, WriteHalf},
-};
+
+mod half;
+pub use half::{ReadHalf, WriteHalf};
 
 /// A bidirectional pipe to read and write bytes in memory.
 ///
@@ -102,8 +102,8 @@ pub struct SimplexStream {
 /// The `max_buf_size` argument is the maximum amount of bytes that can be
 /// written to a side before the write returns `Poll::Pending`.
 pub fn duplex(max_buf_size: usize) -> (DuplexStream, DuplexStream) {
-    let (read_0, write_0) = SimplexStream::new_unsplit(max_buf_size).split();
-    let (read_1, write_1) = SimplexStream::new_unsplit(max_buf_size).split();
+    let (read_0, write_0) = half::split(SimplexStream::new_unsplit(max_buf_size));
+    let (read_1, write_1) = half::split(SimplexStream::new_unsplit(max_buf_size));
 
     (
         DuplexStream {
@@ -168,6 +168,22 @@ impl AsyncWrite for DuplexStream {
     }
 }
 
+impl Read for DuplexStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        Read::read(&mut self.read, buf)
+    }
+}
+
+impl Write for DuplexStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        Write::write(&mut self.write, buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Write::flush(&mut self.write)
+    }
+}
+
 // ===== impl SimplexStream =====
 
 /// Creates unidirectional buffer that acts like in memory pipe.
@@ -196,7 +212,7 @@ impl AsyncWrite for DuplexStream {
 /// # }
 /// ```
 pub fn simplex(max_buf_size: usize) -> (ReadHalf<SimplexStream>, WriteHalf<SimplexStream>) {
-    SimplexStream::new_unsplit(max_buf_size).split()
+    half::split(SimplexStream::new_unsplit(max_buf_size))
 }
 
 impl SimplexStream {
@@ -340,5 +356,48 @@ impl AsyncWrite for SimplexStream {
     ) -> Poll<std::io::Result<()>> {
         self.close_write();
         Poll::Ready(Ok(()))
+    }
+}
+
+impl Read for SimplexStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.buffer.has_remaining() {
+            let len = self.buffer.remaining().min(buf.len());
+            buf[..len].copy_from_slice(&self.buffer[..len]);
+            self.buffer.advance(len);
+            if len > 0 {
+                // The passed `buf` might have been empty, don't wake up if
+                // no bytes have been moved.
+                if let Some(waker) = self.write_waker.take() {
+                    waker.wake();
+                }
+            }
+            Ok(len)
+        } else {
+            Ok(0)
+        }
+    }
+}
+
+impl Write for SimplexStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.is_closed {
+            return Err(std::io::ErrorKind::BrokenPipe.into());
+        }
+        let avail = self.max_buf_size - self.buffer.len();
+        if avail == 0 {
+            return Ok(0);
+        }
+
+        let len = buf.len().min(avail);
+        self.buffer.extend_from_slice(&buf[..len]);
+        if let Some(waker) = self.read_waker.take() {
+            waker.wake();
+        }
+        Ok(len)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
