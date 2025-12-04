@@ -1,4 +1,8 @@
-use rangeset::{Difference, RangeSet, ToRangeSet};
+use rangeset::{
+    iter::RangeIterator,
+    ops::Difference,
+    set::{RangeSet, ToRangeSet},
+};
 
 use crate::{Span, Spanned, json::JsonValue};
 
@@ -76,7 +80,10 @@ impl Header {
     ///
     /// The indices will include any optional whitespace and the CRLF.
     pub fn without_value(&self) -> RangeSet<usize> {
-        self.span.indices.difference(&self.value.span().indices)
+        self.span
+            .indices
+            .difference(&self.value.span().indices)
+            .into_set()
     }
 
     /// Shifts the span range by the given offset.
@@ -172,7 +179,10 @@ pub struct RequestLine {
 impl RequestLine {
     /// Returns the indices of the request line excluding the request target.
     pub fn without_target(&self) -> RangeSet<usize> {
-        self.span.indices.difference(&self.target.0.indices)
+        self.span
+            .indices
+            .difference(&self.target.0.indices)
+            .into_set()
     }
 
     /// Shifts the span range by the given offset.
@@ -223,12 +233,17 @@ impl Request {
     /// Returns the indices of the request excluding the target, headers and
     /// body.
     pub fn without_data(&self) -> RangeSet<usize> {
-        let mut indices = self.span.indices.difference(&self.request.target.0.indices);
+        let mut indices = self
+            .span
+            .indices
+            .difference(&self.request.target.0.indices)
+            .into_set();
+
         for header in &self.headers {
-            indices = indices.difference(header.span.indices());
+            indices = indices.difference(header.span.indices()).into_set();
         }
         if let Some(body) = &self.body {
-            indices = indices.difference(body.span.indices());
+            indices = indices.difference(body.span.indices()).into_set();
         }
         indices
     }
@@ -378,10 +393,10 @@ impl Response {
     pub fn without_data(&self) -> RangeSet<usize> {
         let mut indices = self.span.indices.clone();
         for header in &self.headers {
-            indices = indices.difference(header.span.indices());
+            indices = indices.difference(header.span.indices()).into_set();
         }
         if let Some(body) = &self.body {
-            indices = indices.difference(body.span.indices());
+            indices = indices.difference(body.span.indices()).into_set();
         }
         indices
     }

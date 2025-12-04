@@ -1,6 +1,10 @@
 use std::ops::{Index, Range};
 
-use rangeset::{Difference, RangeSet, ToRangeSet};
+use rangeset::{
+    iter::RangeIterator,
+    ops::Difference,
+    set::{RangeSet, ToRangeSet},
+};
 
 use crate::{Span, Spanned};
 
@@ -203,7 +207,10 @@ pub struct KeyValue {
 impl KeyValue {
     /// Returns the indices of the key value pair, excluding the value.
     pub fn without_value(&self) -> RangeSet<usize> {
-        self.span.indices.difference(&self.value.span().indices)
+        self.span
+            .indices
+            .difference(&self.value.span().indices)
+            .into_set()
     }
 
     /// Returns the indices of the key value pair, excluding the trailing
@@ -333,7 +340,7 @@ impl Object {
     pub fn without_pairs(&self) -> RangeSet<usize> {
         let mut indices = self.span.indices.clone();
         for kv in &self.elems {
-            indices = indices.difference(&kv.span.indices);
+            indices = indices.difference(&kv.span.indices).into_set();
         }
         indices
     }
@@ -457,7 +464,8 @@ impl_type!(KeyValue, span);
 
 #[cfg(test)]
 mod tests {
-    use rangeset::IndexRanges;
+
+    use rangeset::ops::Index;
 
     use crate::json::parse_str;
 
@@ -500,7 +508,13 @@ mod tests {
 
         let indices = value.elems[0].without_value();
 
-        assert_eq!(src.index_ranges(&indices), "\"foo\": \"\"");
+        let result: std::string::String = src
+            .as_bytes()
+            .index(indices.iter_ranges())
+            .flatten()
+            .map(|&b| b as char)
+            .collect();
+        assert_eq!(result, "\"foo\": \"\"");
     }
 
     #[test]
@@ -513,7 +527,13 @@ mod tests {
 
         let indices = value.elems[0].without_separator();
 
-        assert_eq!(src.index_ranges(&indices), "\"foo\": \"bar\"");
+        let result: std::string::String = src
+            .as_bytes()
+            .index(indices.iter_ranges())
+            .flatten()
+            .map(|&b| b as char)
+            .collect();
+        assert_eq!(result, "\"foo\": \"bar\"");
     }
 
     #[test]
@@ -526,7 +546,13 @@ mod tests {
 
         let indices = value.without_values();
 
-        assert_eq!(src.index_ranges(&indices), "[]");
+        let result: std::string::String = src
+            .as_bytes()
+            .index(indices.iter_ranges())
+            .flatten()
+            .map(|&b| b as char)
+            .collect();
+        assert_eq!(result, "[]");
     }
 
     #[test]
@@ -539,6 +565,12 @@ mod tests {
 
         let indices = value.without_pairs();
 
-        assert_eq!(src.index_ranges(&indices), "{\n}");
+        let result: std::string::String = src
+            .as_bytes()
+            .index(indices.iter_ranges())
+            .flatten()
+            .map(|&b| b as char)
+            .collect();
+        assert_eq!(result, "{\n}");
     }
 }
