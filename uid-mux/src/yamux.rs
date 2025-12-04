@@ -263,6 +263,7 @@ where
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, err))]
     fn handle_shutdown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        #[allow(clippy::collapsible_if)]
         // Attempt to close the connection if the shutdown notify has been set.
         if !self.closed && self.shutdown_notify.load(Ordering::Relaxed) {
             if let Poll::Ready(()) = self.conn.poll_close(cx)? {
