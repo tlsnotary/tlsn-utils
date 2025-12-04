@@ -1,5 +1,5 @@
 [target.'cfg(target_arch = "wasm32")']
-rustflags = ["-C", "target-feature=+atomics,+bulk-memory,+mutable-globals"]
+rustflags = ["-C", "target-feature=+bulk-memory,+mutable-globals"]
 
 [unstable]
 build-std = ["panic_abort", "std"]
