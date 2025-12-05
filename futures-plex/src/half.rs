@@ -119,7 +119,10 @@ impl<R: Read + Unpin> Read for ReadHalf<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut cx = Context::from_waker(Waker::noop());
         let Poll::Ready(mut handle) = self.handle.lock().poll_unpin(&mut cx) else {
-            return Ok(0);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "unable to acquire lock",
+            ));
         };
 
         handle.as_pin_mut().read(buf)
@@ -130,7 +133,10 @@ impl<W: Write + Unpin> Write for WriteHalf<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut cx = Context::from_waker(Waker::noop());
         let Poll::Ready(mut handle) = self.handle.lock().poll_unpin(&mut cx) else {
-            return Ok(0);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "unable to acquire lock",
+            ));
         };
 
         handle.as_pin_mut().write(buf)
