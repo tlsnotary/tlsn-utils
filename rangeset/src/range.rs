@@ -321,7 +321,7 @@ where
     where
         T: 'a,
     {
-        RangeIntersectionIter::new(&self, &rhs)
+        RangeIntersectionIter::new(self, &rhs)
     }
 
     fn symmetric_difference<'a>(&'a self, rhs: Range<T>) -> Self::SymmetricDifference<'a>
