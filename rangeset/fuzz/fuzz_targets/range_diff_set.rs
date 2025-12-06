@@ -20,7 +20,7 @@ fuzz_target!(|r: (Range<u8>, SmallSet)| {
 
     let diff = range.difference(&set).into_set();
 
-    let actual_values = diff.iter().collect::<Vec<_>>();
+    let actual_values = diff.iter_values().collect::<Vec<_>>();
 
     assert_eq!(expected_values, actual_values);
 

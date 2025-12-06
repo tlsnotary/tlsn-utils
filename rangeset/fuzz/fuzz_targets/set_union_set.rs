@@ -7,7 +7,7 @@ use rangeset_fuzz::{SmallSet, assert_invariants};
 use rangeset::prelude::*;
 
 fn expected_union(a: RangeSet<u8>, b: RangeSet<u8>) -> Vec<u8> {
-    let mut expected_values = a.iter().chain(b.iter()).collect::<Vec<_>>();
+    let mut expected_values = a.iter_values().chain(b.iter_values()).collect::<Vec<_>>();
 
     expected_values.sort();
     expected_values.dedup();
@@ -23,7 +23,7 @@ fuzz_target!(|r: (SmallSet, SmallSet)| {
 
     let union = r2.union(&r1).into_set();
 
-    let actual_values = union.iter().collect::<Vec<_>>();
+    let actual_values = union.iter_values().collect::<Vec<_>>();
 
     assert_eq!(expected_values, actual_values);
 

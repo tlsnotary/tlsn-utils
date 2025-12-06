@@ -3,8 +3,8 @@
 use core::ops::Range;
 
 use crate::{
-    iter::{IntoRangeIterator, RangeIterator},
-    ops::{Difference, Disjoint, Intersection, Subset, Union},
+    iter::{IntoRangeIterator, RangeIterator, SymmetricDifferenceIter},
+    ops::Set,
 };
 
 /// Iterator over the difference of two ranges.
@@ -210,17 +210,6 @@ impl<T: Copy + Ord> IntoRangeIterator<T> for RangeIntersectionIter<T> {
     }
 }
 
-impl<T: Copy + Ord> Intersection<Range<T>> for Range<T> {
-    type Output<'a>
-        = RangeIntersectionIter<T>
-    where
-        T: 'a;
-
-    fn intersection<'a>(&'a self, other: &'a Range<T>) -> Self::Output<'a> {
-        RangeIntersectionIter::new(self, other)
-    }
-}
-
 /// Iterator which yields a single range.
 #[derive(Debug)]
 #[must_use = "iterators are lazy and do nothing unless consumed"]
@@ -290,49 +279,153 @@ where
     }
 }
 
-impl<T: Copy + Ord> Union<Range<T>> for Range<T> {
-    type Output<'a>
+impl<T> Set<Range<T>> for Range<T>
+where
+    T: Copy + Ord,
+{
+    type Union<'a>
         = RangeUnionIter<T>
     where
         T: 'a;
 
-    fn union<'a>(&'a self, other: &'a Range<T>) -> Self::Output<'a> {
-        RangeUnionIter::new(self.clone(), other.clone())
-    }
-}
-
-impl<T: Copy + Ord> Difference<Range<T>> for Range<T> {
-    type Output<'a>
+    type Difference<'a>
         = RangeDiffIter<T>
     where
         T: 'a;
 
-    fn difference<'a>(&'a self, other: &'a Range<T>) -> Self::Output<'a> {
-        RangeDiffIter::new(self.clone(), other.clone())
+    type Intersection<'a>
+        = RangeIntersectionIter<T>
+    where
+        T: 'a;
+
+    type SymmetricDifference<'a>
+        = SymmetricDifferenceIter<T, Once<T>, Once<T>>
+    where
+        T: 'a;
+
+    fn union<'a>(&'a self, rhs: Range<T>) -> Self::Union<'a>
+    where
+        T: 'a,
+    {
+        RangeUnionIter::new(self.start..self.end, rhs)
+    }
+
+    fn difference<'a>(&'a self, rhs: Range<T>) -> Self::Difference<'a>
+    where
+        T: 'a,
+    {
+        RangeDiffIter::new(self.start..self.end, rhs)
+    }
+
+    fn intersection<'a>(&'a self, rhs: Range<T>) -> Self::Intersection<'a>
+    where
+        T: 'a,
+    {
+        RangeIntersectionIter::new(&self, &rhs)
+    }
+
+    fn symmetric_difference<'a>(&'a self, rhs: Range<T>) -> Self::SymmetricDifference<'a>
+    where
+        T: 'a,
+    {
+        Once::new(self.start..self.end).symmetric_difference(rhs)
+    }
+
+    fn is_disjoint(&self, other: Range<T>) -> bool {
+        Once::new(self.start..self.end).is_disjoint(other)
+    }
+
+    fn is_subset(&self, other: Range<T>) -> bool {
+        Once::new(self.start..self.end).is_subset(other)
+    }
+
+    fn is_superset(&self, other: Range<T>) -> bool {
+        Once::new(self.start..self.end).is_superset(other)
     }
 }
 
-impl<T: Copy + Ord> Disjoint<Range<T>> for Range<T> {
-    #[inline]
-    fn is_disjoint(&self, other: &Range<T>) -> bool {
+impl<'rhs, T> Set<&'rhs Range<T>> for Range<T>
+where
+    T: Copy + Ord,
+{
+    type Union<'a>
+        = RangeUnionIter<T>
+    where
+        'rhs: 'a,
+        T: 'a;
+
+    type Difference<'a>
+        = RangeDiffIter<T>
+    where
+        'rhs: 'a,
+        T: 'a;
+
+    type Intersection<'a>
+        = RangeIntersectionIter<T>
+    where
+        'rhs: 'a,
+        T: 'a;
+
+    type SymmetricDifference<'a>
+        = SymmetricDifferenceIter<T, Once<T>, Once<T>>
+    where
+        'rhs: 'a,
+        T: 'a;
+
+    fn union<'a>(&'a self, rhs: &'rhs Range<T>) -> Self::Union<'a>
+    where
+        T: 'a,
+        'rhs: 'a,
+    {
+        RangeUnionIter::new(self.start..self.end, rhs.clone())
+    }
+
+    fn difference<'a>(&'a self, rhs: &'rhs Range<T>) -> Self::Difference<'a>
+    where
+        T: 'a,
+        'rhs: 'a,
+    {
+        RangeDiffIter::new(self.start..self.end, rhs.clone())
+    }
+
+    fn intersection<'a>(&'a self, rhs: &'rhs Range<T>) -> Self::Intersection<'a>
+    where
+        T: 'a,
+        'rhs: 'a,
+    {
+        RangeIntersectionIter::new(self, rhs)
+    }
+
+    fn symmetric_difference<'a>(&'a self, rhs: &'rhs Range<T>) -> Self::SymmetricDifference<'a>
+    where
+        T: 'a,
+        'rhs: 'a,
+    {
+        Once::new(self.start..self.end).symmetric_difference(rhs)
+    }
+
+    fn is_disjoint(&self, other: &'rhs Range<T>) -> bool {
         self.start >= other.end || self.end <= other.start
     }
-}
 
-impl<T: Copy + Ord> Subset<Range<T>> for Range<T> {
-    fn is_subset(&self, other: &Range<T>) -> bool {
+    fn is_subset(&self, other: &'rhs Range<T>) -> bool {
         self.start >= other.start && self.end <= other.end
+    }
+
+    fn is_superset(&self, other: &'rhs Range<T>) -> bool {
+        self.start <= other.start && self.end >= other.end
     }
 }
 
 #[cfg(feature = "alloc")]
 mod alloc {
     use core::ops::BitAnd;
+    use std::ops::{BitOr, BitXor, Sub};
 
     use super::*;
     use crate::{
         iter::{DifferenceIter, FromRangeIterator, IntersectionIter, UnionIter},
-        set::{RangeIter, RangeSet, ToRangeSet},
+        set::{RangeSet, ToRangeSet},
     };
 
     impl<T: Copy + Ord> ToRangeSet<T> for Range<T> {
@@ -341,47 +434,143 @@ mod alloc {
         }
     }
 
-    impl<T: Copy + Ord> Union<RangeSet<T>> for Range<T> {
-        type Output<'a>
-            = UnionIter<T, Once<T>, RangeIter<'a, T>>
+    impl<T> Set<RangeSet<T>> for Range<T>
+    where
+        T: Copy + Ord,
+    {
+        type Union<'a>
+            = UnionIter<T, Once<T>, <RangeSet<T> as IntoRangeIterator<T>>::IntoIter>
         where
             T: 'a;
 
-        fn union<'a>(&'a self, other: &'a RangeSet<T>) -> Self::Output<'a> {
-            Once::new(self.clone()).union(other.iter_ranges())
-        }
-    }
-
-    impl<T: Copy + Ord> Difference<RangeSet<T>> for Range<T> {
-        type Output<'a>
-            = DifferenceIter<T, Once<T>, RangeIter<'a, T>>
+        type Difference<'a>
+            = DifferenceIter<T, Once<T>, <RangeSet<T> as IntoRangeIterator<T>>::IntoIter>
         where
             T: 'a;
 
-        fn difference<'a>(&'a self, other: &'a RangeSet<T>) -> Self::Output<'a> {
-            Once::new(self.clone()).difference(other.iter_ranges())
-        }
-    }
-
-    impl<T: Copy + Ord> Intersection<RangeSet<T>> for Range<T> {
-        type Output<'a>
-            = IntersectionIter<T, Once<T>, RangeIter<'a, T>>
+        type Intersection<'a>
+            = IntersectionIter<T, Once<T>, <RangeSet<T> as IntoRangeIterator<T>>::IntoIter>
         where
             T: 'a;
 
-        fn intersection<'a>(&'a self, other: &'a RangeSet<T>) -> Self::Output<'a> {
-            Once::new(self.start..self.end).intersection(other)
+        type SymmetricDifference<'a>
+            = SymmetricDifferenceIter<T, Once<T>, <RangeSet<T> as IntoRangeIterator<T>>::IntoIter>
+        where
+            T: 'a;
+
+        fn union<'a>(&'a self, rhs: RangeSet<T>) -> Self::Union<'a>
+        where
+            T: 'a,
+        {
+            Once::new(self.start..self.end).union(rhs)
+        }
+
+        fn difference<'a>(&'a self, rhs: RangeSet<T>) -> Self::Difference<'a>
+        where
+            T: 'a,
+        {
+            Once::new(self.start..self.end).difference(rhs)
+        }
+
+        fn intersection<'a>(&'a self, rhs: RangeSet<T>) -> Self::Intersection<'a>
+        where
+            T: 'a,
+        {
+            Once::new(self.start..self.end).intersection(rhs)
+        }
+
+        fn symmetric_difference<'a>(&'a self, rhs: RangeSet<T>) -> Self::SymmetricDifference<'a>
+        where
+            T: 'a,
+        {
+            Once::new(self.start..self.end).symmetric_difference(rhs)
+        }
+
+        fn is_disjoint(&self, other: RangeSet<T>) -> bool {
+            self.is_disjoint(&other)
+        }
+
+        fn is_subset(&self, other: RangeSet<T>) -> bool {
+            self.is_subset(&other)
+        }
+
+        fn is_superset(&self, other: RangeSet<T>) -> bool {
+            self.is_superset(&other)
         }
     }
 
-    impl<T: Copy + Ord> Disjoint<RangeSet<T>> for Range<T> {
-        fn is_disjoint(&self, other: &RangeSet<T>) -> bool {
-            other.iter_ranges().all(|range| self.is_disjoint(&range))
-        }
-    }
+    impl<'rhs, T> Set<&'rhs RangeSet<T>> for Range<T>
+    where
+        T: Copy + Ord,
+    {
+        type Union<'a>
+            = UnionIter<T, Once<T>, <&'rhs RangeSet<T> as IntoRangeIterator<T>>::IntoIter>
+        where
+            'rhs: 'a,
+            T: 'a;
 
-    impl<T: Copy + Ord> Subset<RangeSet<T>> for Range<T> {
-        fn is_subset(&self, other: &RangeSet<T>) -> bool {
+        type Difference<'a>
+            = DifferenceIter<T, Once<T>, <&'rhs RangeSet<T> as IntoRangeIterator<T>>::IntoIter>
+        where
+            'rhs: 'a,
+            T: 'a;
+
+        type Intersection<'a>
+            = IntersectionIter<T, Once<T>, <&'rhs RangeSet<T> as IntoRangeIterator<T>>::IntoIter>
+        where
+            'rhs: 'a,
+            T: 'a;
+
+        type SymmetricDifference<'a>
+            = SymmetricDifferenceIter<
+            T,
+            Once<T>,
+            <&'rhs RangeSet<T> as IntoRangeIterator<T>>::IntoIter,
+        >
+        where
+            'rhs: 'a,
+            T: 'a;
+
+        fn union<'a>(&'a self, rhs: &'rhs RangeSet<T>) -> Self::Union<'a>
+        where
+            T: 'a,
+            'rhs: 'a,
+        {
+            Once::new(self.start..self.end).union(rhs)
+        }
+
+        fn difference<'a>(&'a self, rhs: &'rhs RangeSet<T>) -> Self::Difference<'a>
+        where
+            T: 'a,
+            'rhs: 'a,
+        {
+            Once::new(self.start..self.end).difference(rhs)
+        }
+
+        fn intersection<'a>(&'a self, rhs: &'rhs RangeSet<T>) -> Self::Intersection<'a>
+        where
+            T: 'a,
+            'rhs: 'a,
+        {
+            Once::new(self.start..self.end).intersection(rhs)
+        }
+
+        fn symmetric_difference<'a>(
+            &'a self,
+            rhs: &'rhs RangeSet<T>,
+        ) -> Self::SymmetricDifference<'a>
+        where
+            T: 'a,
+            'rhs: 'a,
+        {
+            Once::new(self.start..self.end).symmetric_difference(rhs)
+        }
+
+        fn is_disjoint(&self, other: &'rhs RangeSet<T>) -> bool {
+            Once::new(self.start..self.end).is_disjoint(other)
+        }
+
+        fn is_subset(&self, other: &'rhs RangeSet<T>) -> bool {
             if self.is_empty() {
                 // empty range is subset of any set
                 return true;
@@ -396,7 +585,7 @@ mod alloc {
                 return false;
             }
 
-            for other in other.iter_ranges() {
+            for other in other.iter() {
                 if self.start >= other.end {
                     // self is rightward of other, proceed to next other
                     continue;
@@ -407,21 +596,80 @@ mod alloc {
 
             false
         }
-    }
 
-    impl<T: Copy + Ord> BitAnd<RangeSet<T>> for Range<T> {
-        type Output = RangeSet<T>;
-
-        fn bitand(self, other: RangeSet<T>) -> Self::Output {
-            self.intersection(&other).into_set()
+        fn is_superset(&self, other: &'rhs RangeSet<T>) -> bool {
+            Once::new(self.start..self.end).is_superset(other)
         }
     }
 
-    impl<T: Copy + Ord> BitAnd<&RangeSet<T>> for Range<T> {
-        type Output = RangeSet<T>;
+    impl<T: Copy + Ord> BitOr<RangeSet<T>> for Range<T> {
+        type Output = UnionIter<T, Once<T>, <RangeSet<T> as IntoRangeIterator<T>>::IntoIter>;
 
-        fn bitand(self, other: &RangeSet<T>) -> Self::Output {
-            self.intersection(other).into_set()
+        fn bitor(self, rhs: RangeSet<T>) -> Self::Output {
+            Once::new(self.start..self.end).union(rhs)
+        }
+    }
+
+    impl<'a, T: Copy + Ord> BitOr<&'a RangeSet<T>> for Range<T> {
+        type Output = UnionIter<T, Once<T>, <&'a RangeSet<T> as IntoRangeIterator<T>>::IntoIter>;
+
+        fn bitor(self, rhs: &'a RangeSet<T>) -> Self::Output {
+            Once::new(self.start..self.end).union(rhs)
+        }
+    }
+
+    impl<T: Copy + Ord> Sub<RangeSet<T>> for Range<T> {
+        type Output = DifferenceIter<T, Once<T>, <RangeSet<T> as IntoRangeIterator<T>>::IntoIter>;
+
+        fn sub(self, rhs: RangeSet<T>) -> Self::Output {
+            Once::new(self.start..self.end).difference(rhs)
+        }
+    }
+
+    impl<'a, T: Copy + Ord> Sub<&'a RangeSet<T>> for Range<T> {
+        type Output =
+            DifferenceIter<T, Once<T>, <&'a RangeSet<T> as IntoRangeIterator<T>>::IntoIter>;
+
+        fn sub(self, rhs: &'a RangeSet<T>) -> Self::Output {
+            Once::new(self.start..self.end).difference(rhs)
+        }
+    }
+
+    impl<T: Copy + Ord> BitAnd<RangeSet<T>> for Range<T> {
+        type Output = IntersectionIter<T, Once<T>, <RangeSet<T> as IntoRangeIterator<T>>::IntoIter>;
+
+        fn bitand(self, rhs: RangeSet<T>) -> Self::Output {
+            Once::new(self.start..self.end).intersection(rhs)
+        }
+    }
+
+    impl<'a, T: Copy + Ord> BitAnd<&'a RangeSet<T>> for Range<T> {
+        type Output =
+            IntersectionIter<T, Once<T>, <&'a RangeSet<T> as IntoRangeIterator<T>>::IntoIter>;
+
+        fn bitand(self, rhs: &'a RangeSet<T>) -> Self::Output {
+            Once::new(self.start..self.end).intersection(rhs)
+        }
+    }
+
+    impl<T: Copy + Ord> BitXor<RangeSet<T>> for Range<T> {
+        type Output =
+            SymmetricDifferenceIter<T, Once<T>, <RangeSet<T> as IntoRangeIterator<T>>::IntoIter>;
+
+        fn bitxor(self, rhs: RangeSet<T>) -> Self::Output {
+            Once::new(self.start..self.end).symmetric_difference(rhs)
+        }
+    }
+
+    impl<'a, T: Copy + Ord> BitXor<&'a RangeSet<T>> for Range<T> {
+        type Output = SymmetricDifferenceIter<
+            T,
+            Once<T>,
+            <&'a RangeSet<T> as IntoRangeIterator<T>>::IntoIter,
+        >;
+
+        fn bitxor(self, rhs: &'a RangeSet<T>) -> Self::Output {
+            Once::new(self.start..self.end).symmetric_difference(rhs)
         }
     }
 }
@@ -445,21 +693,17 @@ mod tests {
 
     #[test]
     fn test_range_union_iter() {
-        assert_pairwise_ranges(TEST_DOMAIN_SIZE, |a, b| a | b, RangeUnionIter::new);
+        assert_pairwise_ranges(TEST_DOMAIN_SIZE, |a, b| a | b, |a, b| a.union(b));
     }
 
     #[test]
     fn test_range_diff_iter() {
-        assert_pairwise_ranges(TEST_DOMAIN_SIZE, |a, b| a - b, RangeDiffIter::new);
+        assert_pairwise_ranges(TEST_DOMAIN_SIZE, |a, b| a - b, |a, b| a.difference(b));
     }
 
     #[test]
     fn test_range_intersection_iter() {
-        assert_pairwise_ranges(
-            TEST_DOMAIN_SIZE,
-            |a, b| a & b,
-            |a, b| RangeIntersectionIter::new(&a, &b),
-        );
+        assert_pairwise_ranges(TEST_DOMAIN_SIZE, |a, b| a & b, |a, b| a.intersection(b));
     }
 
     #[test]

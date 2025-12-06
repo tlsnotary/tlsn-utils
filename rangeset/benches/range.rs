@@ -1,6 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
-use rangeset::{ops::Subset, set::RangeSet};
+use rangeset::{ops::Set, set::RangeSet};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut rangeset_vec = Vec::new();

@@ -23,7 +23,7 @@ fuzz_target!(|r: (Range<u8>, Range<u8>)| {
 
     let union = r1.union(&r2).into_set();
 
-    let actual_values = union.iter().collect::<Vec<_>>();
+    let actual_values = union.iter_values().collect::<Vec<_>>();
 
     assert_eq!(expected_values, actual_values);
 

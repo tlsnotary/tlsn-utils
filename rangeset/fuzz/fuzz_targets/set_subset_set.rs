@@ -12,8 +12,8 @@ fuzz_target!(|r: (SmallSet, SmallSet)| {
     let s1: RangeSet<u8> = r.0.into();
     let s2: RangeSet<u8> = r.1.into();
 
-    let h1: HashSet<u8> = HashSet::from_iter(s1.iter());
-    let h2: HashSet<u8> = HashSet::from_iter(s2.iter());
+    let h1: HashSet<u8> = HashSet::from_iter(s1.iter_values());
+    let h2: HashSet<u8> = HashSet::from_iter(s2.iter_values());
 
     assert_eq!(s1.is_subset(&s2), h1.is_subset(&h2));
 });

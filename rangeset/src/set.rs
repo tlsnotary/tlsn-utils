@@ -20,29 +20,29 @@
 //!
 //! ```
 //! use rangeset::{
-//!     ops::{Difference, Union, Subset, Disjoint},
+//!     ops::Set,
 //!     set::RangeSet,
 //! };
 //!
 //! let a = 10..20;
 //!
 //! // Difference
-//! let diff: RangeSet<_> = a.difference(&(15..25)).collect();
+//! let diff: RangeSet<_> = a.difference(15..25).collect();
 //! assert_eq!(diff, RangeSet::from([10..15]));
 //!
-//! let diff: RangeSet<_> = a.difference(&(12..15)).collect();
+//! let diff: RangeSet<_> = a.difference(12..15).collect();
 //! assert_eq!(diff, RangeSet::from([10..12, 15..20]));
 //!
 //! // Union
-//! let union: RangeSet<_> = a.union(&(15..25)).collect();
+//! let union: RangeSet<_> = a.union(15..25).collect();
 //! assert_eq!(union, RangeSet::from([10..25]));
 //!
-//! let union: RangeSet<_> = a.union(&(0..0)).collect();
+//! let union: RangeSet<_> = a.union(0..0).collect();
 //! assert_eq!(union, RangeSet::from([10..20]));
 //!
 //! // Comparison
-//! assert!(a.is_subset(&(0..30)));
-//! assert!(a.is_disjoint(&(0..10)));
+//! assert!(a.is_subset(0..30));
+//! assert!(a.is_disjoint(0..10));
 //! assert_eq!(a.clone(), RangeSet::from(a));
 //! ```
 
@@ -60,11 +60,7 @@ use crate::{
         DifferenceIter, FromRangeIterator, IntersectionIter, IntoRangeIterator, RangeIterator,
         SymmetricDifferenceIter, UnionIter,
     },
-    ops::{
-        Difference, DifferenceMut, Disjoint, Intersection, Subset, SymmetricDifference,
-        SymmetricDifferenceMut, Union, UnionMut,
-    },
-    range::Once,
+    ops::Set,
 };
 
 /// Set of values stored as ranges.
@@ -84,6 +80,39 @@ pub struct RangeSet<T> {
     /// The ranges *MUST* be sorted, non-adjacent, non-intersecting, and
     /// non-empty.
     ranges: Vec<Range<T>>,
+}
+
+/// Sorts and merges the ranges in the given vector.
+fn sort_merge<T: Copy + Ord>(ranges: &mut Vec<Range<T>>) {
+    if ranges.len() <= 1 {
+        return;
+    }
+
+    ranges.sort_unstable_by(|a, b| match a.start.cmp(&b.start) {
+        // If the ranges start at the same value, sort by the end.
+        core::cmp::Ordering::Equal => a.end.cmp(&b.end),
+        ord => ord,
+    });
+
+    // Merge ranges.
+    let mut i = 0;
+    let mut current = ranges[0].clone();
+    for j in 1..ranges.len() {
+        let candidate = ranges[j].clone();
+        if candidate.start <= current.end {
+            if candidate.end > current.end {
+                // Merge the ranges if they are adjacent or overlap.
+                current.end = candidate.end;
+            }
+        } else {
+            // Otherwise, keep the current range and start a new one.
+            ranges[i] = current;
+            i += 1;
+            current = candidate;
+        }
+    }
+    ranges[i] = current;
+    ranges.truncate(i + 1);
 }
 
 impl<T: Copy + Ord> From<Vec<Range<T>>> for RangeSet<T> {
@@ -126,6 +155,21 @@ impl<T> RangeSet<T> {
     pub fn clear(&mut self) {
         self.ranges.clear();
     }
+
+    /// Returns an iterator over the values in the set.
+    pub fn iter_values(&self) -> ValueIter<'_, T> {
+        ValueIter {
+            iter: self.ranges.iter(),
+            current: None,
+        }
+    }
+
+    /// Returns an iterator over the ranges in the set.
+    pub fn iter(&self) -> RangeIter<'_, T> {
+        RangeIter {
+            iter: self.ranges.iter(),
+        }
+    }
 }
 
 impl<T: Copy + Ord> RangeSet<T> {
@@ -135,35 +179,7 @@ impl<T: Copy + Ord> RangeSet<T> {
             .filter(|range| range.start < range.end)
             .collect();
 
-        if ranges.len() <= 1 {
-            return Self { ranges };
-        }
-
-        ranges.sort_unstable_by(|a, b| match a.start.cmp(&b.start) {
-            // If the ranges start at the same value, sort by the end.
-            core::cmp::Ordering::Equal => a.end.cmp(&b.end),
-            ord => ord,
-        });
-
-        // Merge ranges.
-        let mut i = 0;
-        let mut current = ranges[0].clone();
-        for j in 1..ranges.len() {
-            let candidate = ranges[j].clone();
-            if candidate.start <= current.end {
-                if candidate.end > current.end {
-                    // Merge the ranges if they are adjacent or overlap.
-                    current.end = candidate.end;
-                }
-            } else {
-                // Otherwise, keep the current range and start a new one.
-                ranges[i] = current;
-                i += 1;
-                current = candidate;
-            }
-        }
-        ranges[i] = current;
-        ranges.truncate(i + 1);
+        sort_merge(&mut ranges);
 
         Self { ranges }
     }
@@ -183,24 +199,9 @@ impl<T: Copy + Ord> RangeSet<T> {
         Self::new_from_iter_borrow(ranges)
     }
 
-    /// Returns an iterator over the values in the set.
-    pub fn iter(&self) -> ValueIter<'_, T> {
-        ValueIter {
-            iter: self.ranges.iter(),
-            current: None,
-        }
-    }
-
-    /// Returns an iterator over the ranges in the set.
-    pub fn iter_ranges(&self) -> RangeIter<'_, T> {
-        RangeIter {
-            iter: self.ranges.iter(),
-        }
-    }
-
     /// Returns `true` if the set contains the given value.
     pub fn contains(&self, value: &T) -> bool {
-        self.iter_ranges().seek(value).is_some()
+        self.iter().seek(value).is_some()
     }
 
     /// Returns the minimum value in the set, or `None` if the set is empty.
@@ -217,6 +218,30 @@ impl<T: Copy + Ord> RangeSet<T> {
     /// `RangeSet::max` for the maximum value in the set.
     pub fn end(&self) -> Option<T> {
         self.ranges.last().map(|range| range.end)
+    }
+
+    /// Unions in-place with the given ranges.
+    pub fn union_mut(&mut self, other: impl IntoRangeIterator<T>) {
+        self.ranges.extend(other.into_range_iter());
+        sort_merge(&mut self.ranges);
+    }
+
+    /// Differences in-place with the given ranges.
+    pub fn difference_mut(&mut self, other: impl IntoRangeIterator<T>) {
+        // TODO: optimize this.
+        *self = self.iter().difference(other).into_set();
+    }
+
+    /// Intersects in-place with the given ranges.
+    pub fn intersection_mut(&mut self, other: impl IntoRangeIterator<T>) {
+        // TODO: optimize this.
+        *self = self.iter().intersection(other).into_set();
+    }
+
+    /// Symmetric differences in-place with the given ranges.
+    pub fn symmetric_difference_mut(&mut self, other: impl IntoRangeIterator<T>) {
+        // TODO: optimize this.
+        *self = self.iter().symmetric_difference(other).into_set();
     }
 }
 
@@ -315,11 +340,22 @@ impl<T> FromRangeIterator<T> for RangeSet<T> {
     }
 }
 
+impl<T: Copy + Ord> IntoRangeIterator<T> for RangeSet<T> {
+    type IntoIter = IntoRangeIter<T>;
+
+    fn into_range_iter(self) -> Self::IntoIter {
+        IntoRangeIter {
+            pos: 0,
+            ranges: self.ranges,
+        }
+    }
+}
+
 impl<'a, T: Copy + Ord> IntoRangeIterator<T> for &'a RangeSet<T> {
     type IntoIter = RangeIter<'a, T>;
 
     fn into_range_iter(self) -> Self::IntoIter {
-        self.iter_ranges()
+        self.iter()
     }
 }
 
@@ -394,6 +430,31 @@ impl<T: Copy + Ord> PartialEq<RangeSet<T>> for Range<T> {
 impl<T: Copy + Ord> PartialEq<RangeSet<T>> for &Range<T> {
     fn eq(&self, other: &RangeSet<T>) -> bool {
         other == *self
+    }
+}
+
+/// Iterator over the ranges in [`RangeSet`].
+pub struct IntoRangeIter<T> {
+    pos: usize,
+    ranges: Vec<Range<T>>,
+}
+
+impl<T: Copy> Iterator for IntoRangeIter<T> {
+    type Item = Range<T>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let next = self.ranges.get(self.pos);
+        self.pos += 1;
+        next.cloned()
+    }
+}
+
+impl<T: Copy + Ord> RangeIterator<T> for IntoRangeIter<T> {
+    #[inline]
+    fn seek_end_ge(&mut self, n: &T) -> Option<Range<T>> {
+        self.pos = self.ranges.partition_point(|range| &range.end < n);
+        self.next()
     }
 }
 
@@ -499,230 +560,132 @@ impl<T: Copy + Ord> ToRangeSet<T> for RangeSet<T> {
     }
 }
 
-impl<T: Copy + Ord> UnionMut<Range<T>> for RangeSet<T> {
-    fn union_mut(&mut self, other: &Range<T>) {
-        if other.is_empty() {
-            return;
-        } else if self.ranges.is_empty() {
-            self.ranges.push(other.clone());
-            return;
-        }
-
-        let ranges = &mut self.ranges;
-
-        let mut i = 0;
-        let mut new_range = other.clone();
-        while i < ranges.len() {
-            // If the new_range comes before the current range without overlapping
-            if new_range.end < ranges[i].start {
-                ranges.insert(i, new_range);
-
-                return;
-            }
-            // If the new_range overlaps or is adjacent with the current range
-            else if new_range.start <= ranges[i].end {
-                // Expand new_range to include the current range
-                new_range.start = new_range.start.min(ranges[i].start);
-                new_range.end = new_range.end.max(ranges[i].end);
-                // Remove the current range as it is now included in new_range
-                ranges.remove(i);
-            }
-            // If the new_range comes after the current range
-            else {
-                i += 1;
-            }
-        }
-
-        // If the new_range comes after all the ranges, add it to the end
-        ranges.push(new_range);
-    }
-}
-
-impl<T: Copy + Ord> UnionMut<RangeSet<T>> for RangeSet<T> {
-    fn union_mut(&mut self, other: &RangeSet<T>) {
-        for range in &other.ranges {
-            self.union_mut(range);
-        }
-    }
-}
-
-impl<T: Copy + Ord> Union<Range<T>> for RangeSet<T> {
-    type Output<'a>
-        = UnionIter<T, RangeIter<'a, T>, Once<T>>
+impl<T> Set<RangeSet<T>> for RangeSet<T>
+where
+    T: Copy + Ord,
+{
+    type Union<'a>
+        = UnionIter<T, RangeIter<'a, T>, IntoRangeIter<T>>
     where
         T: 'a;
 
-    fn union<'a>(&'a self, other: &'a Range<T>) -> Self::Output<'a> {
-        self.iter_ranges().union(Once::new(other.clone()))
-    }
-}
-
-impl<T: Copy + Ord> Union<RangeSet<T>> for RangeSet<T> {
-    type Output<'a>
-        = UnionIter<T, RangeIter<'a, T>, RangeIter<'a, T>>
+    type Difference<'a>
+        = DifferenceIter<T, RangeIter<'a, T>, IntoRangeIter<T>>
     where
         T: 'a;
 
-    fn union<'a>(&'a self, other: &'a RangeSet<T>) -> Self::Output<'a> {
-        self.iter_ranges().union(other.iter_ranges())
-    }
-}
-
-impl<T: Copy + Ord> DifferenceMut<Range<T>> for RangeSet<T> {
-    fn difference_mut(&mut self, other: &Range<T>) {
-        if other.is_empty() || self.ranges.is_empty() {
-            return;
-        }
-
-        let mut i = 0;
-        let ranges = &mut self.ranges;
-        while i < ranges.len() {
-            // If the current range is entirely before other
-            if ranges[i].end <= other.start {
-                // no-op
-            }
-            // If the current range is entirely after other
-            else if ranges[i].start >= other.end {
-                // we're done
-                break;
-            }
-            // If the current range is entirely contained within other
-            else if ranges[i].is_subset(other) {
-                ranges.remove(i);
-                continue;
-            }
-            // If other is a subset of the current range
-            else if other.is_subset(&ranges[i]) {
-                if ranges[i].start == other.start {
-                    ranges[i].start = other.end;
-                } else if ranges[i].end == other.end {
-                    ranges[i].end = other.start;
-                } else {
-                    ranges.insert(i + 1, other.end..ranges[i].end);
-                    ranges[i].end = other.start;
-                }
-            } else {
-                // Trim end
-                if ranges[i].start < other.start {
-                    ranges[i].end = other.start;
-                }
-
-                // Trim start
-                if ranges[i].end > other.end {
-                    ranges[i].start = other.end;
-                }
-            }
-
-            i += 1;
-        }
-    }
-}
-
-impl<T: Copy + Ord> DifferenceMut<RangeSet<T>> for RangeSet<T> {
-    fn difference_mut(&mut self, other: &RangeSet<T>) {
-        for range in &other.ranges {
-            self.difference_mut(range);
-        }
-    }
-}
-
-impl<T: Copy + Ord> Difference<Range<T>> for RangeSet<T> {
-    type Output<'a>
-        = DifferenceIter<T, RangeIter<'a, T>, Once<T>>
+    type Intersection<'a>
+        = IntersectionIter<T, RangeIter<'a, T>, IntoRangeIter<T>>
     where
         T: 'a;
 
-    fn difference<'a>(&'a self, other: &'a Range<T>) -> Self::Output<'a> {
-        self.iter_ranges().difference(Once::new(other.clone()))
-    }
-}
-
-impl<T: Copy + Ord> Difference<RangeSet<T>> for RangeSet<T> {
-    type Output<'a>
-        = DifferenceIter<T, RangeIter<'a, T>, RangeIter<'a, T>>
+    type SymmetricDifference<'a>
+        = SymmetricDifferenceIter<T, RangeIter<'a, T>, IntoRangeIter<T>>
     where
         T: 'a;
 
-    fn difference<'a>(&'a self, other: &'a RangeSet<T>) -> Self::Output<'a> {
-        self.iter_ranges().difference(other.iter_ranges())
+    fn union<'a>(&'a self, rhs: RangeSet<T>) -> Self::Union<'a>
+    where
+        T: 'a,
+    {
+        self.iter().union(rhs)
+    }
+
+    fn difference<'a>(&'a self, rhs: RangeSet<T>) -> Self::Difference<'a>
+    where
+        T: 'a,
+    {
+        self.iter().difference(rhs)
+    }
+
+    fn intersection<'a>(&'a self, rhs: RangeSet<T>) -> Self::Intersection<'a>
+    where
+        T: 'a,
+    {
+        self.iter().intersection(rhs)
+    }
+
+    fn symmetric_difference<'a>(&'a self, rhs: RangeSet<T>) -> Self::SymmetricDifference<'a>
+    where
+        T: 'a,
+    {
+        self.iter().symmetric_difference(rhs)
+    }
+
+    fn is_disjoint(&self, other: RangeSet<T>) -> bool {
+        self.iter().is_disjoint(other)
+    }
+
+    fn is_subset(&self, other: RangeSet<T>) -> bool {
+        self.is_subset(&other)
+    }
+
+    fn is_superset(&self, other: RangeSet<T>) -> bool {
+        self.is_superset(&other)
     }
 }
 
-impl<T: Copy + Ord> Intersection<Range<T>> for RangeSet<T> {
-    type Output<'a>
-        = IntersectionIter<T, RangeIter<'a, T>, Once<T>>
+impl<'rhs, T> Set<&'rhs RangeSet<T>> for RangeSet<T>
+where
+    T: Copy + Ord,
+{
+    type Union<'a>
+        = UnionIter<T, RangeIter<'a, T>, RangeIter<'rhs, T>>
     where
+        'rhs: 'a,
         T: 'a;
 
-    fn intersection<'a>(&'a self, other: &'a Range<T>) -> Self::Output<'a> {
-        self.iter_ranges()
-            .intersection(Once::new(other.start..other.end))
-    }
-}
-
-impl<T: Copy + Ord> Intersection<RangeSet<T>> for RangeSet<T> {
-    type Output<'a>
-        = IntersectionIter<T, RangeIter<'a, T>, RangeIter<'a, T>>
+    type Difference<'a>
+        = DifferenceIter<T, RangeIter<'a, T>, RangeIter<'rhs, T>>
     where
+        'rhs: 'a,
         T: 'a;
 
-    fn intersection<'a>(&'a self, other: &'a RangeSet<T>) -> Self::Output<'a> {
-        self.iter_ranges().intersection(other)
-    }
-}
-
-impl<T: Copy + Ord> SymmetricDifferenceMut<Range<T>> for RangeSet<T> {
-    fn symmetric_difference_mut(&mut self, other: &Range<T>) {
-        let intersection = self.intersection(other).into_set();
-        self.union_mut(other);
-        self.difference_mut(&intersection);
-    }
-}
-
-impl<T: Copy + Ord> SymmetricDifferenceMut<RangeSet<T>> for RangeSet<T> {
-    fn symmetric_difference_mut(&mut self, other: &RangeSet<T>) {
-        let intersection = self.intersection(other).into_set();
-        self.union_mut(other);
-        self.difference_mut(&intersection);
-    }
-}
-
-impl<T: Copy + Ord> SymmetricDifference<Range<T>> for RangeSet<T> {
-    type Output<'a>
-        = SymmetricDifferenceIter<T, RangeIter<'a, T>, Once<T>>
+    type Intersection<'a>
+        = IntersectionIter<T, RangeIter<'a, T>, RangeIter<'rhs, T>>
     where
+        'rhs: 'a,
         T: 'a;
 
-    fn symmetric_difference<'a>(&'a self, other: &'a Range<T>) -> Self::Output<'a> {
-        self.iter_ranges()
-            .symmetric_difference(Once::new(other.start..other.end))
-    }
-}
-
-impl<T: Copy + Ord> SymmetricDifference<RangeSet<T>> for RangeSet<T> {
-    type Output<'a>
-        = SymmetricDifferenceIter<T, RangeIter<'a, T>, RangeIter<'a, T>>
+    type SymmetricDifference<'a>
+        = SymmetricDifferenceIter<T, RangeIter<'a, T>, RangeIter<'rhs, T>>
     where
+        'rhs: 'a,
         T: 'a;
 
-    fn symmetric_difference<'a>(&'a self, other: &'a RangeSet<T>) -> Self::Output<'a> {
-        self.iter_ranges().symmetric_difference(other.iter_ranges())
+    fn union<'a>(&'a self, rhs: &'rhs RangeSet<T>) -> Self::Union<'a>
+    where
+        'rhs: 'a,
+    {
+        self.iter().union(rhs)
     }
-}
 
-impl<T: Copy + Ord> Subset<Range<T>> for RangeSet<T> {
-    fn is_subset(&self, other: &Range<T>) -> bool {
-        if let Some(range) = self.ranges.first() {
-            range.start >= other.start && range.end <= other.end
-        } else {
-            // empty set is subset of any set
-            true
-        }
+    fn difference<'a>(&'a self, rhs: &'rhs RangeSet<T>) -> Self::Difference<'a>
+    where
+        'rhs: 'a,
+    {
+        self.iter().difference(rhs)
     }
-}
 
-impl<T: Copy + Ord> Subset<RangeSet<T>> for RangeSet<T> {
-    fn is_subset(&self, other: &RangeSet<T>) -> bool {
+    fn intersection<'a>(&'a self, rhs: &'rhs RangeSet<T>) -> Self::Intersection<'a>
+    where
+        'rhs: 'a,
+    {
+        self.iter().intersection(rhs)
+    }
+
+    fn symmetric_difference<'a>(&'a self, rhs: &'rhs RangeSet<T>) -> Self::SymmetricDifference<'a>
+    where
+        'rhs: 'a,
+    {
+        self.iter().symmetric_difference(rhs)
+    }
+
+    fn is_disjoint(&self, other: &'rhs RangeSet<T>) -> bool {
+        self.iter().is_disjoint(other)
+    }
+
+    fn is_subset(&self, other: &'rhs RangeSet<T>) -> bool {
         if self.ranges.is_empty() {
             // empty set is subset of any set
             return true;
@@ -738,251 +701,239 @@ impl<T: Copy + Ord> Subset<RangeSet<T>> for RangeSet<T> {
             return false;
         }
 
-        self.iter_ranges().is_subset(other.iter_ranges())
+        self.iter().is_subset(other)
+    }
+
+    fn is_superset(&self, other: &'rhs RangeSet<T>) -> bool {
+        self.iter().is_superset(other)
     }
 }
 
-impl<T: Copy + Ord> Disjoint<RangeSet<T>> for RangeSet<T> {
-    fn is_disjoint(&self, other: &RangeSet<T>) -> bool {
-        self.iter_ranges().is_disjoint(other.iter_ranges())
+impl<T> Set<Range<T>> for RangeSet<T>
+where
+    T: Copy + Ord,
+{
+    type Union<'a>
+        = UnionIter<T, RangeIter<'a, T>, <Range<T> as IntoRangeIterator<T>>::IntoIter>
+    where
+        T: 'a;
+
+    type Difference<'a>
+        = DifferenceIter<T, RangeIter<'a, T>, <Range<T> as IntoRangeIterator<T>>::IntoIter>
+    where
+        T: 'a;
+
+    type Intersection<'a>
+        = IntersectionIter<T, RangeIter<'a, T>, <Range<T> as IntoRangeIterator<T>>::IntoIter>
+    where
+        T: 'a;
+
+    type SymmetricDifference<'a>
+        = SymmetricDifferenceIter<T, RangeIter<'a, T>, <Range<T> as IntoRangeIterator<T>>::IntoIter>
+    where
+        T: 'a;
+
+    fn union<'a>(&'a self, rhs: Range<T>) -> Self::Union<'a>
+    where
+        T: 'a,
+    {
+        self.iter().union(rhs)
+    }
+
+    fn difference<'a>(&'a self, rhs: Range<T>) -> Self::Difference<'a>
+    where
+        T: 'a,
+    {
+        self.iter().difference(rhs)
+    }
+
+    fn intersection<'a>(&'a self, rhs: Range<T>) -> Self::Intersection<'a>
+    where
+        T: 'a,
+    {
+        self.iter().intersection(rhs)
+    }
+
+    fn symmetric_difference<'a>(&'a self, rhs: Range<T>) -> Self::SymmetricDifference<'a>
+    where
+        T: 'a,
+    {
+        self.iter().symmetric_difference(rhs)
+    }
+
+    fn is_disjoint(&self, other: Range<T>) -> bool {
+        self.iter().is_disjoint(other)
+    }
+
+    fn is_subset(&self, other: Range<T>) -> bool {
+        self.is_subset(&other)
+    }
+
+    fn is_superset(&self, other: Range<T>) -> bool {
+        self.is_superset(&other)
     }
 }
 
-impl<T: Copy + Ord> Disjoint<Range<T>> for RangeSet<T> {
-    fn is_disjoint(&self, other: &Range<T>) -> bool {
-        other.is_disjoint(self)
+impl<'rhs, T> Set<&'rhs Range<T>> for RangeSet<T>
+where
+    T: Copy + Ord,
+{
+    type Union<'a>
+        = UnionIter<T, RangeIter<'a, T>, <Range<T> as IntoRangeIterator<T>>::IntoIter>
+    where
+        'rhs: 'a,
+        T: 'a;
+
+    type Difference<'a>
+        = DifferenceIter<T, RangeIter<'a, T>, <Range<T> as IntoRangeIterator<T>>::IntoIter>
+    where
+        'rhs: 'a,
+        T: 'a;
+
+    type Intersection<'a>
+        = IntersectionIter<T, RangeIter<'a, T>, <Range<T> as IntoRangeIterator<T>>::IntoIter>
+    where
+        'rhs: 'a,
+        T: 'a;
+
+    type SymmetricDifference<'a>
+        = SymmetricDifferenceIter<T, RangeIter<'a, T>, <Range<T> as IntoRangeIterator<T>>::IntoIter>
+    where
+        'rhs: 'a,
+        T: 'a;
+
+    fn union<'a>(&'a self, rhs: &'rhs Range<T>) -> Self::Union<'a>
+    where
+        'rhs: 'a,
+        T: 'a,
+    {
+        self.iter().union(rhs)
+    }
+
+    fn difference<'a>(&'a self, rhs: &'rhs Range<T>) -> Self::Difference<'a>
+    where
+        'rhs: 'a,
+    {
+        self.iter().difference(rhs)
+    }
+
+    fn intersection<'a>(&'a self, rhs: &'rhs Range<T>) -> Self::Intersection<'a>
+    where
+        'rhs: 'a,
+    {
+        self.iter().intersection(rhs)
+    }
+
+    fn symmetric_difference<'a>(&'a self, rhs: &'rhs Range<T>) -> Self::SymmetricDifference<'a>
+    where
+        'rhs: 'a,
+    {
+        self.iter().symmetric_difference(rhs)
+    }
+
+    fn is_disjoint(&self, other: &'rhs Range<T>) -> bool {
+        self.iter().is_disjoint(other)
+    }
+
+    fn is_subset(&self, other: &'rhs Range<T>) -> bool {
+        if let Some(range) = self.ranges.first() {
+            range.start >= other.start && range.end <= other.end
+        } else {
+            // empty set is subset of any set
+            true
+        }
+    }
+
+    fn is_superset(&self, other: &'rhs Range<T>) -> bool {
+        self.iter().is_superset(other)
     }
 }
 
-impl<T: Copy + Ord> BitOrAssign<Range<T>> for RangeSet<T> {
-    fn bitor_assign(&mut self, other: Range<T>) {
-        self.union_mut(&other);
-    }
-}
-
-impl<T: Copy + Ord> BitOrAssign<&Range<T>> for RangeSet<T> {
-    fn bitor_assign(&mut self, other: &Range<T>) {
+impl<I, T> BitOrAssign<I> for RangeSet<T>
+where
+    I: IntoRangeIterator<T>,
+    T: Copy + Ord,
+{
+    fn bitor_assign(&mut self, other: I) {
         self.union_mut(other);
     }
 }
 
-impl<T: Copy + Ord> BitOr<Range<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
+impl<I, T> BitOr<I> for RangeSet<T>
+where
+    I: IntoRangeIterator<T>,
+    T: Copy + Ord,
+{
+    type Output = UnionIter<T, IntoRangeIter<T>, I::IntoIter>;
 
-    fn bitor(mut self, other: Range<T>) -> Self::Output {
-        self.union_mut(&other);
-        self
+    fn bitor(self, other: I) -> Self::Output {
+        self.into_range_iter().union(other)
     }
 }
 
-impl<T: Copy + Ord> BitOr<&Range<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
+impl<I, T> BitAnd<I> for RangeSet<T>
+where
+    I: IntoRangeIterator<T>,
+    T: Copy + Ord,
+{
+    type Output = IntersectionIter<T, IntoRangeIter<T>, I::IntoIter>;
 
-    fn bitor(mut self, other: &Range<T>) -> Self::Output {
-        self.union_mut(other);
-        self
+    fn bitand(self, other: I) -> Self::Output {
+        self.into_range_iter().intersection(other)
     }
 }
 
-impl<T: Copy + Ord> BitOrAssign<RangeSet<T>> for RangeSet<T> {
-    fn bitor_assign(&mut self, other: RangeSet<T>) {
-        self.union_mut(&other);
+impl<I, T> BitAndAssign<I> for RangeSet<T>
+where
+    I: IntoRangeIterator<T>,
+    T: Copy + Ord,
+{
+    fn bitand_assign(&mut self, other: I) {
+        self.intersection_mut(other);
     }
 }
 
-impl<T: Copy + Ord> BitOrAssign<&RangeSet<T>> for RangeSet<T> {
-    fn bitor_assign(&mut self, other: &RangeSet<T>) {
-        self.union_mut(other);
+impl<I, T> SubAssign<I> for RangeSet<T>
+where
+    I: IntoRangeIterator<T>,
+    T: Copy + Ord,
+{
+    fn sub_assign(&mut self, other: I) {
+        self.difference_mut(other);
     }
 }
 
-impl<T: Copy + Ord> BitOr<RangeSet<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
+impl<I, T> Sub<I> for RangeSet<T>
+where
+    I: IntoRangeIterator<T>,
+    T: Copy + Ord,
+{
+    type Output = DifferenceIter<T, IntoRangeIter<T>, I::IntoIter>;
 
-    fn bitor(mut self, other: RangeSet<T>) -> Self::Output {
-        self.union_mut(&other);
-        self
+    fn sub(self, other: I) -> Self::Output {
+        self.into_range_iter().difference(other)
     }
 }
 
-impl<T: Copy + Ord> BitOr<&RangeSet<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
+impl<I, T> BitXor<I> for RangeSet<T>
+where
+    I: IntoRangeIterator<T>,
+    T: Copy + Ord,
+{
+    type Output = SymmetricDifferenceIter<T, IntoRangeIter<T>, I::IntoIter>;
 
-    fn bitor(mut self, other: &RangeSet<T>) -> Self::Output {
-        self.union_mut(other);
-        self
+    fn bitxor(self, other: I) -> Self::Output {
+        self.into_range_iter().symmetric_difference(other)
     }
 }
 
-impl<T: Copy + Ord> BitAnd<Range<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn bitand(self, other: Range<T>) -> Self::Output {
-        other.intersection(&self).into_set()
-    }
-}
-
-impl<T: Copy + Ord> BitAnd<&Range<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn bitand(self, other: &Range<T>) -> Self::Output {
-        other.intersection(&self).into_set()
-    }
-}
-
-impl<T: Copy + Ord> BitAndAssign<RangeSet<T>> for RangeSet<T> {
-    fn bitand_assign(&mut self, other: RangeSet<T>) {
-        *self = self.intersection(&other).into_set();
-    }
-}
-
-impl<T: Copy + Ord> BitAndAssign<&RangeSet<T>> for RangeSet<T> {
-    fn bitand_assign(&mut self, other: &RangeSet<T>) {
-        *self = self.intersection(other).into_set();
-    }
-}
-
-impl<T: Copy + Ord> BitAnd<RangeSet<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn bitand(self, other: RangeSet<T>) -> Self::Output {
-        self.intersection(&other).into_set()
-    }
-}
-
-impl<T: Copy + Ord> BitAnd<&RangeSet<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn bitand(self, other: &RangeSet<T>) -> Self::Output {
-        self.intersection(other).into_set()
-    }
-}
-
-impl<T: Copy + Ord> BitAndAssign<Range<T>> for RangeSet<T> {
-    fn bitand_assign(&mut self, other: Range<T>) {
-        *self = self.intersection(&other).into_set();
-    }
-}
-
-impl<T: Copy + Ord> BitAndAssign<&Range<T>> for RangeSet<T> {
-    fn bitand_assign(&mut self, other: &Range<T>) {
-        *self = self.intersection(other).into_set();
-    }
-}
-
-impl<T: Copy + Ord> SubAssign<Range<T>> for RangeSet<T> {
-    fn sub_assign(&mut self, rhs: Range<T>) {
-        self.difference_mut(&rhs);
-    }
-}
-
-impl<T: Copy + Ord> SubAssign<&Range<T>> for RangeSet<T> {
-    fn sub_assign(&mut self, rhs: &Range<T>) {
-        self.difference_mut(rhs);
-    }
-}
-
-impl<T: Copy + Ord> Sub<Range<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn sub(mut self, rhs: Range<T>) -> Self::Output {
-        self.difference_mut(&rhs);
-        self
-    }
-}
-
-impl<T: Copy + Ord> Sub<&Range<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn sub(mut self, rhs: &Range<T>) -> Self::Output {
-        self.difference_mut(rhs);
-        self
-    }
-}
-
-impl<T: Copy + Ord> SubAssign<RangeSet<T>> for RangeSet<T> {
-    fn sub_assign(&mut self, rhs: RangeSet<T>) {
-        self.difference_mut(&rhs);
-    }
-}
-
-impl<T: Copy + Ord> SubAssign<&RangeSet<T>> for RangeSet<T> {
-    fn sub_assign(&mut self, rhs: &RangeSet<T>) {
-        self.difference_mut(rhs);
-    }
-}
-
-impl<T: Copy + Ord> Sub<RangeSet<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn sub(mut self, rhs: RangeSet<T>) -> Self::Output {
-        self.difference_mut(&rhs);
-        self
-    }
-}
-
-impl<T: Copy + Ord> Sub<&RangeSet<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn sub(mut self, rhs: &RangeSet<T>) -> Self::Output {
-        self.difference_mut(rhs);
-        self
-    }
-}
-
-impl<T: Copy + Ord> BitXor<Range<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn bitxor(mut self, rhs: Range<T>) -> Self::Output {
-        self.symmetric_difference_mut(&rhs);
-        self
-    }
-}
-
-impl<T: Copy + Ord> BitXor<&Range<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn bitxor(mut self, rhs: &Range<T>) -> Self::Output {
-        self.symmetric_difference_mut(rhs);
-        self
-    }
-}
-
-impl<T: Copy + Ord> BitXor<RangeSet<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn bitxor(mut self, rhs: RangeSet<T>) -> Self::Output {
-        self.symmetric_difference_mut(&rhs);
-        self
-    }
-}
-
-impl<T: Copy + Ord> BitXor<&RangeSet<T>> for RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn bitxor(mut self, rhs: &RangeSet<T>) -> Self::Output {
-        self.symmetric_difference_mut(rhs);
-        self
-    }
-}
-
-impl<T: Copy + Ord> BitXor<RangeSet<T>> for &RangeSet<T> {
-    type Output = RangeSet<T>;
-
-    fn bitxor(self, rhs: RangeSet<T>) -> Self::Output {
-        self.symmetric_difference(&rhs).into_set()
-    }
-}
-
-impl<T: Copy + Ord> BitXorAssign<RangeSet<T>> for RangeSet<T> {
-    fn bitxor_assign(&mut self, rhs: RangeSet<T>) {
-        self.symmetric_difference_mut(&rhs);
-    }
-}
-
-impl<T: Copy + Ord> BitXorAssign<&RangeSet<T>> for RangeSet<T> {
-    fn bitxor_assign(&mut self, rhs: &RangeSet<T>) {
-        self.symmetric_difference_mut(rhs);
+impl<I, T> BitXorAssign<I> for RangeSet<T>
+where
+    I: IntoRangeIterator<T>,
+    T: Copy + Ord,
+{
+    fn bitxor_assign(&mut self, other: I) {
+        self.symmetric_difference_mut(other);
     }
 }
 
@@ -1000,7 +951,7 @@ mod tests {
         for set_ref in Universe::new(TEST_DOMAIN_SIZE).iter_sets() {
             let expected = set_ref.iter_ranges().flatten().collect::<Vec<_>>();
             let set = RangeSet::from_range_iter(set_ref);
-            let values = set.iter().collect::<Vec<_>>();
+            let values = set.iter_values().collect::<Vec<_>>();
             assert_eq!(values, expected);
         }
     }
@@ -1010,7 +961,7 @@ mod tests {
         for set_ref in Universe::new(TEST_DOMAIN_SIZE).iter_sets() {
             let expected = set_ref.iter_ranges().collect::<Vec<_>>();
             let set = RangeSet::from_range_iter(set_ref);
-            let values = set.iter_ranges().collect::<Vec<_>>();
+            let values = set.iter().collect::<Vec<_>>();
             assert_eq!(values, expected);
         }
     }
@@ -1021,10 +972,10 @@ mod tests {
             for i in 0..TEST_DOMAIN_SIZE {
                 let mut a = RangeSet::from_range_iter(set_ref);
                 let b = a.split_off(&i);
-                for n in a.iter() {
+                for n in a.iter_values() {
                     assert!(n < i, "{n} should be less than {i}");
                 }
-                for n in b.iter() {
+                for n in b.iter_values() {
                     assert!(n >= i, "{n} should be greater than or equal to {i}");
                 }
             }
@@ -1038,7 +989,7 @@ mod tests {
             let mut set: RangeSet<usize> = RangeSet::from_range_iter(set_ref);
             set.shift_left(&1);
             set_ref.shift_left(1);
-            for (a, b) in set.iter_ranges().zip(set_ref.iter_ranges()) {
+            for (a, b) in set.iter().zip(set_ref.iter_ranges()) {
                 assert_eq!(a, b);
             }
         }
@@ -1050,7 +1001,7 @@ mod tests {
             let mut set: RangeSet<usize> = RangeSet::from_range_iter(set_ref);
             set.shift_right(&1);
             set_ref.shift_right(1);
-            for (a, b) in set.iter_ranges().zip(set_ref.iter_ranges()) {
+            for (a, b) in set.iter().zip(set_ref.iter_ranges()) {
                 assert_eq!(a, b);
             }
         }
@@ -1088,7 +1039,7 @@ mod tests {
         let index = RangeSet::from([(0..3), (5..8)]);
 
         assert_eq!(
-            data.index(&index).fold(Vec::default(), |mut vec, slice| {
+            data.index(index).fold(Vec::default(), |mut vec, slice| {
                 vec.extend_from_slice(slice);
                 vec
             }),
@@ -1102,7 +1053,7 @@ mod tests {
         let index = RangeSet::from([]);
 
         assert_eq!(
-            data.index(&index).flatten().copied().collect::<Vec<_>>(),
+            data.index(index).flatten().copied().collect::<Vec<_>>(),
             vec![]
         );
     }
@@ -1113,6 +1064,6 @@ mod tests {
         let data = &[1, 2, 3, 4, 5, 6, 7, 8, 9];
         let index = RangeSet::from([(0..3), (5..8), (10..12)]);
 
-        data.index(&index).for_each(drop);
+        data.index(index).for_each(drop);
     }
 }

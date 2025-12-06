@@ -9,7 +9,9 @@ use rangeset_fuzz::{SmallSet, assert_invariants};
 use rangeset::prelude::*;
 
 fn expected_difference(a: RangeSet<u8>, b: Range<u8>) -> Vec<u8> {
-    a.iter().filter(|x| !b.contains(x)).collect::<Vec<_>>()
+    a.iter_values()
+        .filter(|x| !b.contains(x))
+        .collect::<Vec<_>>()
 }
 
 fuzz_target!(|r: (SmallSet, Range<u8>)| {
@@ -21,7 +23,7 @@ fuzz_target!(|r: (SmallSet, Range<u8>)| {
 
     let diff = set.difference(&range).into_set();
 
-    let actual_values = diff.iter().collect::<Vec<_>>();
+    let actual_values = diff.iter_values().collect::<Vec<_>>();
 
     assert_eq!(expected_values, actual_values);
 

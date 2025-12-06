@@ -13,10 +13,10 @@ fuzz_target!(|r: (Range<u8>, SmallSet)| {
     let s2: RangeSet<u8> = r.1.into();
 
     let h1: HashSet<u8> = HashSet::from_iter(s1.clone());
-    let h2: HashSet<u8> = HashSet::from_iter(s2.iter());
+    let h2: HashSet<u8> = HashSet::from_iter(s2.iter_values());
 
     let intersection = s1.intersection(&s2).into_set();
-    let h3: HashSet<u8> = HashSet::from_iter(intersection.iter());
+    let h3: HashSet<u8> = HashSet::from_iter(intersection.iter_values());
 
     assert_eq!(h3, h1.intersection(&h2).copied().collect::<HashSet<_>>());
 
