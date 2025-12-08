@@ -82,11 +82,17 @@ pub struct RangeSet<T> {
     ranges: Vec<Range<T>>,
 }
 
-/// Sorts and merges the ranges in the given vector.
+/// Sorts and merges the ranges in the given vector. This function assumes the
+/// vector does not contain empty ranges.
 fn sort_merge<T: Copy + Ord>(ranges: &mut Vec<Range<T>>) {
     if ranges.len() <= 1 {
         return;
     }
+
+    debug_assert!(
+        ranges.iter().all(|range| !range.is_empty()),
+        "vector contains empty ranges"
+    );
 
     ranges.sort_unstable_by(|a, b| match a.start.cmp(&b.start) {
         // If the ranges start at the same value, sort by the end.
