@@ -24,21 +24,25 @@
 //!     set::RangeSet,
 //! };
 //!
+//! // Create a set from an iterator of unsanitized ranges.
+//! let set = RangeSet::from_iter([0..1, 4..5, 3..4, 0..0, 2..1].into_iter());
+//! assert_eq!(set, RangeSet::from([0..1, 3..5]));
+//!
 //! let a = 10..20;
 //!
 //! // Difference
 //! let diff: RangeSet<_> = a.difference(15..25).collect();
-//! assert_eq!(diff, RangeSet::from([10..15]));
+//! assert_eq!(diff, RangeSet::from(10..15));
 //!
 //! let diff: RangeSet<_> = a.difference(12..15).collect();
 //! assert_eq!(diff, RangeSet::from([10..12, 15..20]));
 //!
 //! // Union
 //! let union: RangeSet<_> = a.union(15..25).collect();
-//! assert_eq!(union, RangeSet::from([10..25]));
+//! assert_eq!(union, RangeSet::from(10..25));
 //!
 //! let union: RangeSet<_> = a.union(0..0).collect();
-//! assert_eq!(union, RangeSet::from([10..20]));
+//! assert_eq!(union, RangeSet::from(10..20));
 //!
 //! // Comparison
 //! assert!(a.is_subset(0..30));
@@ -343,6 +347,24 @@ impl<T> FromRangeIterator<T> for RangeSet<T> {
         Self {
             ranges: iter.into_range_iter().collect(),
         }
+    }
+}
+
+impl<T> IntoIterator for RangeSet<T> {
+    type Item = Range<T>;
+    type IntoIter = std::vec::IntoIter<Range<T>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.ranges.into_iter()
+    }
+}
+
+impl<'a, T: Copy> IntoIterator for &'a RangeSet<T> {
+    type Item = Range<T>;
+    type IntoIter = RangeIter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 
