@@ -1,14 +1,19 @@
 //! Adapted from <https://github.com/rust-lang/futures-rs/blob/master/futures-util/src/io/split.rs>
 //! to support sync operations.
 
-use futures_io::{AsyncRead, AsyncWrite, IoSlice, IoSliceMut};
-use futures_util::{FutureExt, lock::BiLock};
+use futures::{
+    AsyncRead, AsyncWrite,
+    io::{IoSlice, IoSliceMut},
+    lock::BiLock,
+};
 use std::{
     fmt,
     io::{self, Read, Write},
     pin::Pin,
-    task::{Context, Poll, Waker, ready},
+    task::{Context, Poll, ready},
 };
+
+use crate::SimplexStream;
 
 /// The readable half of an object.
 #[derive(Debug)]
@@ -117,33 +122,35 @@ impl<W: AsyncWrite> AsyncWrite for WriteHalf<W> {
 
 impl<R: Read + Unpin> Read for ReadHalf<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut cx = Context::from_waker(Waker::noop());
-        let Poll::Ready(mut handle) = self.handle.lock().poll_unpin(&mut cx) else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::WouldBlock,
-                "unable to acquire lock",
-            ));
-        };
-
+        let mut handle = futures::executor::block_on(self.handle.lock());
         handle.as_pin_mut().read(buf)
     }
 }
 
 impl<W: Write + Unpin> Write for WriteHalf<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut cx = Context::from_waker(Waker::noop());
-        let Poll::Ready(mut handle) = self.handle.lock().poll_unpin(&mut cx) else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::WouldBlock,
-                "unable to acquire lock",
-            ));
-        };
-
+        let mut handle = futures::executor::block_on(self.handle.lock());
         handle.as_pin_mut().write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+impl ReadHalf<SimplexStream> {
+    /// Returns the number of bytes that can be read.
+    pub fn remaining(&self) -> usize {
+        let handle = futures::executor::block_on(self.handle.lock());
+        handle.remaining()
+    }
+}
+
+impl WriteHalf<SimplexStream> {
+    /// Returns the number of bytes that can be written.
+    pub fn remaining_mut(&self) -> usize {
+        let handle = futures::executor::block_on(self.handle.lock());
+        handle.remaining_mut()
     }
 }
 

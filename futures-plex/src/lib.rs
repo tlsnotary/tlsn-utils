@@ -7,7 +7,7 @@ use std::{
 };
 
 use bytes::{Buf, BytesMut};
-use futures_io::{AsyncRead, AsyncWrite};
+use futures::{AsyncRead, AsyncWrite};
 
 mod half;
 pub use half::{ReadHalf, WriteHalf};
@@ -30,7 +30,7 @@ pub use half::{ReadHalf, WriteHalf};
 ///
 /// ```
 /// # async fn ex() -> std::io::Result<()> {
-/// # use futures_util::{AsyncReadExt, AsyncWriteExt};
+/// # use futures::{AsyncReadExt, AsyncWriteExt};
 /// let (mut client, mut server) = futures_plex::duplex(64);
 ///
 /// client.write_all(b"ping").await?;
@@ -52,6 +52,18 @@ pub struct DuplexStream {
     write: WriteHalf<SimplexStream>,
 }
 
+impl DuplexStream {
+    /// Returns the number of bytes that can be read.
+    pub fn remaining(&self) -> usize {
+        self.read.remaining()
+    }
+
+    /// Returns the number of bytes that can be written.
+    pub fn remaining_mut(&self) -> usize {
+        self.write.remaining_mut()
+    }
+}
+
 /// A unidirectional pipe to read and write bytes in memory.
 ///
 /// It can be constructed by [`simplex`] function which will create a pair of
@@ -62,7 +74,7 @@ pub struct DuplexStream {
 ///
 /// ```
 /// # async fn ex() -> std::io::Result<()> {
-/// # use futures_util::{AsyncReadExt, AsyncWriteExt};
+/// # use futures::{AsyncReadExt, AsyncWriteExt};
 /// let (mut receiver, mut sender) = futures_plex::simplex(64);
 ///
 /// sender.write_all(b"ping").await?;
@@ -200,7 +212,7 @@ impl Write for DuplexStream {
 ///
 /// ```
 /// # async fn ex() -> std::io::Result<()> {
-/// # use futures_util::{AsyncReadExt, AsyncWriteExt};
+/// # use futures::{AsyncReadExt, AsyncWriteExt};
 /// let (reader, writer) = futures_plex::simplex(64);
 /// let mut simplex_stream = reader.reunite(writer).unwrap();
 /// simplex_stream.write_all(b"hello").await?;
@@ -230,6 +242,16 @@ impl SimplexStream {
             read_waker: None,
             write_waker: None,
         }
+    }
+
+    /// Returns the number of bytes that can be read from this buffer.
+    pub fn remaining(&self) -> usize {
+        self.buffer.remaining()
+    }
+
+    /// Returns the number of bytes that can be written into this buffer.
+    pub fn remaining_mut(&self) -> usize {
+        self.max_buf_size - self.buffer.remaining()
     }
 
     fn close_write(&mut self) {
