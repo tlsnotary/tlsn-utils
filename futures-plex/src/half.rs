@@ -8,7 +8,7 @@ use futures::{
 };
 use std::{
     fmt,
-    io::{self, Read, Write},
+    io::{self},
     pin::Pin,
     task::{Context, Poll, ready},
 };
@@ -117,24 +117,6 @@ impl<W: AsyncWrite> AsyncWrite for WriteHalf<W> {
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         lock_and_then(&self.handle, cx, |l, cx| l.poll_close(cx))
-    }
-}
-
-impl<R: Read + Unpin> Read for ReadHalf<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut handle = futures::executor::block_on(self.handle.lock());
-        handle.as_pin_mut().read(buf)
-    }
-}
-
-impl<W: Write + Unpin> Write for WriteHalf<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut handle = futures::executor::block_on(self.handle.lock());
-        handle.as_pin_mut().write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
     }
 }
 

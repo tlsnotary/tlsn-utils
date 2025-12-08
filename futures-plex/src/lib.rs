@@ -7,7 +7,7 @@ use std::{
 };
 
 use bytes::{Buf, BytesMut};
-use futures::{AsyncRead, AsyncWrite};
+use futures::{AsyncRead, AsyncWrite, future::poll_fn};
 
 mod half;
 pub use half::{ReadHalf, WriteHalf};
@@ -182,17 +182,19 @@ impl AsyncWrite for DuplexStream {
 
 impl Read for DuplexStream {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        Read::read(&mut self.read, buf)
+        let fut = poll_fn(|cx| AsyncRead::poll_read(Pin::new(self), cx, buf));
+        futures::executor::block_on(fut)
     }
 }
 
 impl Write for DuplexStream {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        Write::write(&mut self.write, buf)
+        let fut = poll_fn(|cx| AsyncWrite::poll_write(Pin::new(self), cx, buf));
+        futures::executor::block_on(fut)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        Write::flush(&mut self.write)
+        Ok(())
     }
 }
 
@@ -383,40 +385,15 @@ impl AsyncWrite for SimplexStream {
 
 impl Read for SimplexStream {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if self.buffer.has_remaining() {
-            let len = self.buffer.remaining().min(buf.len());
-            buf[..len].copy_from_slice(&self.buffer[..len]);
-            self.buffer.advance(len);
-            if len > 0 {
-                // The passed `buf` might have been empty, don't wake up if
-                // no bytes have been moved.
-                if let Some(waker) = self.write_waker.take() {
-                    waker.wake();
-                }
-            }
-            Ok(len)
-        } else {
-            Ok(0)
-        }
+        let fut = poll_fn(|cx| AsyncRead::poll_read(Pin::new(self), cx, buf));
+        futures::executor::block_on(fut)
     }
 }
 
 impl Write for SimplexStream {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if self.is_closed {
-            return Err(std::io::ErrorKind::BrokenPipe.into());
-        }
-        let avail = self.max_buf_size - self.buffer.len();
-        if avail == 0 {
-            return Ok(0);
-        }
-
-        let len = buf.len().min(avail);
-        self.buffer.extend_from_slice(&buf[..len]);
-        if let Some(waker) = self.read_waker.take() {
-            waker.wake();
-        }
-        Ok(len)
+        let fut = poll_fn(|cx| AsyncWrite::poll_write(Pin::new(self), cx, buf));
+        futures::executor::block_on(fut)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
