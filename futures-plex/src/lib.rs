@@ -1,16 +1,16 @@
 #![doc = include_str!("../README.md")]
 
 use std::{
+    io::{Read, Write},
     pin::Pin,
     task::{self, Poll, Waker},
 };
 
 use bytes::{Buf, BytesMut};
-use futures_io::{AsyncRead, AsyncWrite};
-use futures_util::{
-    AsyncReadExt,
-    io::{ReadHalf, WriteHalf},
-};
+use futures::{AsyncRead, AsyncWrite, future::poll_fn};
+
+mod half;
+pub use half::{ReadHalf, WriteHalf};
 
 /// A bidirectional pipe to read and write bytes in memory.
 ///
@@ -30,7 +30,7 @@ use futures_util::{
 ///
 /// ```
 /// # async fn ex() -> std::io::Result<()> {
-/// # use futures_util::{AsyncReadExt, AsyncWriteExt};
+/// # use futures::{AsyncReadExt, AsyncWriteExt};
 /// let (mut client, mut server) = futures_plex::duplex(64);
 ///
 /// client.write_all(b"ping").await?;
@@ -52,6 +52,18 @@ pub struct DuplexStream {
     write: WriteHalf<SimplexStream>,
 }
 
+impl DuplexStream {
+    /// Returns the number of bytes that can be read.
+    pub fn remaining(&self) -> usize {
+        self.read.remaining()
+    }
+
+    /// Returns the number of bytes that can be written.
+    pub fn remaining_mut(&self) -> usize {
+        self.write.remaining_mut()
+    }
+}
+
 /// A unidirectional pipe to read and write bytes in memory.
 ///
 /// It can be constructed by [`simplex`] function which will create a pair of
@@ -62,7 +74,7 @@ pub struct DuplexStream {
 ///
 /// ```
 /// # async fn ex() -> std::io::Result<()> {
-/// # use futures_util::{AsyncReadExt, AsyncWriteExt};
+/// # use futures::{AsyncReadExt, AsyncWriteExt};
 /// let (mut receiver, mut sender) = futures_plex::simplex(64);
 ///
 /// sender.write_all(b"ping").await?;
@@ -102,8 +114,8 @@ pub struct SimplexStream {
 /// The `max_buf_size` argument is the maximum amount of bytes that can be
 /// written to a side before the write returns `Poll::Pending`.
 pub fn duplex(max_buf_size: usize) -> (DuplexStream, DuplexStream) {
-    let (read_0, write_0) = SimplexStream::new_unsplit(max_buf_size).split();
-    let (read_1, write_1) = SimplexStream::new_unsplit(max_buf_size).split();
+    let (read_0, write_0) = half::split(SimplexStream::new_unsplit(max_buf_size));
+    let (read_1, write_1) = half::split(SimplexStream::new_unsplit(max_buf_size));
 
     (
         DuplexStream {
@@ -168,6 +180,24 @@ impl AsyncWrite for DuplexStream {
     }
 }
 
+impl Read for DuplexStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let fut = poll_fn(|cx| AsyncRead::poll_read(Pin::new(self), cx, buf));
+        futures::executor::block_on(fut)
+    }
+}
+
+impl Write for DuplexStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let fut = poll_fn(|cx| AsyncWrite::poll_write(Pin::new(self), cx, buf));
+        futures::executor::block_on(fut)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 // ===== impl SimplexStream =====
 
 /// Creates unidirectional buffer that acts like in memory pipe.
@@ -184,7 +214,7 @@ impl AsyncWrite for DuplexStream {
 ///
 /// ```
 /// # async fn ex() -> std::io::Result<()> {
-/// # use futures_util::{AsyncReadExt, AsyncWriteExt};
+/// # use futures::{AsyncReadExt, AsyncWriteExt};
 /// let (reader, writer) = futures_plex::simplex(64);
 /// let mut simplex_stream = reader.reunite(writer).unwrap();
 /// simplex_stream.write_all(b"hello").await?;
@@ -196,7 +226,7 @@ impl AsyncWrite for DuplexStream {
 /// # }
 /// ```
 pub fn simplex(max_buf_size: usize) -> (ReadHalf<SimplexStream>, WriteHalf<SimplexStream>) {
-    SimplexStream::new_unsplit(max_buf_size).split()
+    half::split(SimplexStream::new_unsplit(max_buf_size))
 }
 
 impl SimplexStream {
@@ -214,6 +244,16 @@ impl SimplexStream {
             read_waker: None,
             write_waker: None,
         }
+    }
+
+    /// Returns the number of bytes that can be read from this buffer.
+    pub fn remaining(&self) -> usize {
+        self.buffer.remaining()
+    }
+
+    /// Returns the number of bytes that can be written into this buffer.
+    pub fn remaining_mut(&self) -> usize {
+        self.max_buf_size - self.buffer.remaining()
     }
 
     fn close_write(&mut self) {
@@ -340,5 +380,23 @@ impl AsyncWrite for SimplexStream {
     ) -> Poll<std::io::Result<()>> {
         self.close_write();
         Poll::Ready(Ok(()))
+    }
+}
+
+impl Read for SimplexStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let fut = poll_fn(|cx| AsyncRead::poll_read(Pin::new(self), cx, buf));
+        futures::executor::block_on(fut)
+    }
+}
+
+impl Write for SimplexStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let fut = poll_fn(|cx| AsyncWrite::poll_write(Pin::new(self), cx, buf));
+        futures::executor::block_on(fut)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
