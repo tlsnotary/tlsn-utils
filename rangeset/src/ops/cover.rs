@@ -1,9 +1,6 @@
 use core::ops::Range;
 
-use crate::{
-    ops::{DifferenceMut, Intersection, Subset},
-    set::RangeSet,
-};
+use crate::{ops::Set, set::RangeSet};
 
 /// Set cover methods.
 pub trait Cover<Rhs> {

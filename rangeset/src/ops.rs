@@ -10,79 +10,60 @@ use core::marker::PhantomData;
 
 use crate::iter::{IntoRangeIterator, RangeIterator};
 
-/// Set union.
-pub trait Union<Rhs> {
-    type Output<'a>
+/// Set operations.
+pub trait Set<Rhs> {
+    /// Union type.
+    type Union<'a>
     where
         Self: 'a,
         Rhs: 'a;
 
-    /// Returns the set union of `self` and `other`.
-    fn union<'a>(&'a self, other: &'a Rhs) -> Self::Output<'a>;
-}
-
-/// Set union in-place.
-pub trait UnionMut<Rhs> {
-    /// Replaces `self` with the set union of `self` and `other`.
-    fn union_mut(&mut self, other: &Rhs);
-}
-
-/// Set difference.
-pub trait Difference<Rhs> {
-    /// The output type of the difference operation.
-    type Output<'a>
+    /// Difference type.
+    type Difference<'a>
     where
         Self: 'a,
         Rhs: 'a;
 
-    /// Returns the set difference of `self` and `other`.
-    fn difference<'a>(&'a self, other: &'a Rhs) -> Self::Output<'a>;
-}
-
-/// Set difference in-place.
-pub trait DifferenceMut<Rhs> {
-    /// Subtracts `other` from `self`.
-    fn difference_mut(&mut self, other: &Rhs);
-}
-
-/// Set symmetric difference.
-pub trait SymmetricDifference<Rhs> {
-    type Output<'a>
+    /// Intersection type.
+    type Intersection<'a>
     where
         Self: 'a,
         Rhs: 'a;
 
-    /// Returns the set symmetric difference of `self` and `other`.
-    fn symmetric_difference<'a>(&'a self, other: &'a Rhs) -> Self::Output<'a>;
-}
-
-/// Set symmetric difference in-place.
-pub trait SymmetricDifferenceMut<Rhs> {
-    /// Replaces `self` with the set symmetric difference of `self` and `other`.
-    fn symmetric_difference_mut(&mut self, other: &Rhs);
-}
-
-/// Set intersection.
-pub trait Intersection<Rhs> {
-    type Output<'a>
+    /// Symmetric difference type.
+    type SymmetricDifference<'a>
     where
         Self: 'a,
         Rhs: 'a;
 
-    /// Returns the set intersection of `self` and `other`.
-    fn intersection<'a>(&'a self, other: &'a Rhs) -> Self::Output<'a>;
-}
+    /// Returns the set union of `self` and `rhs`.
+    fn union<'a>(&'a self, rhs: Rhs) -> Self::Union<'a>
+    where
+        Rhs: 'a;
 
-/// Set disjoint check.
-pub trait Disjoint<Rhs> {
-    /// Returns `true` if the range is disjoint with `other`.
-    fn is_disjoint(&self, other: &Rhs) -> bool;
-}
+    /// Returns the set difference of `self` and `rhs`.
+    fn difference<'a>(&'a self, rhs: Rhs) -> Self::Difference<'a>
+    where
+        Rhs: 'a;
 
-/// Set subset check.
-pub trait Subset<Rhs> {
+    /// Returns the set intersection of `self` and `rhs`.
+    fn intersection<'a>(&'a self, rhs: Rhs) -> Self::Intersection<'a>
+    where
+        Rhs: 'a;
+
+    /// Returns the set symmetric difference of `self` and `rhs`.
+    fn symmetric_difference<'a>(&'a self, rhs: Rhs) -> Self::SymmetricDifference<'a>
+    where
+        Rhs: 'a;
+
+    /// Returns `true` if `self` is disjoint with `other`.
+    fn is_disjoint(&self, other: Rhs) -> bool;
+
     /// Returns `true` if `self` is a subset of `other`.
-    fn is_subset(&self, other: &Rhs) -> bool;
+    fn is_subset(&self, other: Rhs) -> bool;
+
+    /// Returns `true` if `self` is a superset of `other`.
+    fn is_superset(&self, other: Rhs) -> bool;
 }
 
 /// Indexing operation.
