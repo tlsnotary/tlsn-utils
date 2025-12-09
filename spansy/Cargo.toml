@@ -11,11 +11,11 @@ default = []
 serde = ["dep:serde", "bytes/serde", "rangeset/serde"]
 
 [dependencies]
-rangeset = { version = "0.3" }
+rangeset = { version = "0.4" }
 
-bytes.workspace = true
+bytes = { workspace = true }
 serde = { workspace = true, features = ["derive"], optional = true }
-thiserror.workspace = true
+thiserror = { workspace = true }
 
 httparse = "1.8"
 pest = { version = "2.7" }
