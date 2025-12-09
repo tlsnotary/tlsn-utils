@@ -16,7 +16,7 @@ use super::{types, types::JsonValue};
 /// impl<'a> JsonVisit for DigitReplacer<'a, '_> {
 ///     fn visit_number(&mut self, node: &Number) {
 ///         let span = node.span();
-///         for range in span.indices().iter_ranges() {
+///         for range in span.indices().iter() {
 ///             let replacement = self.digit.repeat(range.len());
 ///             self.src.replace_range(range, &replacement);
 ///         }

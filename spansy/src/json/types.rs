@@ -2,7 +2,7 @@ use std::ops::{Index, Range};
 
 use rangeset::{
     iter::RangeIterator,
-    ops::Difference,
+    ops::Set,
     set::{RangeSet, ToRangeSet},
 };
 
@@ -464,9 +464,6 @@ impl_type!(KeyValue, span);
 
 #[cfg(test)]
 mod tests {
-
-    use rangeset::ops::Index;
-
     use crate::json::parse_str;
 
     use super::*;
@@ -508,11 +505,9 @@ mod tests {
 
         let indices = value.elems[0].without_value();
 
-        let result: std::string::String = src
-            .as_bytes()
-            .index(indices.iter_ranges())
-            .flatten()
-            .map(|&b| b as char)
+        let result: std::string::String = indices
+            .iter_values()
+            .map(|i| src.as_bytes()[i] as char)
             .collect();
         assert_eq!(result, "\"foo\": \"\"");
     }
@@ -527,11 +522,9 @@ mod tests {
 
         let indices = value.elems[0].without_separator();
 
-        let result: std::string::String = src
-            .as_bytes()
-            .index(indices.iter_ranges())
-            .flatten()
-            .map(|&b| b as char)
+        let result: std::string::String = indices
+            .iter_values()
+            .map(|i| src.as_bytes()[i] as char)
             .collect();
         assert_eq!(result, "\"foo\": \"bar\"");
     }
@@ -546,11 +539,9 @@ mod tests {
 
         let indices = value.without_values();
 
-        let result: std::string::String = src
-            .as_bytes()
-            .index(indices.iter_ranges())
-            .flatten()
-            .map(|&b| b as char)
+        let result: std::string::String = indices
+            .iter_values()
+            .map(|i| src.as_bytes()[i] as char)
             .collect();
         assert_eq!(result, "[]");
     }
@@ -565,11 +556,9 @@ mod tests {
 
         let indices = value.without_pairs();
 
-        let result: std::string::String = src
-            .as_bytes()
-            .index(indices.iter_ranges())
-            .flatten()
-            .map(|&b| b as char)
+        let result: std::string::String = indices
+            .iter_values()
+            .map(|i| src.as_bytes()[i] as char)
             .collect();
         assert_eq!(result, "{\n}");
     }

@@ -1,6 +1,6 @@
 use rangeset::{
     iter::RangeIterator,
-    ops::Difference,
+    ops::Set,
     set::{RangeSet, ToRangeSet},
 };
 
