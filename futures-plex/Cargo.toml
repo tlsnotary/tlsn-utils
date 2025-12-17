@@ -5,5 +5,8 @@ edition = "2024"
 description = "Port of tokio's `SimplexStream` and `DuplexStream` for the `futures` ecosystem."
 
 [dependencies]
-bytes = { version = "1" }
-futures = { version = "0.3", default-features = false, features = ["unstable", "bilock", "executor"] }
+futures = { version = "0.3", default-features = false, features = [
+    "unstable",
+    "bilock",
+    "executor",
+] }
