@@ -53,6 +53,18 @@ pub struct DuplexStream {
 }
 
 impl DuplexStream {
+    /// Invokes a closure for reading out data from this duplex stream.
+    pub fn poll_read_flex<F>(
+        &mut self,
+        cx: &mut task::Context<'_>,
+        func: F,
+    ) -> Poll<io::Result<usize>>
+    where
+        F: FnMut(&mut task::Context<'_>, &[u8]) -> Poll<io::Result<usize>>,
+    {
+        ready!(self.poll_lock_read(cx)).poll_read_flex(cx, func)
+    }
+
     /// Read data from this duplex into the provided writer.
     pub fn poll_read_to<W: AsyncWrite + Unpin>(
         &self,
@@ -60,6 +72,19 @@ impl DuplexStream {
         wr: W,
     ) -> Poll<io::Result<usize>> {
         ready!(self.poll_lock_read(cx)).poll_read_to(cx, wr)
+    }
+
+    /// Invokes a closure for writing data into this duplex
+    /// stream.
+    pub fn poll_write_flex<F>(
+        &mut self,
+        cx: &mut task::Context<'_>,
+        func: F,
+    ) -> Poll<io::Result<usize>>
+    where
+        F: FnMut(&mut task::Context<'_>, &mut [u8]) -> Poll<io::Result<usize>>,
+    {
+        ready!(self.poll_lock_write(cx)).poll_write_flex(cx, func)
     }
 
     /// Write data from the provided reader into this duplex.
@@ -366,6 +391,21 @@ impl SimplexStream {
         }
     }
 
+    /// Invokes a closure for reading out data from the buffer of this simplex.
+    pub fn poll_read_flex<F>(
+        &mut self,
+        cx: &mut task::Context<'_>,
+        mut func: F,
+    ) -> Poll<io::Result<usize>>
+    where
+        F: FnMut(&mut task::Context<'_>, &[u8]) -> Poll<io::Result<usize>>,
+    {
+        let buf = ready!(self.poll_get(cx))?;
+        let len = ready!(func(cx, buf))?;
+        self.advance(len);
+        Poll::Ready(Ok(len))
+    }
+
     /// Read data from this simplex into the provided writer.
     pub fn poll_read_to<W: AsyncWrite + Unpin>(
         &mut self,
@@ -375,6 +415,21 @@ impl SimplexStream {
         let buf = ready!(self.poll_get(cx))?;
         let len = ready!(pin!(wr).poll_write(cx, buf))?;
         self.advance(len);
+        Poll::Ready(Ok(len))
+    }
+
+    /// Invokes a closure for writing data into the buffer of this simplex.
+    pub fn poll_write_flex<F>(
+        &mut self,
+        cx: &mut task::Context<'_>,
+        mut func: F,
+    ) -> Poll<io::Result<usize>>
+    where
+        F: FnMut(&mut task::Context<'_>, &mut [u8]) -> Poll<io::Result<usize>>,
+    {
+        let mut buf = ready!(self.poll_mut(cx))?;
+        let len = ready!(func(cx, &mut buf))?;
+        self.advance_mut(len);
         Poll::Ready(Ok(len))
     }
 
