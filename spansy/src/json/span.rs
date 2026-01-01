@@ -63,7 +63,7 @@ impl<S: Store> types::JsonKey<S> {
         assert!(matches!(pair.as_rule(), Rule::string));
         let range = get_range(data, pair.as_str());
         Self {
-            view: view.select(range),
+            view: view.select(range).expect("range should be valid"),
         }
     }
 }
@@ -73,7 +73,7 @@ impl<S: Store> types::Number<S> {
         assert!(matches!(pair.as_rule(), Rule::number));
         let range = get_range(data, pair.as_str());
         Self {
-            view: view.select(range),
+            view: view.select(range).expect("range should be valid"),
         }
     }
 }
@@ -83,7 +83,7 @@ impl<S: Store> types::Bool<S> {
         assert!(matches!(pair.as_rule(), Rule::bool));
         let range = get_range(data, pair.as_str());
         Self {
-            view: view.select(range),
+            view: view.select(range).expect("range should be valid"),
         }
     }
 }
@@ -93,7 +93,7 @@ impl<S: Store> types::Null<S> {
         assert!(matches!(pair.as_rule(), Rule::null));
         let range = get_range(data, pair.as_str());
         Self {
-            view: view.select(range),
+            view: view.select(range).expect("range should be valid"),
         }
     }
 }
@@ -103,7 +103,7 @@ impl<S: Store> types::String<S> {
         assert!(matches!(pair.as_rule(), Rule::string));
         let range = get_range(data, pair.as_str());
         Self {
-            view: view.select(range),
+            view: view.select(range).expect("range should be valid"),
         }
     }
 }
@@ -120,7 +120,7 @@ impl<S: Store> KeyValue<S> {
         let value = pairs.next().expect("value should be present");
 
         Self {
-            view: view.select(range),
+            view: view.select(range).expect("range should be valid"),
             key: types::JsonKey::from_pair(view, data, key),
             value: JsonValue::from_pair(view, data, value),
         }
@@ -134,7 +134,7 @@ impl<S: Store> types::Object<S> {
         let range = get_range(data, pair.as_str());
 
         Self {
-            view: view.select(range),
+            view: view.select(range).expect("range should be valid"),
             elems: pair
                 .into_inner()
                 .map(|pair| KeyValue::from_pair(view, data, pair))
@@ -150,7 +150,7 @@ impl<S: Store> types::Array<S> {
         let range = get_range(data, pair.as_str());
 
         Self {
-            view: view.select(range),
+            view: view.select(range).expect("range should be valid"),
             elems: pair
                 .into_inner()
                 .map(|pair| JsonValue::from_pair(view, data, pair))

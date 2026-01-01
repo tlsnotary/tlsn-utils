@@ -85,7 +85,7 @@ impl Store for Box<[u8]> {}
 /// let view = View::new(data.as_slice());
 ///
 /// // Create a subview of "world" (indices 6..11)
-/// let subview = view.index(6..11).unwrap();
+/// let subview = view.select(6..11).unwrap();
 ///
 /// assert_eq!(&*subview.as_bytes(), b"world");
 /// assert_eq!(subview.offset(), 6); // Original index preserved
@@ -156,27 +156,6 @@ impl<S: Store> View<S, [u8]> {
         Cow::Owned(result)
     }
 
-    /// Index into this view, returning a new view.
-    /// `ranges` are relative to this view's start (not absolute).
-    /// Returns `None` if ranges extend beyond the view's length.
-    pub fn index<I>(&self, ranges: I) -> Option<Self>
-    where
-        I: IntoRangeIterator<usize>,
-    {
-        let mut index: RangeSet<usize> = RangeSet::from_range_iter(ranges);
-        index.shift_right(&self.offset());
-
-        if !index.is_subset(&self.indices) {
-            return None;
-        }
-
-        Some(Self {
-            store: self.store.clone(),
-            indices: self.indices.intersection(index).into_set(),
-            _marker: PhantomData,
-        })
-    }
-
     /// Create a subview with the given absolute indices.
     ///
     /// # Panics
@@ -199,9 +178,11 @@ impl<S: Store> View<S, [u8]> {
     ///
     /// Maps a range `[start, end)` as if all ranges were concatenated
     /// contiguously starting at 0, to the corresponding absolute indices.
-    pub(crate) fn select(&self, range: Range<usize>) -> Self {
-        let indices = select_indices(&self.indices, range);
-        self.subview(indices)
+    ///
+    /// Returns `None` if the range extends beyond the view's length.
+    pub fn select(&self, range: Range<usize>) -> Option<Self> {
+        let indices = select_indices(&self.indices, range)?;
+        Some(self.subview(indices))
     }
 }
 
@@ -238,37 +219,6 @@ impl<S: Store> View<S, str> {
         Cow::Owned(unsafe { std::string::String::from_utf8_unchecked(result) })
     }
 
-    /// Index into this view, returning a new view.
-    /// `ranges` are relative to this view's start (not absolute).
-    /// Returns `None` if ranges extend beyond the view's length or split a UTF-8 character.
-    pub fn index<I>(&self, ranges: I) -> Option<Self>
-    where
-        I: IntoRangeIterator<usize>,
-    {
-        let mut index: RangeSet<usize> = RangeSet::from_range_iter(ranges);
-        index.shift_right(&self.offset());
-
-        if !index.is_subset(&self.indices) {
-            return None;
-        }
-
-        let indices = self.indices.intersection(index).into_set();
-
-        // Validate UTF-8 boundaries
-        let bytes = self.store.as_ref();
-        for range in indices.iter() {
-            if std::str::from_utf8(&bytes[range]).is_err() {
-                return None;
-            }
-        }
-
-        Some(Self {
-            store: self.store.clone(),
-            indices,
-            _marker: PhantomData,
-        })
-    }
-
     /// Create a subview with the given absolute indices.
     ///
     /// # Panics
@@ -297,9 +247,24 @@ impl<S: Store> View<S, str> {
     ///
     /// Maps a range `[start, end)` as if all ranges were concatenated
     /// contiguously starting at 0, to the corresponding absolute indices.
-    pub(crate) fn select(&self, range: Range<usize>) -> Self {
-        let indices = select_indices(&self.indices, range);
-        self.subview(indices)
+    ///
+    /// Returns `None` if the range extends beyond the view's length or splits a UTF-8 character.
+    pub fn select(&self, range: Range<usize>) -> Option<Self> {
+        let indices = select_indices(&self.indices, range)?;
+
+        // Validate UTF-8 boundaries
+        let bytes = self.store.as_ref();
+        for r in indices.iter() {
+            if std::str::from_utf8(&bytes[r]).is_err() {
+                return None;
+            }
+        }
+
+        Some(Self {
+            store: self.store.clone(),
+            indices,
+            _marker: PhantomData,
+        })
     }
 }
 
@@ -409,12 +374,11 @@ impl<S: Store> Span<[u8]> for View<S, [u8]> {
 ///   concat [5..8] -> abs [200..203]
 /// result: [103..105, 200..203]
 /// ```
-fn select_indices(indices: &RangeSet<usize>, range: Range<usize>) -> RangeSet<usize> {
+fn select_indices(indices: &RangeSet<usize>, range: Range<usize>) -> Option<RangeSet<usize>> {
     let total_len = indices.len();
-    assert!(
-        range.start <= total_len && range.end <= total_len,
-        "range should be within bounds"
-    );
+    if range.start > total_len || range.end > total_len {
+        return None;
+    }
 
     let mut result = Vec::new();
     let mut concat_pos = 0usize;
@@ -442,7 +406,7 @@ fn select_indices(indices: &RangeSet<usize>, range: Range<usize>) -> RangeSet<us
         }
     }
 
-    RangeSet::from(result)
+    Some(RangeSet::from(result))
 }
 
 impl<S: Store> Span<str> for View<S, str> {
@@ -474,13 +438,13 @@ mod tests {
     #[test]
     fn test_select_indices_single_range() {
         let indices = RangeSet::from(0..10);
-        assert_eq!(select_indices(&indices, 3..7), RangeSet::from(3..7));
+        assert_eq!(select_indices(&indices, 3..7), Some(RangeSet::from(3..7)));
     }
 
     #[test]
     fn test_select_indices_within_first() {
         let indices = RangeSet::from([0..5, 10..15]);
-        assert_eq!(select_indices(&indices, 2..4), RangeSet::from(2..4));
+        assert_eq!(select_indices(&indices, 2..4), Some(RangeSet::from(2..4)));
     }
 
     #[test]
@@ -488,7 +452,7 @@ mod tests {
         // concat: [0..5, 5..10] maps to abs: [0..5, 10..15]
         // select concat 6..8 -> abs 11..13
         let indices = RangeSet::from([0..5, 10..15]);
-        assert_eq!(select_indices(&indices, 6..8), RangeSet::from(11..13));
+        assert_eq!(select_indices(&indices, 6..8), Some(RangeSet::from(11..13)));
     }
 
     #[test]
@@ -498,7 +462,7 @@ mod tests {
         let indices = RangeSet::from([0..5, 10..15]);
         assert_eq!(
             select_indices(&indices, 3..8),
-            RangeSet::from([3..5, 10..13])
+            Some(RangeSet::from([3..5, 10..13]))
         );
     }
 
@@ -507,14 +471,14 @@ mod tests {
         let indices = RangeSet::from([0..5, 10..15]);
         assert_eq!(
             select_indices(&indices, 0..10),
-            RangeSet::from([0..5, 10..15])
+            Some(RangeSet::from([0..5, 10..15]))
         );
     }
 
     #[test]
     fn test_select_indices_empty() {
         let indices = RangeSet::from(0..10);
-        assert_eq!(select_indices(&indices, 5..5), RangeSet::from([] as [Range<usize>; 0]));
+        assert_eq!(select_indices(&indices, 5..5), Some(RangeSet::from([] as [Range<usize>; 0])));
     }
 
     #[test]
@@ -524,28 +488,28 @@ mod tests {
         let indices = RangeSet::from([0..3, 10..13, 20..23]);
         assert_eq!(
             select_indices(&indices, 2..7),
-            RangeSet::from([2..3, 10..13, 20..21])
+            Some(RangeSet::from([2..3, 10..13, 20..21]))
         );
     }
 
     #[test]
     fn test_select_indices_boundary_start() {
         let indices = RangeSet::from([0..5, 10..15]);
-        assert_eq!(select_indices(&indices, 0..3), RangeSet::from(0..3));
+        assert_eq!(select_indices(&indices, 0..3), Some(RangeSet::from(0..3)));
     }
 
     #[test]
     fn test_select_indices_boundary_end() {
         let indices = RangeSet::from([0..5, 10..15]);
-        assert_eq!(select_indices(&indices, 7..10), RangeSet::from(12..15));
+        assert_eq!(select_indices(&indices, 7..10), Some(RangeSet::from(12..15)));
     }
 
     #[test]
     fn test_select_indices_at_range_boundary() {
         // Select exactly at the boundary between ranges
         let indices = RangeSet::from([0..5, 10..15]);
-        assert_eq!(select_indices(&indices, 5..5), RangeSet::from([] as [Range<usize>; 0]));
-        assert_eq!(select_indices(&indices, 4..6), RangeSet::from([4..5, 10..11]));
+        assert_eq!(select_indices(&indices, 5..5), Some(RangeSet::from([] as [Range<usize>; 0])));
+        assert_eq!(select_indices(&indices, 4..6), Some(RangeSet::from([4..5, 10..11])));
     }
 
     #[test]
@@ -556,7 +520,7 @@ mod tests {
         let non_contig = view.subview(indices);
 
         // concat "helloworld", select "lowo" (3..7)
-        let selected = non_contig.select(3..7);
+        let selected = non_contig.select(3..7).unwrap();
         assert_eq!(selected.as_str().as_ref(), "lowo");
         assert_eq!(*selected.indices(), RangeSet::from([3..5, 10..12]));
     }
@@ -593,32 +557,32 @@ mod tests {
     }
 
     #[test]
-    fn test_view_index_str_valid_utf8() {
+    fn test_view_select_str_valid_utf8() {
         let data = "hello世界";
         let view = View::new_str(data.as_bytes());
         // "世" is 3 bytes at positions 5..8
-        let sub = view.index(0..8).unwrap();
+        let sub = view.select(0..8).unwrap();
         assert_eq!(sub.as_str().as_ref(), "hello世");
     }
 
     #[test]
-    fn test_view_index_str_invalid_utf8_boundary() {
+    fn test_view_select_str_invalid_utf8_boundary() {
         let data = "hello世界";
         let view = View::new_str(data.as_bytes());
         // Try to split "世" (positions 5..8)
-        assert!(view.index(0..6).is_none());
-        assert!(view.index(0..7).is_none());
+        assert!(view.select(0..6).is_none());
+        assert!(view.select(0..7).is_none());
     }
 
     #[test]
-    fn test_view_index_str_multibyte_chars() {
+    fn test_view_select_str_multibyte_chars() {
         let data = "日本語";
         let view = View::new_str(data.as_bytes());
         // Each char is 3 bytes
-        let sub = view.index(0..3).unwrap();
+        let sub = view.select(0..3).unwrap();
         assert_eq!(sub.as_str().as_ref(), "日");
 
-        let sub = view.index(3..6).unwrap();
+        let sub = view.select(3..6).unwrap();
         assert_eq!(sub.as_str().as_ref(), "本");
     }
 }

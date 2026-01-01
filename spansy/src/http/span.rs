@@ -66,21 +66,21 @@ pub fn parse_request<S: Store>(src: impl Into<View<S>>) -> Result<Request<S>, Pa
 
     let method = Method {
         view: view
-            .index(method_range)
+            .select(method_range)
             .expect("method range should be valid")
             .try_into()
             .expect("method should be valid UTF-8"),
     };
     let target = Target {
         view: view
-            .index(path_range)
+            .select(path_range)
             .expect("path range should be valid")
             .try_into()
             .expect("target should be valid UTF-8"),
     };
     let request_line = RequestLine {
         view: view
-            .index(request_line_range)
+            .select(request_line_range)
             .expect("request line range should be valid")
             .try_into()
             .expect("request line should be valid UTF-8"),
@@ -89,7 +89,7 @@ pub fn parse_request<S: Store>(src: impl Into<View<S>>) -> Result<Request<S>, Pa
     };
 
     let mut request = Request {
-        view: view.index(0..head_end).expect("head range should be valid"),
+        view: view.select(0..head_end).expect("head range should be valid"),
         request: request_line,
         headers,
         body: None,
@@ -117,7 +117,7 @@ pub fn parse_request<S: Store>(src: impl Into<View<S>>) -> Result<Request<S>, Pa
 
                 request.body = Some(parse_body(&view, range.clone(), &content_type)?);
                 request.view = view
-                    .index(0..range.end)
+                    .select(0..range.end)
                     .expect("body range should be valid");
             }
         }
@@ -125,7 +125,7 @@ pub fn parse_request<S: Store>(src: impl Into<View<S>>) -> Result<Request<S>, Pa
             let (body, consumed) = parse_chunked_body(&view, head_end, &content_type)?;
             request.body = Some(body);
             request.view = view
-                .index(0..head_end + consumed)
+                .select(0..head_end + consumed)
                 .expect("chunked range should be valid");
         }
         BodyInfo::None => {}
@@ -186,21 +186,21 @@ pub fn parse_response<S: Store>(src: impl Into<View<S>>) -> Result<Response<S>, 
 
     let code = Code {
         view: view
-            .index(code_range)
+            .select(code_range)
             .expect("code range should be valid")
             .try_into()
             .expect("code should be valid UTF-8"),
     };
     let reason = Reason {
         view: view
-            .index(reason_range)
+            .select(reason_range)
             .expect("reason range should be valid")
             .try_into()
             .expect("reason should be valid UTF-8"),
     };
     let status = Status {
         view: view
-            .index(status_line_range)
+            .select(status_line_range)
             .expect("status line range should be valid")
             .try_into()
             .expect("status line should be valid UTF-8"),
@@ -209,7 +209,7 @@ pub fn parse_response<S: Store>(src: impl Into<View<S>>) -> Result<Response<S>, 
     };
 
     let mut response = Response {
-        view: view.index(0..head_end).expect("head range should be valid"),
+        view: view.select(0..head_end).expect("head range should be valid"),
         status,
         headers,
         body: None,
@@ -237,7 +237,7 @@ pub fn parse_response<S: Store>(src: impl Into<View<S>>) -> Result<Response<S>, 
 
                 response.body = Some(parse_body(&view, range.clone(), &content_type)?);
                 response.view = view
-                    .index(0..range.end)
+                    .select(0..range.end)
                     .expect("body range should be valid");
             }
         }
@@ -245,7 +245,7 @@ pub fn parse_response<S: Store>(src: impl Into<View<S>>) -> Result<Response<S>, 
             let (body, consumed) = parse_chunked_body(&view, head_end, &content_type)?;
             response.body = Some(body);
             response.view = view
-                .index(0..head_end + consumed)
+                .select(0..head_end + consumed)
                 .expect("chunked range should be valid");
         }
         BodyInfo::None => {}
@@ -275,19 +275,19 @@ fn from_header<S: Store>(view: &View<S>, src: &[u8], header: &httparse::Header) 
 
     let name = HeaderName {
         view: view
-            .index(name_range)
+            .select(name_range)
             .expect("header name range should be valid")
             .try_into()
             .expect("header name should be valid UTF-8"),
     };
     let value = HeaderValue {
         view: view
-            .index(value_range)
+            .select(value_range)
             .expect("header value range should be valid"),
     };
     Header {
         view: view
-            .index(header_range)
+            .select(header_range)
             .expect("header range should be valid"),
         name,
         value,
@@ -391,7 +391,7 @@ fn parse_body<S: Store>(
     content_type: &[u8],
 ) -> Result<Body<S>, ParseError> {
     let body_view = view
-        .index(range.clone())
+        .select(range.clone())
         .expect("body range should be valid");
 
     let content = if content_type.get(..16) == Some(b"application/json".as_slice()) {
@@ -453,7 +453,7 @@ fn parse_chunked_body<S: Store>(
 
         chunks.push(Chunk {
             view: view
-                .index(data_start..data_end)
+                .select(data_start..data_end)
                 .expect("chunk range should be valid"),
         });
         chunk_ranges.push(data_start..data_end);
@@ -472,14 +472,15 @@ fn parse_chunked_body<S: Store>(
     pos += trailers_len;
 
     // Parse body content from assembled data
-    let content = if !chunk_ranges.is_empty()
+    let content = if !chunks.is_empty()
         && content_type.get(..16) == Some(b"application/json".as_slice())
     {
-        // Create a view of just the chunk data (non-contiguous)
-        let chunk_indices: RangeSet<usize> = chunk_ranges.iter().cloned().collect();
-        let body_data_view = view
-            .index(chunk_indices)
-            .expect("chunk indices should be valid");
+        // Create a view of just the chunk data (non-contiguous) using absolute indices from chunks
+        let chunk_indices: RangeSet<usize> = chunks
+            .iter()
+            .flat_map(|c| c.view.indices().iter())
+            .collect();
+        let body_data_view = view.subview(chunk_indices);
 
         let value = json::parse(body_data_view)?;
         BodyContent::Json(value)
@@ -490,7 +491,7 @@ fn parse_chunked_body<S: Store>(
     // Body view covers the full raw chunked section (including metadata)
     let body = Body {
         view: view
-            .index(start..start + pos)
+            .select(start..start + pos)
             .expect("body range should be valid"),
         content,
         chunks: Some(chunks),
@@ -549,19 +550,19 @@ fn parse_trailers<S: Store>(
 
         let name = HeaderName {
             view: view
-                .index(name_range)
+                .select(name_range)
                 .expect("trailer name range should be valid")
                 .try_into()
                 .expect("trailer name should be valid UTF-8"),
         };
         let value = HeaderValue {
             view: view
-                .index(value_range)
+                .select(value_range)
                 .expect("trailer value range should be valid"),
         };
         trailers.push(Header {
             view: view
-                .index(header_range)
+                .select(header_range)
                 .expect("trailer range should be valid"),
             name,
             value,

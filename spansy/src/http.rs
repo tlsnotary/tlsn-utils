@@ -64,7 +64,7 @@ impl<S: Store> Iterator for Requests<S> {
         if self.pos >= len {
             None
         } else {
-            let subview = self.view.select(self.pos..len);
+            let subview = self.view.select(self.pos..len)?;
             Some(parse_request(subview).inspect(|req| {
                 self.pos += req.view.len();
             }))
@@ -105,7 +105,7 @@ impl<S: Store> Iterator for Responses<S> {
         if self.pos >= len {
             None
         } else {
-            let subview = self.view.select(self.pos..len);
+            let subview = self.view.select(self.pos..len)?;
             Some(parse_response(subview).inspect(|resp| {
                 self.pos += resp.view.len();
             }))

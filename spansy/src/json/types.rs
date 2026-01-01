@@ -170,7 +170,7 @@ impl<S: Store> KeyValue<S> {
     pub fn without_separator(&self) -> View<S, str> {
         let len = self.view.len();
         if self.view.as_str().ends_with(',') {
-            self.view.index(0..len - 1).expect("range should be valid")
+            self.view.select(0..len - 1).expect("range should be valid")
         } else {
             self.view.clone()
         }
@@ -378,10 +378,10 @@ impl<S: Store> Array<S> {
     /// separators.
     pub fn without_values(&self) -> View<S, str> {
         let len = self.view.len();
-        let indices = RangeSet::from([0..1, len - 1..len]);
-        self.view
-            .index(indices)
-            .expect("array should have at least brackets")
+        let first = self.view.select(0..1).expect("array should have opening bracket");
+        let last = self.view.select(len - 1..len).expect("array should have closing bracket");
+        let indices = first.indices().union(last.indices()).into_set();
+        self.view.subview(indices)
     }
 }
 
