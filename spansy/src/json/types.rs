@@ -378,8 +378,14 @@ impl<S: Store> Array<S> {
     /// separators.
     pub fn without_values(&self) -> View<S, str> {
         let len = self.view.len();
-        let first = self.view.select(0..1).expect("array should have opening bracket");
-        let last = self.view.select(len - 1..len).expect("array should have closing bracket");
+        let first = self
+            .view
+            .select(0..1)
+            .expect("array should have opening bracket");
+        let last = self
+            .view
+            .select(len - 1..len)
+            .expect("array should have closing bracket");
         let indices = first.indices().union(last.indices()).into_set();
         self.view.subview(indices)
     }

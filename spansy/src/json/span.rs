@@ -214,9 +214,18 @@ mod tests {
         let src = br#"{"a": "line1\nline2", "b": "tab\there", "c": "quote\"here"}"#;
         let value = parse(src).unwrap();
         // Spans contain raw content without quotes
-        assert_eq!(value.get("a").unwrap().view().as_str().as_ref(), r#"line1\nline2"#);
-        assert_eq!(value.get("b").unwrap().view().as_str().as_ref(), r#"tab\there"#);
-        assert_eq!(value.get("c").unwrap().view().as_str().as_ref(), r#"quote\"here"#);
+        assert_eq!(
+            value.get("a").unwrap().view().as_str().as_ref(),
+            r#"line1\nline2"#
+        );
+        assert_eq!(
+            value.get("b").unwrap().view().as_str().as_ref(),
+            r#"tab\there"#
+        );
+        assert_eq!(
+            value.get("c").unwrap().view().as_str().as_ref(),
+            r#"quote\"here"#
+        );
     }
 
     #[test]
@@ -275,8 +284,7 @@ mod tests {
 
     #[test]
     fn test_non_contiguous_json() {
-        use crate::http::parse_response;
-        use crate::http::BodyContent;
+        use crate::http::{BodyContent, parse_response};
 
         // JSON split across two chunks: {"key": + "value"}
         let src = b"HTTP/1.1 200 OK\r\n\

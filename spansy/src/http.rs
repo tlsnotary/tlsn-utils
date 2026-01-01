@@ -168,7 +168,7 @@ mod tests {
             b"14"
         );
         assert_eq!(
-            reqs[1].body.as_ref().unwrap().data().as_ref(),
+            reqs[1].body.as_ref().unwrap(),
             b"Hello, world!\n".as_slice()
         );
     }
@@ -206,7 +206,7 @@ mod tests {
             b"14"
         );
         assert_eq!(
-            resps[1].body.as_ref().unwrap().data().as_ref(),
+            resps[1].body.as_ref().unwrap(),
             b"Hello, world!\n".as_slice()
         );
 

@@ -33,11 +33,7 @@
 use std::{borrow::Cow, marker::PhantomData, ops::Range, sync::Arc};
 
 use bytes::Bytes;
-use rangeset::{
-    iter::{FromRangeIterator, IntoRangeIterator, RangeIterator},
-    ops::Set,
-    set::RangeSet,
-};
+use rangeset::{iter::IntoRangeIterator, ops::Set, set::RangeSet};
 
 pub mod http;
 pub mod json;
@@ -223,7 +219,8 @@ impl<S: Store> View<S, str> {
     ///
     /// # Panics
     ///
-    /// Panics if indices are not a subset of this view's indices or split a UTF-8 character.
+    /// Panics if indices are not a subset of this view's indices or split a
+    /// UTF-8 character.
     pub(crate) fn subview(&self, indices: RangeSet<usize>) -> Self {
         assert!(
             indices.is_subset(&self.indices),
@@ -248,7 +245,8 @@ impl<S: Store> View<S, str> {
     /// Maps a range `[start, end)` as if all ranges were concatenated
     /// contiguously starting at 0, to the corresponding absolute indices.
     ///
-    /// Returns `None` if the range extends beyond the view's length or splits a UTF-8 character.
+    /// Returns `None` if the range extends beyond the view's length or splits a
+    /// UTF-8 character.
     pub fn select(&self, range: Range<usize>) -> Option<Self> {
         let indices = select_indices(&self.indices, range)?;
 
@@ -478,7 +476,10 @@ mod tests {
     #[test]
     fn test_select_indices_empty() {
         let indices = RangeSet::from(0..10);
-        assert_eq!(select_indices(&indices, 5..5), Some(RangeSet::from([] as [Range<usize>; 0])));
+        assert_eq!(
+            select_indices(&indices, 5..5),
+            Some(RangeSet::from([] as [Range<usize>; 0]))
+        );
     }
 
     #[test]
@@ -501,15 +502,24 @@ mod tests {
     #[test]
     fn test_select_indices_boundary_end() {
         let indices = RangeSet::from([0..5, 10..15]);
-        assert_eq!(select_indices(&indices, 7..10), Some(RangeSet::from(12..15)));
+        assert_eq!(
+            select_indices(&indices, 7..10),
+            Some(RangeSet::from(12..15))
+        );
     }
 
     #[test]
     fn test_select_indices_at_range_boundary() {
         // Select exactly at the boundary between ranges
         let indices = RangeSet::from([0..5, 10..15]);
-        assert_eq!(select_indices(&indices, 5..5), Some(RangeSet::from([] as [Range<usize>; 0])));
-        assert_eq!(select_indices(&indices, 4..6), Some(RangeSet::from([4..5, 10..11])));
+        assert_eq!(
+            select_indices(&indices, 5..5),
+            Some(RangeSet::from([] as [Range<usize>; 0]))
+        );
+        assert_eq!(
+            select_indices(&indices, 4..6),
+            Some(RangeSet::from([4..5, 10..11]))
+        );
     }
 
     #[test]
@@ -521,7 +531,7 @@ mod tests {
 
         // concat "helloworld", select "lowo" (3..7)
         let selected = non_contig.select(3..7).unwrap();
-        assert_eq!(selected.as_str().as_ref(), "lowo");
+        assert_eq!(selected.as_str(), "lowo");
         assert_eq!(*selected.indices(), RangeSet::from([3..5, 10..12]));
     }
 
@@ -562,7 +572,7 @@ mod tests {
         let view = View::new_str(data.as_bytes());
         // "世" is 3 bytes at positions 5..8
         let sub = view.select(0..8).unwrap();
-        assert_eq!(sub.as_str().as_ref(), "hello世");
+        assert_eq!(sub.as_str(), "hello世");
     }
 
     #[test]
@@ -580,9 +590,9 @@ mod tests {
         let view = View::new_str(data.as_bytes());
         // Each char is 3 bytes
         let sub = view.select(0..3).unwrap();
-        assert_eq!(sub.as_str().as_ref(), "日");
+        assert_eq!(sub.as_str(), "日");
 
         let sub = view.select(3..6).unwrap();
-        assert_eq!(sub.as_str().as_ref(), "本");
+        assert_eq!(sub.as_str(), "本");
     }
 }

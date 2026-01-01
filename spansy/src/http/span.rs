@@ -89,7 +89,9 @@ pub fn parse_request<S: Store>(src: impl Into<View<S>>) -> Result<Request<S>, Pa
     };
 
     let mut request = Request {
-        view: view.select(0..head_end).expect("head range should be valid"),
+        view: view
+            .select(0..head_end)
+            .expect("head range should be valid"),
         request: request_line,
         headers,
         body: None,
@@ -209,7 +211,9 @@ pub fn parse_response<S: Store>(src: impl Into<View<S>>) -> Result<Response<S>, 
     };
 
     let mut response = Response {
-        view: view.select(0..head_end).expect("head range should be valid"),
+        view: view
+            .select(0..head_end)
+            .expect("head range should be valid"),
         status,
         headers,
         body: None,
@@ -472,21 +476,21 @@ fn parse_chunked_body<S: Store>(
     pos += trailers_len;
 
     // Parse body content from assembled data
-    let content = if !chunks.is_empty()
-        && content_type.get(..16) == Some(b"application/json".as_slice())
-    {
-        // Create a view of just the chunk data (non-contiguous) using absolute indices from chunks
-        let chunk_indices: RangeSet<usize> = chunks
-            .iter()
-            .flat_map(|c| c.view.indices().iter())
-            .collect();
-        let body_data_view = view.subview(chunk_indices);
+    let content =
+        if !chunks.is_empty() && content_type.get(..16) == Some(b"application/json".as_slice()) {
+            // Create a view of just the chunk data (non-contiguous) using absolute indices
+            // from chunks
+            let chunk_indices: RangeSet<usize> = chunks
+                .iter()
+                .flat_map(|c| c.view.indices().iter())
+                .collect();
+            let body_data_view = view.subview(chunk_indices);
 
-        let value = json::parse(body_data_view)?;
-        BodyContent::Json(value)
-    } else {
-        BodyContent::Unknown
-    };
+            let value = json::parse(body_data_view)?;
+            BodyContent::Json(value)
+        } else {
+            BodyContent::Unknown
+        };
 
     // Body view covers the full raw chunked section (including metadata)
     let body = Body {
@@ -623,15 +627,14 @@ mod tests {
     fn test_parse_request() {
         let req = parse_request(TEST_REQUEST).unwrap();
 
-        assert_eq!(req.data().as_ref(), TEST_REQUEST);
-        assert_eq!(req.request.method.as_str().as_ref(), "GET");
+        assert_eq!(req.data(), TEST_REQUEST);
+        assert_eq!(req.request.method.as_str(), "GET");
         assert_eq!(
             req.headers_with_name("Host")
                 .next()
                 .unwrap()
                 .value
-                .as_bytes()
-                .as_ref(),
+                .as_bytes(),
             b"developer.mozilla.org".as_slice()
         );
         assert_eq!(
@@ -639,15 +642,11 @@ mod tests {
                 .next()
                 .unwrap()
                 .value
-                .as_bytes()
-                .as_ref(),
+                .as_bytes(),
             b"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.9; rv:50.0) Gecko/20100101 Firefox/50.0"
                 .as_slice()
         );
-        assert_eq!(
-            req.body.unwrap().data().as_ref(),
-            b"Hello World!".as_slice()
-        );
+        assert_eq!(req.body.unwrap(), b"Hello World!".as_slice());
     }
 
     #[test]
@@ -655,7 +654,7 @@ mod tests {
         let src: &[u8] = TEST_REQUEST;
         let req = parse_request(src).unwrap();
 
-        assert_eq!(req.data().as_ref(), TEST_REQUEST);
+        assert_eq!(req, TEST_REQUEST);
         assert_eq!(req.request.method.as_str().as_ref(), "GET");
         assert!(req.view.is_contiguous());
     }
@@ -665,14 +664,14 @@ mod tests {
         let req = parse_request(b"GET / HTTP/1.1\r\nHost: example.com \r\n\r\n").unwrap();
         let header = req.headers_with_name("Host").next().unwrap();
 
-        assert_eq!(header.data().as_ref(), b"Host: example.com \r\n".as_slice());
+        assert_eq!(header, b"Host: example.com \r\n".as_slice());
     }
 
     #[test]
     fn test_parse_response() {
         let res = parse_response(TEST_RESPONSE).unwrap();
 
-        assert_eq!(res.data().as_ref(), TEST_RESPONSE);
+        assert_eq!(res, TEST_RESPONSE);
         assert_eq!(res.status.code.as_str().as_ref(), "200");
         assert_eq!(res.status.reason.as_str().as_ref(), "OK");
         assert_eq!(
@@ -694,7 +693,7 @@ mod tests {
             b"Closed".as_slice()
         );
         assert_eq!(
-            res.body.unwrap().data().as_ref(),
+            res.body.unwrap(),
             b"<html>\n<body>\n<h1>Hello, World!</h1>\n</body>\n</html>".as_slice()
         );
     }
