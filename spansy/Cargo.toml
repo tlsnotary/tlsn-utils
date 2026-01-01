@@ -6,15 +6,10 @@ description = "Parsing with span information"
 repository = "https://github.com/tlsnotary/tlsn-utils"
 license = "MIT OR Apache-2.0"
 
-[features]
-default = []
-serde = ["dep:serde", "bytes/serde", "rangeset/serde"]
-
 [dependencies]
 rangeset = { version = "0.4" }
 
 bytes = { workspace = true }
-serde = { workspace = true, features = ["derive"], optional = true }
 thiserror = { workspace = true }
 
 httparse = "1.8"
