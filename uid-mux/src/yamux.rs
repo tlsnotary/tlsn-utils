@@ -276,7 +276,7 @@ where
     }
 
     fn is_complete(&self) -> bool {
-        self.remote_closed || self.closed
+        self.remote_closed && self.closed
     }
 
     fn poll_client(&mut self, cx: &mut Context<'_>) -> Result<()> {
@@ -488,12 +488,14 @@ mod tests {
         let server = Yamux::new(server_io.compat(), Config::default(), Mode::Server);
 
         let client_ctrl = client.control();
+        let server_ctrl = server.control();
 
         let mut fut = futures::future::try_join(client.into_future(), server.into_future());
 
         _ = futures::poll!(&mut fut);
 
         client_ctrl.close();
+        server_ctrl.close();
 
         // Both connections close cleanly.
         fut.await.unwrap();
@@ -517,6 +519,7 @@ mod tests {
         _ = futures::poll!(&mut fut_open);
 
         client_ctrl.close();
+        server_ctrl.close();
 
         // Both connections close cleanly.
         fut_conn.await.unwrap();
@@ -530,12 +533,14 @@ mod tests {
         let client = Yamux::new(client_io.compat(), Config::default(), Mode::Client);
         let server = Yamux::new(server_io.compat(), Config::default(), Mode::Server);
 
+        let client_ctrl = client.control();
         let server_ctrl = server.control();
 
         let mut fut = futures::future::try_join(client.into_future(), server.into_future());
 
         _ = futures::poll!(&mut fut);
 
+        client_ctrl.close();
         server_ctrl.close();
 
         // Both connections close cleanly.
@@ -566,6 +571,7 @@ mod tests {
         // We need to prevent the client from beating us to the punch here.
         fut_client.queue.lock().unwrap().waiting.clear();
 
+        client_ctrl.close();
         server_ctrl.close();
 
         // Both connections close cleanly.
