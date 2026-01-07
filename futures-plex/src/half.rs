@@ -4,21 +4,57 @@
 use futures::{
     AsyncRead, AsyncWrite,
     io::{IoSlice, IoSliceMut},
-    lock::BiLock,
+    lock::{BiLock, BiLockGuard},
 };
+
 use std::{
     fmt,
     io::{self},
+    ops::{Deref, DerefMut},
     pin::Pin,
     task::{Context, Poll, ready},
 };
 
 use crate::SimplexStream;
 
+#[derive(Debug)]
+pub struct ReadGuard<'a, T>(pub(crate) BiLockGuard<'a, T>);
+
+impl<'a, T> Deref for ReadGuard<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a, T: Unpin> DerefMut for ReadGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_pin_mut().get_mut()
+    }
+}
+
 /// The readable half of an object.
 #[derive(Debug)]
 pub struct ReadHalf<T> {
-    handle: BiLock<T>,
+    pub(crate) handle: BiLock<T>,
+}
+
+#[derive(Debug)]
+pub struct WriteGuard<'a, T>(pub(crate) BiLockGuard<'a, T>);
+
+impl<'a, T> Deref for WriteGuard<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a, T: Unpin> DerefMut for WriteGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_pin_mut().get_mut()
+    }
 }
 
 /// The writable half of an object.
@@ -41,6 +77,12 @@ pub(crate) fn split<T: AsyncRead + AsyncWrite>(t: T) -> (ReadHalf<T>, WriteHalf<
 }
 
 impl<T> ReadHalf<T> {
+    /// Attempt to acquire a lock on the read side, returning `Poll::Pending` if
+    /// it can't be acquired.
+    pub fn poll_lock(&self, cx: &mut Context<'_>) -> Poll<ReadGuard<'_, T>> {
+        self.handle.poll_lock(cx).map(ReadGuard)
+    }
+
     /// Checks if this `ReadHalf` and some `WriteHalf` were split from the same
     /// stream.
     pub fn is_pair_of(&self, other: &WriteHalf<T>) -> bool {
@@ -60,6 +102,12 @@ impl<T: Unpin> ReadHalf<T> {
 }
 
 impl<T> WriteHalf<T> {
+    /// Attempt to acquire a lock on the write side, returning `Poll::Pending`
+    /// if it can't be acquired.
+    pub fn poll_lock(&self, cx: &mut Context<'_>) -> Poll<WriteGuard<'_, T>> {
+        self.handle.poll_lock(cx).map(WriteGuard)
+    }
+
     /// Checks if this `WriteHalf` and some `ReadHalf` were split from the same
     /// stream.
     pub fn is_pair_of(&self, other: &ReadHalf<T>) -> bool {
