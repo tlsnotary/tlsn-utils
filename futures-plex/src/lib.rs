@@ -268,12 +268,25 @@ impl SimplexStream {
 
     /// Returns the number of bytes that can be written into this buffer.
     pub fn remaining_mut(&self) -> usize {
-        self.buffer.len() - (self.ptr + self.len)
+        self.buffer.len() - self.len
     }
 
-    /// Returns a reference to the data in the buffer.
+    /// Returns a reference to the first contiguous chunk of data in the buffer.
+    ///
+    /// For a ring buffer, data may wrap around. This returns only the first
+    /// contiguous chunk. Call again after `advance()` to get remaining data.
     pub fn get(&self) -> &[u8] {
-        &self.buffer[self.ptr..(self.ptr + self.len)]
+        if self.len == 0 {
+            return &[];
+        }
+        let cap = self.buffer.len();
+        let end = self.ptr + self.len;
+        if end <= cap {
+            &self.buffer[self.ptr..end]
+        } else {
+            // Data wraps, return first contiguous chunk
+            &self.buffer[self.ptr..cap]
+        }
     }
 
     /// Returns a reference to the data in the buffer when data is available.
@@ -288,9 +301,26 @@ impl SimplexStream {
         }
     }
 
-    /// Returns a mutable slice to the available capacity in the buffer.
+    /// Returns a mutable slice to the first contiguous chunk of available
+    /// capacity in the buffer.
+    ///
+    /// For a ring buffer, available space may wrap around. This returns only
+    /// the first contiguous chunk. Call again after `advance_mut()` to get
+    /// remaining space.
     pub fn get_mut(&mut self) -> &mut [u8] {
-        &mut self.buffer[self.ptr + self.len..]
+        let cap = self.buffer.len();
+        let avail = cap - self.len;
+        if avail == 0 {
+            return &mut [];
+        }
+        let tail = (self.ptr + self.len) % cap;
+        if tail < self.ptr {
+            // Tail wrapped around, contiguous space is tail..ptr
+            &mut self.buffer[tail..self.ptr]
+        } else {
+            // Tail is at or after ptr, contiguous space is tail..cap
+            &mut self.buffer[tail..cap]
+        }
     }
 
     /// Returns a mutable reference to the available space in the buffer when
@@ -327,15 +357,12 @@ impl SimplexStream {
         }
 
         assert!(amt <= self.len, "out of bounds");
-        self.ptr += amt;
+        self.ptr = (self.ptr + amt) % self.buffer.len();
         self.len -= amt;
 
-        if self.len == 0 {
-            self.ptr = 0;
-            // Wake the writer side now that space is available.
-            if let Some(waker) = self.write_waker.take() {
-                waker.wake();
-            }
+        // Wake the writer side now that space is available.
+        if let Some(waker) = self.write_waker.take() {
+            waker.wake();
         }
     }
 
@@ -357,10 +384,7 @@ impl SimplexStream {
             return;
         }
 
-        assert!(
-            self.ptr + self.len + amt <= self.buffer.len(),
-            "out of bounds"
-        );
+        assert!(self.len + amt <= self.buffer.len(), "out of bounds");
         self.len += amt;
 
         // Wake the read side now that data is available.
@@ -563,8 +587,8 @@ mod tests {
         // read 1 byte
         s.advance(1);
         assert_eq!(s.remaining(), 1);
-        // the space is not reclaimed until we've read everything
-        assert_eq!(s.remaining_mut(), 6);
+        // space is reclaimed immediately with ring buffer
+        assert_eq!(s.remaining_mut(), 7);
 
         // write the rest of the bytes
         s.advance_mut(6);
@@ -573,8 +597,7 @@ mod tests {
         s.advance(7);
 
         assert!(s.get().is_empty());
-        // now the rest of the space is reclaimed
-        assert_eq!(s.get_mut(), &[0, 1, 2, 3, 4, 5, 6, 7])
+        assert_eq!(s.get_mut().len(), 8);
     }
 
     #[test]
@@ -606,16 +629,20 @@ mod tests {
         s1.advance(4);
         assert_eq!(s1.remaining(), 0);
 
+        // With ring buffer, data wraps around and may need multiple reads
         s0.advance_mut(16);
         assert_eq!(s0.remaining(), 16);
 
-        assert!(s0.poll_read_to(&mut cx, &mut s1).is_ready());
-        assert_eq!(s0.remaining(), 8);
+        // Transfer in chunks due to ring buffer wrap-around
+        while s0.remaining() > 0 && s1.remaining_mut() > 0 {
+            assert!(s0.poll_read_to(&mut cx, &mut s1).is_ready());
+        }
         assert_eq!(s1.remaining(), 8);
-
         s1.advance(8);
 
-        assert!(s0.poll_read_to(&mut cx, &mut s1).is_ready());
+        while s0.remaining() > 0 && s1.remaining_mut() > 0 {
+            assert!(s0.poll_read_to(&mut cx, &mut s1).is_ready());
+        }
         assert_eq!(s0.remaining(), 0);
         assert_eq!(s1.remaining(), 8);
     }
@@ -649,17 +676,62 @@ mod tests {
         s1.advance(4);
         assert_eq!(s1.remaining(), 0);
 
+        // With ring buffer, data wraps around and may need multiple writes
         s0.advance_mut(16);
         assert_eq!(s0.remaining(), 16);
 
-        assert!(s1.poll_write_from(&mut cx, &mut s0).is_ready());
-        assert_eq!(s0.remaining(), 8);
+        // Transfer in chunks due to ring buffer wrap-around
+        while s0.remaining() > 0 && s1.remaining_mut() > 0 {
+            assert!(s1.poll_write_from(&mut cx, &mut s0).is_ready());
+        }
         assert_eq!(s1.remaining(), 8);
-
         s1.advance(8);
 
-        assert!(s1.poll_write_from(&mut cx, &mut s0).is_ready());
+        while s0.remaining() > 0 && s1.remaining_mut() > 0 {
+            assert!(s1.poll_write_from(&mut cx, &mut s0).is_ready());
+        }
         assert_eq!(s0.remaining(), 0);
         assert_eq!(s1.remaining(), 8);
+    }
+
+    #[test]
+    fn test_ring_buffer_wrap() {
+        let mut s = SimplexStream::new_unsplit(8);
+
+        // Fill buffer completely
+        s.get_mut().copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        s.advance_mut(8);
+        assert_eq!(s.remaining(), 8);
+        assert_eq!(s.remaining_mut(), 0);
+
+        // Read 4 bytes - this frees space at the front
+        assert_eq!(s.get(), &[0, 1, 2, 3, 4, 5, 6, 7]);
+        s.advance(4);
+        // ptr=4, len=4
+        assert_eq!(s.remaining(), 4);
+        assert_eq!(s.remaining_mut(), 4);
+        assert_eq!(s.get(), &[4, 5, 6, 7]);
+
+        // Write space wraps to the front
+        // tail = (4+4) % 8 = 0, so get_mut returns buffer[0..4]
+        assert_eq!(s.get_mut().len(), 4);
+        s.get_mut().copy_from_slice(&[8, 9, 10, 11]);
+        s.advance_mut(4);
+        // ptr=4, len=8
+        assert_eq!(s.remaining(), 8);
+        assert_eq!(s.remaining_mut(), 0);
+
+        // Read wraps around - first chunk is [4,5,6,7]
+        assert_eq!(s.get(), &[4, 5, 6, 7]);
+        s.advance(4);
+        // ptr=0, len=4
+
+        // Second chunk is [8,9,10,11]
+        assert_eq!(s.get(), &[8, 9, 10, 11]);
+        s.advance(4);
+        // ptr=4, len=0
+
+        assert!(s.get().is_empty());
+        assert_eq!(s.remaining_mut(), 8);
     }
 }
