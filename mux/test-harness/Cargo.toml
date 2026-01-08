@@ -1,0 +1,27 @@
+[package]
+name = "test-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+yamux = { path = "../yamux" }
+futures = "0.3.4"
+quickcheck = { package = "quickcheck-ext", path = "../quickcheck-ext" }
+tokio = { version = "1.0", features = ["net", "rt-multi-thread", "macros", "time"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+anyhow = "1"
+log = "0.4.17"
+
+[dev-dependencies]
+criterion = "0.7"
+env_logger = "0.11"
+futures = "0.3.4"
+tokio = { version = "1.0", features = ["net", "rt-multi-thread", "macros", "time"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+constrained-connection = "0.1"
+futures_ringbuf = "0.4.0"
+
+[[bench]]
+name = "concurrent"
+harness = false
