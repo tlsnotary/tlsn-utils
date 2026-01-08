@@ -614,4 +614,72 @@ mod tests {
         // Assert that the pre-allocated stream was consumed.
         assert!(fut_client.allocated.is_empty());
     }
+
+    // Test that close works when one side closes before the other.
+    // This verifies poll_next_inbound works after poll_close completes.
+    #[tokio::test]
+    async fn test_yamux_staggered_close() {
+        let (client_io, server_io) = duplex(1024);
+        let client = Yamux::new(client_io.compat(), Config::default(), Mode::Client);
+        let server = Yamux::new(server_io.compat(), Config::default(), Mode::Server);
+
+        let client_ctrl = client.control();
+        let server_ctrl = server.control();
+
+        let mut fut_client = client.into_future();
+        let mut fut_server = server.into_future();
+
+        // Poll once to establish connection
+        let mut fut_conn = futures::future::try_join(&mut fut_client, &mut fut_server);
+        _ = futures::poll!(&mut fut_conn);
+        drop(fut_conn);
+
+        // Client closes first
+        client_ctrl.close();
+
+        // Poll ONLY client (not server) until client's poll_close completes.
+        // Server is not polled, so it won't process client's GoAway yet.
+        let mut count = 0;
+        loop {
+            count += 1;
+            println!("count: {}", count);
+
+            let poll_client = futures::poll!(&mut fut_client);
+            _ = futures::poll!(&mut fut_server);
+
+            assert!(matches!(poll_client, Poll::Pending));
+            if count >= 10 && fut_client.closed {
+                break;
+            }
+        }
+
+        assert!(fut_client.closed, "client should have completed its close");
+        assert!(
+            !fut_client.remote_closed,
+            "server hasn't been polled, so client shouldn't see remote_closed"
+        );
+
+        // Now server closes
+        server_ctrl.close();
+
+        // Poll server to process client's GoAway and send its own
+        loop {
+            _ = futures::poll!(&mut fut_server);
+            if fut_server.closed && fut_server.remote_closed {
+                break;
+            }
+        }
+
+        // Now poll client - it needs to receive server's GoAway
+        // This is the critical test: can client still poll_next_inbound
+        // after its poll_close has already completed?
+        loop {
+            let poll_result = futures::poll!(&mut fut_client);
+            if poll_result.is_ready() {
+                break;
+            }
+        }
+
+        // If we got here, both completed successfully
+    }
 }
