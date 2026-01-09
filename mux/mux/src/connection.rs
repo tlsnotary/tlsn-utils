@@ -72,7 +72,7 @@ impl fmt::Display for Id {
     }
 }
 
-/// A Yamux connection object.
+/// A multiplexer connection object.
 ///
 /// Wraps the underlying I/O resource and makes progress via its
 /// [`Connection::poll_next_inbound`] method which must be called repeatedly

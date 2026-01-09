@@ -2,7 +2,7 @@
 
 This crate provides a multiplexer for the TLSNotary library.
 
-It is forked from the [`rust-yamux`](https://github.com/libp2p/rust-yamux) crate with modifications made to meet the specific requirements of TLSNotary.
+It is based on the [`rust-yamux`](https://github.com/libp2p/rust-yamux) crate with modifications made to meet the specific requirements of TLSNotary.
 
 ## License
 

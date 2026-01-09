@@ -211,7 +211,7 @@ fn prop_config_send_recv_single() {
         .quickcheck(prop as fn(_, _, _) -> _)
 }
 
-/// This test simulates two endpoints of a Yamux connection which may be unable
+/// This test simulates two endpoints of a multiplexer connection which may be unable
 /// to write simultaneously but can make progress by reading. If both endpoints
 /// don't read in-between trying to finish their writes, a deadlock occurs.
 #[test]
@@ -257,7 +257,7 @@ fn write_deadlock() {
         .run_until(future::poll_fn(|cx| client.poll_new_outbound(cx)))
         .unwrap();
 
-    // Continuously advance the Yamux connection of the client in a background task.
+    // Continuously advance the multiplexer connection of the client in a background task.
     pool.spawner()
         .spawn_obj(
             noop_server(stream::poll_fn(move |cx| client.poll_next_inbound(cx)))

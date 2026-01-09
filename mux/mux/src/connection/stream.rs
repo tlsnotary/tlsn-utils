@@ -37,7 +37,7 @@ use std::{
 
 mod flow_control;
 
-/// The state of a Yamux stream.
+/// The state of a stream.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum State {
     /// Open bidirectionally.
@@ -84,7 +84,7 @@ pub(crate) enum Flag {
     Ack,
 }
 
-/// A multiplexed Yamux stream.
+/// A multiplexed stream.
 ///
 /// Streams are created either outbound via [`crate::Connection::poll_new_outbound`]
 /// or inbound via [`crate::Connection::poll_next_inbound`].

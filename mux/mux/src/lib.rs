@@ -9,7 +9,7 @@
 // at https://www.apache.org/licenses/LICENSE-2.0 and a copy of the MIT license
 // at https://opensource.org/licenses/MIT.
 
-//! This crate implements the [Yamux specification][1].
+//! A multiplexing library for TLSNotary.
 //!
 //! It multiplexes independent I/O streams over reliable, ordered connections,
 //! such as TCP/IP.
@@ -20,8 +20,6 @@
 //!   provides methods for opening outbound or accepting inbound streams.
 //! - [`Stream`], which implements [`futures::io::AsyncRead`] and
 //!   [`futures::io::AsyncWrite`].
-//!
-//! [1]: https://github.com/hashicorp/yamux/blob/master/spec.md
 
 #![forbid(unsafe_code)]
 
@@ -43,7 +41,7 @@ const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;
 const GIB: usize = MIB * 1024;
 
-pub const DEFAULT_CREDIT: u32 = 256 * KIB as u32; // as per yamux specification
+pub const DEFAULT_CREDIT: u32 = 256 * KIB as u32;
 
 pub type Result<T> = std::result::Result<T, ConnectionError>;
 
@@ -52,23 +50,19 @@ pub type Result<T> = std::result::Result<T, ConnectionError>;
 /// This enables a very basic form of backpressure on the creation of streams.
 const MAX_ACK_BACKLOG: usize = 256;
 
-/// Default maximum number of bytes a Yamux data frame might carry as its
+/// Default maximum number of bytes a data frame might carry as its
 /// payload when being send. Larger Payloads will be split.
 ///
-/// The data frame payload size is not restricted by the yamux specification.
-/// Still, this implementation restricts the size to:
+/// This implementation restricts the size to:
 ///
 /// 1. Reduce delays sending time-sensitive frames, e.g. window updates.
 /// 2. Minimize head-of-line blocking across streams.
 /// 3. Enable better interleaving of send and receive operations, as each is
 ///    carried out atomically instead of concurrently with its respective
 ///    counterpart.
-///
-/// For details on why this concrete value was chosen, see
-/// https://github.com/paritytech/yamux/issues/100.
 const DEFAULT_SPLIT_SEND_SIZE: usize = 16 * KIB;
 
-/// Yamux configuration.
+/// Multiplexer configuration.
 ///
 /// The default configuration values are as follows:
 ///
@@ -98,7 +92,7 @@ impl Default for Config {
 impl Config {
     /// Set the upper limit for the total receive window size across all streams of a connection.
     ///
-    /// Must be `>= 256 KiB * max_num_streams` to allow each stream at least the Yamux default
+    /// Must be `>= 256 KiB * max_num_streams` to allow each stream at least the default
     /// window size.
     ///
     /// The window of a stream starts at 256 KiB and is increased (auto-tuned) based on the
@@ -131,7 +125,7 @@ impl Config {
             self.max_connection_receive_window.unwrap_or(usize::MAX)
                 >= self.max_num_streams * DEFAULT_CREDIT as usize,
             "`max_connection_receive_window` must be `>= 256 KiB * max_num_streams` to allow each
-            stream at least the Yamux default window size"
+            stream at least the default window size"
         );
 
         self
@@ -145,7 +139,7 @@ impl Config {
             self.max_connection_receive_window.unwrap_or(usize::MAX)
                 >= self.max_num_streams * DEFAULT_CREDIT as usize,
             "`max_connection_receive_window` must be `>= 256 KiB * max_num_streams` to allow each
-            stream at least the Yamux default window size"
+            stream at least the default window size"
         );
 
         self

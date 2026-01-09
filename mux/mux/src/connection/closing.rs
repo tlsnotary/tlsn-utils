@@ -11,7 +11,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-/// A [`Future`] that gracefully closes the yamux connection.
+/// A [`Future`] that gracefully closes the multiplexer connection.
 #[must_use]
 pub struct Closing<T> {
     state: State,
