@@ -14,10 +14,12 @@ use std::task::{Context, Poll};
 /// A [`Future`] that gracefully closes the multiplexer connection.
 #[must_use]
 pub struct Closing<T> {
+    id: super::Id,
     state: State,
     stream_receivers: SelectAll<TaggedStream<StreamId, mpsc::Receiver<StreamCommand>>>,
     pending_frames: VecDeque<Frame<()>>,
     socket: Fuse<frame::Io<T>>,
+    wait_for_reply: bool,
 }
 
 impl<T> Closing<T>
@@ -25,15 +27,19 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     pub(crate) fn new(
+        id: super::Id,
         stream_receivers: SelectAll<TaggedStream<StreamId, mpsc::Receiver<StreamCommand>>>,
         pending_frames: VecDeque<Frame<()>>,
         socket: Fuse<frame::Io<T>>,
+        wait_for_reply: bool,
     ) -> Self {
         Self {
+            id,
             state: State::ClosingStreamReceiver,
             stream_receivers,
             pending_frames,
             socket,
+            wait_for_reply,
         }
     }
 }
@@ -50,6 +56,7 @@ where
         loop {
             match this.state {
                 State::ClosingStreamReceiver => {
+                    log::debug!("{}: draining streams", this.id);
                     for stream in this.stream_receivers.iter_mut() {
                         stream.inner_mut().close();
                     }
@@ -69,6 +76,11 @@ where
                         Poll::Pending | Poll::Ready(None) => {
                             // No more frames from streams, append `Term` frame and flush them all.
                             this.pending_frames.push_back(Frame::term().into());
+                            log::debug!(
+                                "{}: flushing {} frames",
+                                this.id,
+                                this.pending_frames.len()
+                            );
                             this.state = State::FlushingPendingFrames;
                             continue;
                         }
@@ -79,12 +91,42 @@ where
 
                     match this.pending_frames.pop_front() {
                         Some(frame) => this.socket.start_send_unpin(frame)?,
-                        None => this.state = State::ClosingSocket,
+                        None => {
+                            if this.wait_for_reply {
+                                log::debug!("{}: awaiting goaway", this.id);
+                                this.state = State::WaitingForReply;
+                            } else {
+                                log::debug!("{}: closing socket", this.id);
+                                this.state = State::ClosingSocket;
+                            }
+                        }
+                    }
+                }
+                State::WaitingForReply => {
+                    // Wait for a GoAway frame from the remote before closing.
+                    match this.socket.poll_next_unpin(cx) {
+                        Poll::Ready(Some(Ok(frame))) => {
+                            if frame.header().tag() == frame::header::Tag::GoAway {
+                                log::debug!("{}: received goaway", this.id);
+                                this.state = State::ClosingSocket;
+                            }
+                            // Ignore other frames while waiting for GoAway
+                        }
+                        Poll::Ready(Some(Err(e))) => {
+                            return Poll::Ready(Err(e.into()));
+                        }
+                        Poll::Ready(None) => {
+                            // Remote closed without sending GoAway, proceed to close
+                            log::debug!("{}: remote closed without goaway", this.id);
+                            this.state = State::ClosingSocket;
+                        }
+                        Poll::Pending => return Poll::Pending,
                     }
                 }
                 State::ClosingSocket => {
                     ready!(this.socket.poll_close_unpin(cx))?;
 
+                    log::debug!("{}: socket closed", this.id);
                     return Poll::Ready(Ok(()));
                 }
             }
@@ -96,6 +138,7 @@ enum State {
     ClosingStreamReceiver,
     DrainingStreamReceiver,
     FlushingPendingFrames,
+    WaitingForReply,
     ClosingSocket,
 }
 
@@ -187,9 +230,11 @@ mod tests {
             closed: false,
         };
         let mut closing = Closing::new(
+            crate::connection::Id(0),
             stream_receivers,
             pending_frames.into(),
             frame::Io::new(crate::connection::Id(0), &mut socket).fuse(),
+            false,
         );
         futures::executor::block_on(async { poll_fn(|cx| closing.poll_unpin(cx)).await.unwrap() });
         assert!(closing.pending_frames.is_empty());

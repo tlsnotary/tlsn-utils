@@ -153,6 +153,12 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                         self.inner = ConnectionState::Active(active);
                         return Poll::Ready(Some(Ok(stream)));
                     }
+                    Poll::Ready(Err(ConnectionError::Closed)) if active.config.close_sync => {
+                        // Remote sent GoAway with close_sync enabled.
+                        // Send our GoAway reply via Closing (no wait).
+                        self.inner = ConnectionState::Closing(active.close_no_wait());
+                        continue;
+                    }
                     Poll::Ready(Err(e)) => {
                         self.inner = ConnectionState::Cleanup(active.cleanup(e));
                         continue;
@@ -377,12 +383,26 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
 
     /// Gracefully close the connection to the remote.
     fn close(self) -> Closing<T> {
+        let wait_for_reply = self.config.close_sync;
         let pending_frames = self
             .pending_read_frame
             .into_iter()
             .chain(self.pending_write_frame)
             .collect::<VecDeque<Frame<()>>>();
-        Closing::new(self.stream_receivers, pending_frames, self.socket)
+        Closing::new(self.id, self.stream_receivers, pending_frames, self.socket, wait_for_reply)
+    }
+
+    /// Close the connection without waiting for a reply.
+    ///
+    /// Used when we received a GoAway from remote and need to send our reply,
+    /// but don't need to wait since we already got their GoAway.
+    fn close_no_wait(self) -> Closing<T> {
+        let pending_frames = self
+            .pending_read_frame
+            .into_iter()
+            .chain(self.pending_write_frame)
+            .collect::<VecDeque<Frame<()>>>();
+        Closing::new(self.id, self.stream_receivers, pending_frames, self.socket, false)
     }
 
     /// Cleanup all our resources.

@@ -20,7 +20,7 @@ use futures::{
     AsyncReadExt, AsyncWriteExt, FutureExt, StreamExt,
 };
 use quickcheck::QuickCheck;
-use std::{panic::panic_any, pin::pin};
+use std::{panic::panic_any, pin::pin, task::Poll};
 use test_harness::*;
 use tlsn_mux::{Config, Connection, ConnectionError, Mode};
 use tokio::{net::TcpStream, runtime::Runtime, task};
@@ -211,9 +211,10 @@ fn prop_config_send_recv_single() {
         .quickcheck(prop as fn(_, _, _) -> _)
 }
 
-/// This test simulates two endpoints of a multiplexer connection which may be unable
-/// to write simultaneously but can make progress by reading. If both endpoints
-/// don't read in-between trying to finish their writes, a deadlock occurs.
+/// This test simulates two endpoints of a multiplexer connection which may be
+/// unable to write simultaneously but can make progress by reading. If both
+/// endpoints don't read in-between trying to finish their writes, a deadlock
+/// occurs.
 #[test]
 fn write_deadlock() {
     let _ = env_logger::try_init();
@@ -257,7 +258,8 @@ fn write_deadlock() {
         .run_until(future::poll_fn(|cx| client.poll_new_outbound(cx)))
         .unwrap();
 
-    // Continuously advance the multiplexer connection of the client in a background task.
+    // Continuously advance the multiplexer connection of the client in a background
+    // task.
     pool.spawner()
         .spawn_obj(
             noop_server(stream::poll_fn(move |cx| client.poll_next_inbound(cx)))
@@ -342,4 +344,44 @@ fn close_through_drop_of_stream_propagates_to_remote() {
         Ok::<(), std::io::Error>(())
     })
     .unwrap();
+}
+
+#[test]
+fn close_sync() {
+    let _ = env_logger::try_init();
+
+    let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(1024, 1024);
+    let mut config = Config::default();
+    config.set_close_sync(true);
+    let mut server = Connection::new(server_endpoint, config.clone(), Mode::Server);
+    let mut client = Connection::new(client_endpoint, config, Mode::Client);
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(&waker);
+
+    let Poll::Ready(Ok(client_stream)) = client.poll_new_outbound(&mut cx) else {
+        panic!("client should open stream")
+    };
+
+    assert!(pin!(client_stream).poll_write(&mut cx, b"hello").is_ready());
+
+    // Poll client a bunch of times and ensure it doesn't finish closing yet.
+    for _ in 0..10 {
+        assert!(client.poll_close(&mut cx).is_pending());
+    }
+
+    let Poll::Ready(Some(Ok(server_stream))) = server.poll_next_inbound(&mut cx) else {
+        panic!("server should receive stream")
+    };
+
+    let mut buf = [0u8; 5];
+    assert!(pin!(server_stream).poll_read(&mut cx, &mut buf).is_ready());
+    assert_eq!(&buf, b"hello");
+
+    let Poll::Ready(None) = server.poll_next_inbound(&mut cx) else {
+        panic!("server should process close");
+    };
+
+    assert!(server.poll_close(&mut cx).is_ready());
+    assert!(client.poll_close(&mut cx).is_ready());
 }
