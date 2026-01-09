@@ -1,7 +1,8 @@
 // Copyright (c) 2018-2019 Parity Technologies (UK) Ltd.
 // Modifications Copyright (c) 2026 TLSNotary
 //
-// Licensed under the Apache License, Version 2.0 or MIT license, at your option.
+// Licensed under the Apache License, Version 2.0 or MIT license, at your
+// option.
 //
 // A copy of the Apache License, Version 2.0 is included in the software as
 // LICENSE-APACHE and a copy of the MIT license is included in the software
@@ -18,23 +19,32 @@ mod closing;
 mod rtt;
 mod stream;
 
-use crate::tagged_stream::TaggedStream;
 use crate::{
+    Config, DEFAULT_CREDIT, MAX_ACK_BACKLOG, Result,
     error::ConnectionError,
-    frame::header::{self, Data, GoAway, Header, Ping, StreamId, Tag, WindowUpdate, CONNECTION_ID},
-    frame::{self, Frame},
-    Config, DEFAULT_CREDIT,
+    frame::{
+        self, Frame,
+        header::{self, CONNECTION_ID, Data, GoAway, Header, Ping, StreamId, Tag, WindowUpdate},
+    },
+    tagged_stream::TaggedStream,
 };
-use crate::{Result, MAX_ACK_BACKLOG};
 use cleanup::Cleanup;
 use closing::Closing;
-use futures::stream::SelectAll;
-use futures::{channel::mpsc, future::Either, prelude::*, sink::SinkExt, stream::Fuse};
+use futures::{
+    channel::mpsc,
+    future::Either,
+    prelude::*,
+    sink::SinkExt,
+    stream::{Fuse, SelectAll},
+};
 use nohash_hasher::IntMap;
 use parking_lot::Mutex;
-use std::collections::VecDeque;
-use std::task::{Context, Waker};
-use std::{fmt, sync::Arc, task::Poll};
+use std::{
+    collections::VecDeque,
+    fmt,
+    sync::Arc,
+    task::{Context, Poll, Waker},
+};
 
 pub use stream::{Packet, State, Stream};
 
@@ -91,7 +101,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
 
     /// Poll for a new outbound stream.
     ///
-    /// This function will fail if the current state does not allow opening new outbound streams.
+    /// This function will fail if the current state does not allow opening new
+    /// outbound streams.
     pub fn poll_new_outbound(&mut self, cx: &mut Context<'_>) -> Poll<Result<Stream>> {
         loop {
             match std::mem::replace(&mut self.inner, ConnectionState::Poisoned) {
@@ -110,12 +121,12 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                     }
                 },
                 ConnectionState::Closing(mut inner) => match inner.poll_unpin(cx) {
-                    Poll::Ready(Ok(())) => {
-                        self.inner = ConnectionState::Closed;
+                    Poll::Ready(Ok(io)) => {
+                        self.inner = ConnectionState::Closed(Some(io));
                         return Poll::Ready(Err(ConnectionError::Closed));
                     }
                     Poll::Ready(Err(e)) => {
-                        self.inner = ConnectionState::Closed;
+                        self.inner = ConnectionState::Closed(None);
                         return Poll::Ready(Err(e));
                     }
                     Poll::Pending => {
@@ -125,7 +136,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                 },
                 ConnectionState::Cleanup(mut inner) => match inner.poll_unpin(cx) {
                     Poll::Ready(e) => {
-                        self.inner = ConnectionState::Closed;
+                        self.inner = ConnectionState::Closed(None);
                         return Poll::Ready(Err(e));
                     }
                     Poll::Pending => {
@@ -133,8 +144,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                         return Poll::Pending;
                     }
                 },
-                ConnectionState::Closed => {
-                    self.inner = ConnectionState::Closed;
+                ConnectionState::Closed(_) => {
                     return Poll::Ready(Err(ConnectionError::Closed));
                 }
                 ConnectionState::Poisoned => unreachable!(),
@@ -169,12 +179,12 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                     }
                 },
                 ConnectionState::Closing(mut closing) => match closing.poll_unpin(cx) {
-                    Poll::Ready(Ok(())) => {
-                        self.inner = ConnectionState::Closed;
+                    Poll::Ready(Ok(io)) => {
+                        self.inner = ConnectionState::Closed(Some(io));
                         return Poll::Ready(None);
                     }
                     Poll::Ready(Err(e)) => {
-                        self.inner = ConnectionState::Closed;
+                        self.inner = ConnectionState::Closed(None);
                         return Poll::Ready(Some(Err(e)));
                     }
                     Poll::Pending => {
@@ -184,11 +194,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                 },
                 ConnectionState::Cleanup(mut cleanup) => match cleanup.poll_unpin(cx) {
                     Poll::Ready(ConnectionError::Closed) => {
-                        self.inner = ConnectionState::Closed;
+                        self.inner = ConnectionState::Closed(None);
                         return Poll::Ready(None);
                     }
                     Poll::Ready(other) => {
-                        self.inner = ConnectionState::Closed;
+                        self.inner = ConnectionState::Closed(None);
                         return Poll::Ready(Some(Err(other)));
                     }
                     Poll::Pending => {
@@ -196,8 +206,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                         return Poll::Pending;
                     }
                 },
-                ConnectionState::Closed => {
-                    self.inner = ConnectionState::Closed;
+                ConnectionState::Closed(_) => {
                     return Poll::Ready(None);
                 }
                 ConnectionState::Poisoned => unreachable!(),
@@ -213,12 +222,12 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                     self.inner = ConnectionState::Closing(active.close());
                 }
                 ConnectionState::Closing(mut inner) => match inner.poll_unpin(cx) {
-                    Poll::Ready(Ok(())) => {
-                        self.inner = ConnectionState::Closed;
+                    Poll::Ready(Ok(io)) => {
+                        self.inner = ConnectionState::Closed(Some(io));
                     }
                     Poll::Ready(Err(e)) => {
                         log::warn!("Failure while closing connection: {e}");
-                        self.inner = ConnectionState::Closed;
+                        self.inner = ConnectionState::Closed(None);
                         return Poll::Ready(Err(e));
                     }
                     Poll::Pending => {
@@ -229,7 +238,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                 ConnectionState::Cleanup(mut cleanup) => match cleanup.poll_unpin(cx) {
                     Poll::Ready(reason) => {
                         log::warn!("Failure while closing connection: {reason}");
-                        self.inner = ConnectionState::Closed;
+                        self.inner = ConnectionState::Closed(None);
                         return Poll::Ready(Ok(()));
                     }
                     Poll::Pending => {
@@ -237,14 +246,24 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                         return Poll::Pending;
                     }
                 },
-                ConnectionState::Closed => {
-                    self.inner = ConnectionState::Closed;
+                ConnectionState::Closed(_) => {
                     return Poll::Ready(Ok(()));
                 }
                 ConnectionState::Poisoned => {
                     unreachable!()
                 }
             }
+        }
+    }
+
+    /// Returns the underlying IO if the connection is closed.
+    ///
+    /// Returns `Err(self)` if the connection is not in the closed state
+    /// or if the IO is not available (e.g., after an error cleanup).
+    pub fn try_into_io(mut self) -> std::result::Result<T, Self> {
+        match &mut self.inner {
+            ConnectionState::Closed(io) => io.take().ok_or_else(|| self),
+            _ => Err(self),
         }
     }
 }
@@ -255,7 +274,7 @@ impl<T> Drop for Connection<T> {
             ConnectionState::Active(active) => active.drop_all_streams(),
             ConnectionState::Closing(_) => {}
             ConnectionState::Cleanup(_) => {}
-            ConnectionState::Closed => {}
+            ConnectionState::Closed(_) => {}
             ConnectionState::Poisoned => {}
         }
     }
@@ -268,9 +287,10 @@ enum ConnectionState<T> {
     Closing(Closing<T>),
     /// An error occurred and we are cleaning up our resources.
     Cleanup(Cleanup),
-    /// The connection is closed.
-    Closed,
-    /// Something went wrong during our state transitions. Should never happen unless there is a bug.
+    /// The connection is closed. Contains the IO if available.
+    Closed(Option<T>),
+    /// Something went wrong during our state transitions. Should never happen
+    /// unless there is a bug.
     Poisoned,
 }
 
@@ -280,7 +300,7 @@ impl<T> fmt::Debug for ConnectionState<T> {
             ConnectionState::Active(_) => write!(f, "Active"),
             ConnectionState::Closing(_) => write!(f, "Closing"),
             ConnectionState::Cleanup(_) => write!(f, "Cleanup"),
-            ConnectionState::Closed => write!(f, "Closed"),
+            ConnectionState::Closed(_) => write!(f, "Closed"),
             ConnectionState::Poisoned => write!(f, "Poisoned"),
         }
     }
@@ -304,10 +324,11 @@ struct Active<T> {
 
     rtt: rtt::Rtt,
 
-    /// A stream's `max_stream_receive_window` can grow beyond [`DEFAULT_CREDIT`], see
-    /// [`Stream::next_window_update`]. This field is the sum of the bytes by which all streams'
-    /// `max_stream_receive_window` have each exceeded [`DEFAULT_CREDIT`]. Used to enforce
-    /// [`Config::max_connection_receive_window`].
+    /// A stream's `max_stream_receive_window` can grow beyond
+    /// [`DEFAULT_CREDIT`], see [`Stream::next_window_update`]. This field
+    /// is the sum of the bytes by which all streams'
+    /// `max_stream_receive_window` have each exceeded [`DEFAULT_CREDIT`]. Used
+    /// to enforce [`Config::max_connection_receive_window`].
     accumulated_max_stream_windows: Arc<Mutex<usize>>,
 }
 /// `Stream` to `Connection` commands.
@@ -389,7 +410,14 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             .into_iter()
             .chain(self.pending_write_frame)
             .collect::<VecDeque<Frame<()>>>();
-        Closing::new(self.id, self.stream_receivers, pending_frames, self.socket, wait_for_reply)
+        Closing::new(
+            self.id,
+            self.stream_receivers,
+            pending_frames,
+            self.socket,
+            wait_for_reply,
+            self.config.keep_alive,
+        )
     }
 
     /// Close the connection without waiting for a reply.
@@ -402,12 +430,20 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             .into_iter()
             .chain(self.pending_write_frame)
             .collect::<VecDeque<Frame<()>>>();
-        Closing::new(self.id, self.stream_receivers, pending_frames, self.socket, false)
+        Closing::new(
+            self.id,
+            self.stream_receivers,
+            pending_frames,
+            self.socket,
+            false,
+            self.config.keep_alive,
+        )
     }
 
     /// Cleanup all our resources.
     ///
-    /// This should be called in the context of an unrecoverable error on the connection.
+    /// This should be called in the context of an unrecoverable error on the
+    /// connection.
     fn cleanup(mut self, error: ConnectionError) -> Cleanup {
         self.drop_all_streams();
 
@@ -417,9 +453,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
     fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Result<Stream>> {
         loop {
             if self.socket.poll_ready_unpin(cx).is_ready() {
-                // Note `next_ping` does not register a waker and thus if not called regularly (idle
-                // connection) no ping is sent. This is deliberate as an idle connection does not
-                // need RTT measurements to increase its stream receive window.
+                // Note `next_ping` does not register a waker and thus if not called regularly
+                // (idle connection) no ping is sent. This is deliberate as an
+                // idle connection does not need RTT measurements to increase
+                // its stream receive window.
                 if let Some(frame) = self.rtt.next_ping() {
                     self.socket.start_send_unpin(frame.into())?;
                     continue;
@@ -501,7 +538,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                 }
             }
 
-            // If we make it this far, at least one of the above must have registered a waker.
+            // If we make it this far, at least one of the above must have registered a
+            // waker.
             return Poll::Pending;
         }
     }
@@ -513,7 +551,9 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         }
 
         if self.ack_backlog() >= MAX_ACK_BACKLOG {
-            log::debug!("{MAX_ACK_BACKLOG} streams waiting for ACK, registering task for wake-up until remote acknowledges at least one stream");
+            log::debug!(
+                "{MAX_ACK_BACKLOG} streams waiting for ACK, registering task for wake-up until remote acknowledges at least one stream"
+            );
             self.new_outbound_stream_waker = Some(cx.waker().clone());
             return Poll::Pending;
         }
@@ -690,10 +730,12 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                 stream_id,
                 frame
             );
-            // We do not consider this a protocol violation and thus do not send a stream reset
-            // because we may still be processing pending `StreamCommand`s of this stream that were
-            // sent before it has been dropped and "garbage collected". Such a stream reset would
-            // interfere with the frames that still need to be sent, causing premature stream
+            // We do not consider this a protocol violation and thus do not send
+            // a stream reset because we may still be processing
+            // pending `StreamCommand`s of this stream that were
+            // sent before it has been dropped and "garbage collected". Such a
+            // stream reset would interfere with the frames that
+            // still need to be sent, causing premature stream
             // termination for the remote.
             //
             // See https://github.com/paritytech/yamux/issues/110 for details.
@@ -769,10 +811,12 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                 stream_id,
                 frame
             );
-            // We do not consider this a protocol violation and thus do not send a stream reset
-            // because we may still be processing pending `StreamCommand`s of this stream that were
-            // sent before it has been dropped and "garbage collected". Such a stream reset would
-            // interfere with the frames that still need to be sent, causing premature stream
+            // We do not consider this a protocol violation and thus do not send
+            // a stream reset because we may still be processing
+            // pending `StreamCommand`s of this stream that were
+            // sent before it has been dropped and "garbage collected". Such a
+            // stream reset would interfere with the frames that
+            // still need to be sent, causing premature stream
             // termination for the remote.
             //
             // See https://github.com/paritytech/yamux/issues/110 for details.
@@ -797,10 +841,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             stream_id,
             frame
         );
-        // We do not consider this a protocol violation and thus do not send a stream reset because
-        // we may still be processing pending `StreamCommand`s of this stream that were sent before
-        // it has been dropped and "garbage collected". Such a stream reset would interfere with the
-        // frames that still need to be sent, causing premature stream termination for the remote.
+        // We do not consider this a protocol violation and thus do not send a stream
+        // reset because we may still be processing pending `StreamCommand`s of
+        // this stream that were sent before it has been dropped and "garbage
+        // collected". Such a stream reset would interfere with the frames that
+        // still need to be sent, causing premature stream termination for the remote.
         //
         // See https://github.com/paritytech/yamux/issues/110 for details.
 
@@ -859,7 +904,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         Ok(proposed)
     }
 
-    /// The ACK backlog is defined as the number of outbound streams that have not yet been acknowledged.
+    /// The ACK backlog is defined as the number of outbound streams that have
+    /// not yet been acknowledged.
     fn ack_backlog(&mut self) -> usize {
         self.streams
             .iter()
@@ -878,7 +924,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             .count()
     }
 
-    // Check if the given stream ID is valid w.r.t. the provided tag and our connection mode.
+    // Check if the given stream ID is valid w.r.t. the provided tag and our
+    // connection mode.
     fn is_valid_remote_id(&self, id: StreamId, tag: Tag) -> bool {
         if tag == Tag::Ping || tag == Tag::GoAway {
             return id.is_session();

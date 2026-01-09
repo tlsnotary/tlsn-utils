@@ -18,8 +18,9 @@ pub struct Closing<T> {
     state: State,
     stream_receivers: SelectAll<TaggedStream<StreamId, mpsc::Receiver<StreamCommand>>>,
     pending_frames: VecDeque<Frame<()>>,
-    socket: Fuse<frame::Io<T>>,
+    socket: Option<Fuse<frame::Io<T>>>,
     wait_for_reply: bool,
+    keep_alive: bool,
 }
 
 impl<T> Closing<T>
@@ -32,14 +33,16 @@ where
         pending_frames: VecDeque<Frame<()>>,
         socket: Fuse<frame::Io<T>>,
         wait_for_reply: bool,
+        keep_alive: bool,
     ) -> Self {
         Self {
             id,
             state: State::ClosingStreamReceiver,
             stream_receivers,
             pending_frames,
-            socket,
+            socket: Some(socket),
             wait_for_reply,
+            keep_alive,
         }
     }
 }
@@ -48,7 +51,7 @@ impl<T> Future for Closing<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = Result<()>;
+    type Output = Result<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -87,10 +90,11 @@ where
                     }
                 }
                 State::FlushingPendingFrames => {
-                    ready!(this.socket.poll_ready_unpin(cx))?;
+                    let socket = this.socket.as_mut().expect("socket should be present");
+                    ready!(socket.poll_ready_unpin(cx))?;
 
                     match this.pending_frames.pop_front() {
-                        Some(frame) => this.socket.start_send_unpin(frame)?,
+                        Some(frame) => socket.start_send_unpin(frame)?,
                         None => {
                             if this.wait_for_reply {
                                 log::debug!("{}: awaiting goaway", this.id);
@@ -104,7 +108,8 @@ where
                 }
                 State::WaitingForReply => {
                     // Wait for a GoAway frame from the remote before closing.
-                    match this.socket.poll_next_unpin(cx) {
+                    let socket = this.socket.as_mut().expect("socket should be present");
+                    match socket.poll_next_unpin(cx) {
                         Poll::Ready(Some(Ok(frame))) => {
                             if frame.header().tag() == frame::header::Tag::GoAway {
                                 log::debug!("{}: received goaway", this.id);
@@ -124,10 +129,20 @@ where
                     }
                 }
                 State::ClosingSocket => {
-                    ready!(this.socket.poll_close_unpin(cx))?;
-
-                    log::debug!("{}: socket closed", this.id);
-                    return Poll::Ready(Ok(()));
+                    if this.keep_alive {
+                        log::debug!("{}: keeping socket alive", this.id);
+                    } else {
+                        let socket = this.socket.as_mut().expect("socket should be present");
+                        ready!(socket.poll_close_unpin(cx))?;
+                        log::debug!("{}: socket closed", this.id);
+                    }
+                    let io = this
+                        .socket
+                        .take()
+                        .expect("socket should be present")
+                        .into_inner()
+                        .into_inner();
+                    return Poll::Ready(Ok(io));
                 }
             }
         }
@@ -234,6 +249,7 @@ mod tests {
             stream_receivers,
             pending_frames.into(),
             frame::Io::new(crate::connection::Id(0), &mut socket).fuse(),
+            false,
             false,
         );
         futures::executor::block_on(async { poll_fn(|cx| closing.poll_unpin(cx)).await.unwrap() });

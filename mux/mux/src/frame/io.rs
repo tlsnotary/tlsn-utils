@@ -48,6 +48,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Io<T> {
             write_state: WriteState::Init,
         }
     }
+
+    pub(crate) fn into_inner(self) -> T {
+        self.io
+    }
 }
 
 /// The stages of writing a new `Frame`.
