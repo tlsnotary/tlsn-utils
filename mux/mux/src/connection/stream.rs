@@ -252,6 +252,47 @@ impl Stream {
         self.shared.lock()
     }
 
+    /// Send StreamInit command for client streams.
+    ///
+    /// This is called on first read or write to initialize the stream.
+    /// Returns Poll::Ready(Ok(())) when init is sent, Poll::Pending if waiting.
+    fn poll_send_stream_init(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
+        debug_assert!(
+            self.mode == Mode::Client,
+            "only client streams send StreamInit"
+        );
+
+        ready!(
+            self.sender
+                .poll_ready(cx)
+                .map_err(|_| self.write_zero_err())?
+        );
+
+        let stream_id = self
+            .shared()
+            .stream_id
+            .expect("client stream ID is always set");
+
+        let cmd = StreamCommand::SendInit {
+            stream_id,
+            user_id: self.user_id.clone(),
+        };
+
+        self.sender
+            .start_send(cmd)
+            .map_err(|_| self.write_zero_err())?;
+
+        self.shared().update_state(
+            self.conn,
+            Some(stream_id),
+            State::Open {
+                acknowledged: false,
+            },
+        );
+
+        Poll::Ready(Ok(()))
+    }
+
     pub(crate) fn clone_shared(&self) -> Arc<Mutex<Shared>> {
         self.shared.clone()
     }
@@ -325,13 +366,23 @@ impl AsyncRead for Stream {
             Poll::Pending => {}
         }
 
-        let mut shared = self.shared();
-        // If stream is still initializing (server waiting for match), wait for it
-        if shared.state().is_initializing() {
-            log::trace!("{}: waiting for stream match", self);
-            shared.reader = Some(cx.waker().clone());
-            return Poll::Pending;
+        // If stream is still initializing, handle based on mode
+        if self.shared().state().is_initializing() {
+            match self.mode {
+                Mode::Client => {
+                    // Client sends StreamInit on first read or write
+                    ready!(self.poll_send_stream_init(cx)?);
+                }
+                Mode::Server => {
+                    // Server waits for client's StreamInit
+                    log::trace!("{}: waiting for stream match", self);
+                    self.shared().reader = Some(cx.waker().clone());
+                    return Poll::Pending;
+                }
+            }
         }
+
+        let mut shared = self.shared();
 
         // Copy data from stream buffer.
         let mut n = 0;
@@ -379,51 +430,32 @@ impl AsyncWrite for Stream {
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        ready!(
-            self.sender
-                .poll_ready(cx)
-                .map_err(|_| self.write_zero_err())?
-        );
-
-        let (stream_id, is_initializing) = {
-            let shared = self.shared();
-            (shared.stream_id, shared.state().is_initializing())
-        };
-
-        if is_initializing {
+        // If stream is still initializing, handle based on mode
+        if self.shared().state().is_initializing() {
             match self.mode {
                 Mode::Client => {
-                    let stream_id = stream_id.expect("client stream ID is always set");
-                    let cmd = StreamCommand::SendInit {
-                        stream_id,
-                        user_id: self.user_id.clone(),
-                    };
-                    self.sender
-                        .start_send(cmd)
-                        .map_err(|_| self.write_zero_err())?;
-                    self.shared().update_state(
-                        self.conn,
-                        Some(stream_id),
-                        State::Open {
-                            acknowledged: false,
-                        },
-                    );
-
-                    // Need to poll_ready again before sending data
-                    ready!(
-                        self.sender
-                            .poll_ready(cx)
-                            .map_err(|_| self.write_zero_err())?
-                    );
+                    // Client sends StreamInit on first read or write
+                    ready!(self.poll_send_stream_init(cx)?);
                 }
                 Mode::Server => {
+                    // Server waits for client's StreamInit
                     self.shared().writer = Some(cx.waker().clone());
                     return Poll::Pending;
                 }
             }
         }
 
-        let stream_id = stream_id.expect("stream ID should be set after init");
+        // Ensure sender is ready before sending data
+        ready!(
+            self.sender
+                .poll_ready(cx)
+                .map_err(|_| self.write_zero_err())?
+        );
+
+        let stream_id = self
+            .shared()
+            .stream_id
+            .expect("stream ID should be set after init");
         let body = {
             let mut shared = self.shared();
             if !shared.state().can_write() {
