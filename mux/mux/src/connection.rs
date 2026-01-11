@@ -96,7 +96,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
     /// StreamInit if one has already been received for this user_id.
     ///
     /// The `user_id` parameter is a required user-defined stream identifier
-    /// (1-32 bytes). User IDs must be unique within the session.
+    /// (1-256 bytes). User IDs must be unique within the session.
     pub fn new_stream(&mut self, user_id: &[u8]) -> Result<Stream> {
         match &mut self.inner {
             ConnectionState::Active(active) => active.new_stream(user_id),

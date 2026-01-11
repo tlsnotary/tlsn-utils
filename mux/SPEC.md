@@ -166,7 +166,7 @@ StreamInit frames initiate a new stream. The Length field specifies the number o
 
 **User-Defined Stream Identifiers:**
 - Length of `0` indicates no user ID (the stream has no user-defined identifier).
-- Length MUST NOT exceed 32 bytes.
+- Length MUST NOT exceed 256 bytes.
 - Non-empty user IDs MUST be unique within a session. Duplicate non-empty user IDs are a protocol error.
 - Multiple streams MAY have no user ID (Length 0); these do not conflict with each other.
 
@@ -421,7 +421,7 @@ Upon detecting a protocol violation, implementations MUST:
 | Protocol Version | 0 | Current protocol version |
 | Default Receive Window | 262,144 bytes (256 KiB) | Initial per-stream receive window |
 | Max Frame Payload | 1,048,576 bytes (1 MiB) | Maximum Data frame payload |
-| Max User ID Length | 32 bytes | Maximum user-defined stream identifier |
+| Max User ID Length | 256 bytes | Maximum user-defined stream identifier |
 | Recommended ACK Backlog | 256 | Maximum unacknowledged outbound streams |
 | Recommended Connection Window | 1,073,741,824 bytes (1 GiB) | Maximum total receive window |
 
