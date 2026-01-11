@@ -69,6 +69,7 @@ The Type field identifies the frame's purpose. The Length field's interpretation
 | Window Update | `0x01` | Window increment in bytes | No |
 | Ping | `0x02` | Opaque nonce value | No |
 | GoAway | `0x03` | Error code | No |
+| StreamInit | `0x04` | User ID length in bytes | Yes (user ID) |
 
 Implementations MUST reject frames with unknown Type values by sending a GoAway frame with error code `0x01` (protocol error).
 
@@ -79,7 +80,6 @@ Data frames carry stream payload. The Length field specifies the number of paylo
 **Constraints:**
 - Length MUST NOT exceed the receiver's available stream receive window.
 - Length MUST NOT exceed `1,048,576` bytes (1 MiB).
-- When SYN flag is set, Length MUST NOT exceed `262,144` bytes (256 KiB).
 
 **Example: Data frame with 1024-byte payload on stream 5**
 ```
@@ -160,22 +160,61 @@ Stream:  0x00000000
 Length:  0x00000000 (Normal)
 ```
 
+### 3.5 StreamInit Frame (Type 0x04)
+
+StreamInit frames initiate a new stream. The Length field specifies the number of bytes in the optional user-defined stream identifier that follows the header.
+
+**User-Defined Stream Identifiers:**
+- Length of `0` indicates no user ID (the stream has no user-defined identifier).
+- Length MUST NOT exceed 32 bytes.
+- Non-empty user IDs MUST be unique within a session. Duplicate non-empty user IDs are a protocol error.
+- Multiple streams MAY have no user ID (Length 0); these do not conflict with each other.
+
+**Constraints:**
+- Only the client MAY send StreamInit frames.
+- StreamInit frames from the server are a protocol error.
+- The Stream ID in the header identifies the new stream being created.
+
+**Behavior:**
+- Upon receiving a valid StreamInit, the server creates the stream.
+- The server SHOULD set the ACK flag on its first response frame to that stream.
+- The server MUST NOT acknowledge via the StreamInit frame itself.
+
+**Example: Open stream 1 with no user ID**
+```
+Version: 0x00
+Type:    0x04 (StreamInit)
+Flags:   0x0000
+Stream:  0x00000001
+Length:  0x00000000
+```
+
+**Example: Open stream 2 with 8-byte user ID "mystream"**
+```
+Version: 0x00
+Type:    0x04 (StreamInit)
+Flags:   0x0000
+Stream:  0x00000002
+Length:  0x00000008
+[8 bytes: "mystream"]
+```
+
 ## 4. Flags
 
 Flags modify frame behavior. Multiple flags MAY be set simultaneously by combining their values with bitwise OR.
 
 | Flag | Value | Applicable Types | Description |
 |------|-------|------------------|-------------|
-| SYN | `0x0001` | Data, Window Update, Ping | Initiates a new stream (Data/WU) or ping request (Ping). |
+| SYN | `0x0001` | Ping | Ping request. Reserved on Data/WindowUpdate (MUST NOT be set). |
 | ACK | `0x0002` | Data, Window Update, Ping | Acknowledges stream initiation (Data/WU) or ping response (Ping). |
 | FIN | `0x0004` | Data, Window Update | Half-closes the stream in the sender's direction. |
 | RST | `0x0008` | Data, Window Update | Immediately resets (terminates) the stream. |
 
 ### 4.1 Flag Combinations
 
-- SYN and ACK MAY be set together to acknowledge a stream while initiating.
 - FIN and RST MUST NOT be set together.
 - RST takes precedence; if RST is set, FIN MUST be ignored.
+- SYN on Data or WindowUpdate frames is a protocol error.
 
 ## 5. Stream Management
 
@@ -184,29 +223,32 @@ Flags modify frame behavior. Multiple flags MAY be set simultaneously by combini
 Stream IDs are 32-bit unsigned integers. Stream ID `0` is reserved for connection-level frames (Ping, GoAway) and MUST NOT be used for data streams.
 
 **Allocation:**
-- The client (connection initiator) MUST use odd Stream IDs: 1, 3, 5, ...
-- The server (connection acceptor) MUST use even Stream IDs: 2, 4, 6, ...
-- Each side MUST allocate IDs sequentially, incrementing by 2.
-
-This allocation scheme prevents ID collisions when both sides open streams simultaneously.
+- Only the client (connection initiator) MAY open streams.
+- The server (connection acceptor) MUST NOT open streams.
+- Stream IDs MUST be allocated sequentially starting from 1: 1, 2, 3, ...
+- Stream IDs MUST be unique; reuse of a closed Stream ID is a protocol error.
 
 ### 5.2 Stream Lifecycle
 
 #### 5.2.1 Opening a Stream
 
-A stream is opened by sending a Data or Window Update frame with the SYN flag set. The receiver SHOULD respond with an ACK flag on its first frame to that stream.
+A stream is opened by the client sending a StreamInit frame. The server SHOULD respond with an ACK flag on its first Data or WindowUpdate frame to that stream.
 
-**Initiator behavior:**
+**Client behavior:**
 1. Select the next available Stream ID.
-2. Send a frame with SYN flag set.
+2. Send a StreamInit frame with the new Stream ID and optional user-defined identifier.
 3. The stream enters `Open(acknowledged=false)` state.
-4. Upon receiving ACK, transition to `Open(acknowledged=true)`.
+4. Upon receiving ACK on a Data or WindowUpdate frame, transition to `Open(acknowledged=true)`.
 
-**Receiver behavior:**
-1. Validate the Stream ID (correct parity, not already in use).
-2. If valid, create the stream and process the frame.
-3. Set ACK flag on the first response frame.
-4. If invalid, send GoAway with Protocol Error.
+**Server behavior:**
+1. Receive StreamInit frame.
+2. Validate the Stream ID (sequential, not already in use).
+3. Validate user ID (if non-empty, must be unique within session).
+4. If valid, create the stream.
+5. Set ACK flag on the first Data or WindowUpdate frame sent to that stream.
+6. If invalid, send GoAway with Protocol Error.
+
+The server MUST NOT send StreamInit frames.
 
 #### 5.2.2 Stream States
 
@@ -313,11 +355,11 @@ This approach is inspired by bandwidth-delay product (BDP) estimation in QUIC.
 
 ### 7.1 Connection Initialization
 
-MUX does not require an explicit handshake. The connection is considered established once the underlying transport is connected. Either side may immediately begin opening streams.
+MUX does not require an explicit handshake. The connection is considered established once the underlying transport is connected. The client may immediately begin opening streams.
 
-**Mode determination:**
-- The side that initiated the underlying connection is the "client" (odd Stream IDs).
-- The side that accepted the connection is the "server" (even Stream IDs).
+**Role determination:**
+- The side that initiated the underlying connection is the "client" and MAY open streams.
+- The side that accepted the connection is the "server" and MUST NOT open streams.
 
 ### 7.2 Graceful Shutdown
 
@@ -360,9 +402,11 @@ Upon detecting a protocol violation, implementations MUST:
 **Examples of protocol violations:**
 - Unknown protocol version
 - Unknown frame type
-- Invalid Stream ID parity
+- Invalid Stream ID (non-sequential, reused)
 - Data exceeding receive window
-- Reuse of a closed Stream ID
+- Duplicate non-empty user-defined stream identifier
+- SYN flag on Data or WindowUpdate frame
+- StreamInit frame from server
 
 ### 8.2 Stream Errors vs Connection Errors
 
@@ -377,7 +421,7 @@ Upon detecting a protocol violation, implementations MUST:
 | Protocol Version | 0 | Current protocol version |
 | Default Receive Window | 262,144 bytes (256 KiB) | Initial per-stream receive window |
 | Max Frame Payload | 1,048,576 bytes (1 MiB) | Maximum Data frame payload |
-| Max Initial Payload | 262,144 bytes (256 KiB) | Maximum payload on SYN frame |
+| Max User ID Length | 32 bytes | Maximum user-defined stream identifier |
 | Recommended ACK Backlog | 256 | Maximum unacknowledged outbound streams |
 | Recommended Connection Window | 1,073,741,824 bytes (1 GiB) | Maximum total receive window |
 

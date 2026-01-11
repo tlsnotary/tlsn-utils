@@ -45,11 +45,6 @@ pub const DEFAULT_CREDIT: u32 = 256 * KIB as u32;
 
 pub type Result<T> = std::result::Result<T, ConnectionError>;
 
-/// The maximum number of streams we will open without an acknowledgement from the other peer.
-///
-/// This enables a very basic form of backpressure on the creation of streams.
-const MAX_ACK_BACKLOG: usize = 256;
-
 /// Default maximum number of bytes a data frame might carry as its
 /// payload when being send. Larger Payloads will be split.
 ///

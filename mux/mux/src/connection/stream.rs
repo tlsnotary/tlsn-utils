@@ -9,23 +9,25 @@
 // at https://www.apache.org/licenses/LICENSE-2.0 and a copy of the MIT license
 // at https://opensource.org/licenses/MIT.
 
+use crate::Mode;
 use crate::connection::rtt::Rtt;
 use crate::frame::header::ACK;
 use crate::{
-    chunks::Chunks,
-    connection::{self, rtt, StreamCommand},
-    frame::{
-        header::{Data, Header, StreamId, WindowUpdate},
-        Frame,
-    },
     Config, DEFAULT_CREDIT,
+    chunks::Chunks,
+    connection::{self, StreamCommand, rtt},
+    frame::{
+        Frame,
+        header::{Data, Header, StreamId, WindowUpdate},
+    },
 };
 use flow_control::FlowController;
 use futures::{
+    SinkExt,
     channel::mpsc,
     future::Either,
     io::{AsyncRead, AsyncWrite},
-    ready, SinkExt,
+    ready,
 };
 use parking_lot::{Mutex, MutexGuard};
 use std::{
@@ -40,6 +42,11 @@ mod flow_control;
 /// The state of a stream.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum State {
+    /// Stream is initializing.
+    ///
+    /// For client streams: StreamInit has not been sent yet.
+    /// For server streams: Waiting for client's StreamInit to arrive.
+    Initializing,
     /// Open bidirectionally.
     Open {
         /// Whether the stream is acknowledged.
@@ -62,13 +69,22 @@ pub enum State {
 }
 
 impl State {
+    fn is_initializing(&self) -> bool {
+        matches!(self, State::Initializing)
+    }
+
     /// Can we receive messages over this stream?
     pub fn can_read(self) -> bool {
-        !matches!(self, State::RecvClosed | State::Closed)
+        // Can't read if initializing (server waiting for StreamInit) or closed
+        !matches!(
+            self,
+            State::Initializing | State::RecvClosed | State::Closed
+        )
     }
 
     /// Can we send messages over this stream?
     pub fn can_write(self) -> bool {
+        // Initializing is allowed for client (triggers StreamInit send)
         !matches!(self, State::SendClosed | State::Closed)
     }
 }
@@ -78,23 +94,21 @@ impl State {
 pub(crate) enum Flag {
     /// No flag needs to be set.
     None,
-    /// The stream was opened lazily, so set the initial SYN flag.
-    Syn,
     /// The stream still needs acknowledgement, so set the ACK flag.
     Ack,
 }
 
 /// A multiplexed stream.
 ///
-/// Streams are created either outbound via [`crate::Connection::poll_new_outbound`]
-/// or inbound via [`crate::Connection::poll_next_inbound`].
+/// Streams are created via [`crate::Connection::new_stream`].
 ///
 /// `Stream` implements [`AsyncRead`] and [`AsyncWrite`] and also
 /// [`futures::stream::Stream`].
 pub struct Stream {
-    id: StreamId,
+    user_id: Vec<u8>,
     conn: connection::Id,
     config: Arc<Config>,
+    mode: Mode,
     sender: mpsc::Sender<StreamCommand>,
     flag: Flag,
     shared: Arc<Mutex<Shared>>,
@@ -103,7 +117,8 @@ pub struct Stream {
 impl fmt::Debug for Stream {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Stream")
-            .field("id", &self.id.val())
+            .field("stream_id", &self.stream_id().map(|id| id.val()))
+            .field("user_id", &self.user_id)
             .field("connection", &self.conn)
             .finish()
     }
@@ -111,29 +126,64 @@ impl fmt::Debug for Stream {
 
 impl fmt::Display for Stream {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "(Stream {}/{})", self.conn, self.id.val())
+        match self.stream_id() {
+            Some(id) => write!(f, "(Stream {}/{})", self.conn, id.val()),
+            None => write!(f, "(Stream {}/pending)", self.conn),
+        }
     }
 }
 
 impl Stream {
-    pub(crate) fn new_inbound(
-        id: StreamId,
+    /// Create a new stream for client mode (outbound, will send StreamInit on first write).
+    pub(crate) fn new_client(
+        stream_id: StreamId,
+        user_id: Vec<u8>,
         conn: connection::Id,
         config: Arc<Config>,
-        send_window: u32,
         sender: mpsc::Sender<StreamCommand>,
         rtt: rtt::Rtt,
         accumulated_max_stream_windows: Arc<Mutex<usize>>,
     ) -> Self {
         Self {
-            id,
+            user_id,
             conn,
             config: config.clone(),
+            mode: Mode::Client,
+            sender,
+            flag: Flag::None,
+            shared: Arc::new(Mutex::new(Shared::new(
+                Some(stream_id),
+                State::Initializing,
+                DEFAULT_CREDIT,
+                DEFAULT_CREDIT,
+                accumulated_max_stream_windows,
+                rtt,
+                config,
+            ))),
+        }
+    }
+
+    /// Create a new stream for server mode (pending, waiting for StreamInit).
+    pub(crate) fn new_server_pending(
+        user_id: Vec<u8>,
+        conn: connection::Id,
+        config: Arc<Config>,
+        sender: mpsc::Sender<StreamCommand>,
+        rtt: rtt::Rtt,
+        accumulated_max_stream_windows: Arc<Mutex<usize>>,
+    ) -> Self {
+        Self {
+            user_id,
+            conn,
+            config: config.clone(),
+            mode: Mode::Server,
             sender,
             flag: Flag::Ack,
             shared: Arc::new(Mutex::new(Shared::new(
+                None,
+                State::Initializing,
                 DEFAULT_CREDIT,
-                send_window,
+                DEFAULT_CREDIT,
                 accumulated_max_stream_windows,
                 rtt,
                 config,
@@ -141,8 +191,10 @@ impl Stream {
         }
     }
 
-    pub(crate) fn new_outbound(
-        id: StreamId,
+    /// Create a new stream for server mode (matched, StreamInit already received).
+    pub(crate) fn new_server_matched(
+        stream_id: StreamId,
+        user_id: Vec<u8>,
         conn: connection::Id,
         config: Arc<Config>,
         sender: mpsc::Sender<StreamCommand>,
@@ -150,12 +202,17 @@ impl Stream {
         accumulated_max_stream_windows: Arc<Mutex<usize>>,
     ) -> Self {
         Self {
-            id,
+            user_id,
             conn,
             config: config.clone(),
+            mode: Mode::Server,
             sender,
-            flag: Flag::Syn,
+            flag: Flag::Ack,
             shared: Arc::new(Mutex::new(Shared::new(
+                Some(stream_id),
+                State::Open {
+                    acknowledged: false,
+                },
                 DEFAULT_CREDIT,
                 DEFAULT_CREDIT,
                 accumulated_max_stream_windows,
@@ -165,9 +222,14 @@ impl Stream {
         }
     }
 
-    /// Get this stream's identifier.
-    pub fn id(&self) -> StreamId {
-        self.id
+    /// Get this stream's user-defined identifier.
+    pub fn id(&self) -> &[u8] {
+        &self.user_id
+    }
+
+    /// Get the stream ID. Returns None for server streams that haven't been matched yet.
+    pub fn stream_id(&self) -> Option<StreamId> {
+        self.shared.lock().stream_id()
     }
 
     pub fn is_write_closed(&self) -> bool {
@@ -192,18 +254,14 @@ impl Stream {
     }
 
     fn write_zero_err(&self) -> io::Error {
-        let msg = format!("{}/{}: connection is closed", self.conn, self.id);
+        let msg = format!("{}: connection is closed", self);
         io::Error::new(io::ErrorKind::WriteZero, msg)
     }
 
-    /// Set ACK or SYN flag if necessary.
+    /// Set ACK flag if necessary.
     fn add_flag(&mut self, header: &mut Header<Either<Data, WindowUpdate>>) {
         match self.flag {
             Flag::None => (),
-            Flag::Syn => {
-                header.syn();
-                self.flag = Flag::None
-            }
             Flag::Ack => {
                 header.ack();
                 self.flag = Flag::None
@@ -214,20 +272,26 @@ impl Stream {
     /// Send new credit to the sending side via a window update message if
     /// permitted.
     fn send_window_update(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
+        // Can't send window updates without a stream_id
+        let Some(stream_id) = self.stream_id() else {
+            return Poll::Ready(Ok(()));
+        };
+
         if !self.shared.lock().state.can_read() {
             return Poll::Ready(Ok(()));
         }
 
-        ready!(self
-            .sender
-            .poll_ready(cx)
-            .map_err(|_| self.write_zero_err())?);
+        ready!(
+            self.sender
+                .poll_ready(cx)
+                .map_err(|_| self.write_zero_err())?
+        );
 
         let Some(credit) = self.shared.lock().next_window_update() else {
             return Poll::Ready(Ok(()));
         };
 
-        let mut frame = Frame::window_update(self.id, credit).right();
+        let mut frame = Frame::window_update(stream_id, credit).right();
         self.add_flag(frame.header_mut());
         let cmd = StreamCommand::SendFrame(frame);
         self.sender
@@ -248,55 +312,6 @@ impl AsRef<[u8]> for Packet {
     }
 }
 
-impl futures::stream::Stream for Stream {
-    type Item = io::Result<Packet>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        if !self.config.read_after_close && self.sender.is_closed() {
-            return Poll::Ready(None);
-        }
-
-        match self.send_window_update(cx) {
-            Poll::Ready(Ok(())) => {}
-            Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e))),
-            // Continue reading buffered data even though sending a window update blocked.
-            Poll::Pending => {}
-        }
-
-        let mut shared = self.shared();
-
-        if let Some(bytes) = shared.buffer.pop() {
-            let off = bytes.offset();
-            let mut vec = bytes.into_vec();
-            if off != 0 {
-                // This should generally not happen when the stream is used only as
-                // a `futures::stream::Stream` since the whole point of this impl is
-                // to consume chunks atomically. It may perhaps happen when mixing
-                // this impl and the `AsyncRead` one.
-                log::debug!(
-                    "{}/{}: chunk has been partially consumed",
-                    self.conn,
-                    self.id
-                );
-                vec = vec.split_off(off)
-            }
-            return Poll::Ready(Some(Ok(Packet(vec))));
-        }
-
-        // Buffer is empty, let's check if we can expect to read more data.
-        if !shared.state().can_read() {
-            log::debug!("{}/{}: eof", self.conn, self.id);
-            return Poll::Ready(None); // stream has been reset
-        }
-
-        // Since we have no more data at this point, we want to be woken up
-        // by the connection when more becomes available for us.
-        shared.reader = Some(cx.waker().clone());
-
-        Poll::Pending
-    }
-}
-
 // Like the `futures::stream::Stream` impl above, but copies bytes into the
 // provided mutable slice.
 impl AsyncRead for Stream {
@@ -305,19 +320,27 @@ impl AsyncRead for Stream {
         cx: &mut Context,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        if !self.config.read_after_close && self.sender.is_closed() {
-            return Poll::Ready(Ok(0));
-        }
-
+        // Try to send window update, but don't fail if sender is closed -
+        // we may still have buffered data to read.
         match self.send_window_update(cx) {
             Poll::Ready(Ok(())) => {}
+            Poll::Ready(Err(_)) if self.sender.is_closed() => {
+                // Sender closed, but continue to read buffered data
+            }
             Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
             // Continue reading buffered data even though sending a window update blocked.
             Poll::Pending => {}
         }
 
-        // Copy data from stream buffer.
         let mut shared = self.shared();
+        // If stream is still initializing (server waiting for match), wait for it
+        if shared.state().is_initializing() {
+            log::trace!("{}: waiting for stream match", self);
+            shared.reader = Some(cx.waker().clone());
+            return Poll::Pending;
+        }
+
+        // Copy data from stream buffer.
         let mut n = 0;
         while let Some(chunk) = shared.buffer.front_mut() {
             if chunk.is_empty() {
@@ -334,13 +357,18 @@ impl AsyncRead for Stream {
         }
 
         if n > 0 {
-            log::trace!("{}/{}: read {} bytes", self.conn, self.id, n);
+            log::trace!("{}: read {} bytes", self, n);
             return Poll::Ready(Ok(n));
+        }
+
+        // Buffer is empty, check if sender is closed (connection closed).
+        if !self.config.read_after_close && self.sender.is_closed() {
+            return Poll::Ready(Ok(0));
         }
 
         // Buffer is empty, let's check if we can expect to read more data.
         if !shared.state().can_read() {
-            log::debug!("{}/{}: eof", self.conn, self.id);
+            log::debug!("{}: eof", self);
             return Poll::Ready(Ok(0)); // stream has been reset
         }
 
@@ -358,18 +386,59 @@ impl AsyncWrite for Stream {
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        ready!(self
-            .sender
-            .poll_ready(cx)
-            .map_err(|_| self.write_zero_err())?);
+        ready!(
+            self.sender
+                .poll_ready(cx)
+                .map_err(|_| self.write_zero_err())?
+        );
+
+        let (stream_id, is_initializing) = {
+            let shared = self.shared();
+            (shared.stream_id, shared.state().is_initializing())
+        };
+
+        if is_initializing {
+            match self.mode {
+                Mode::Client => {
+                    let stream_id = stream_id.expect("client stream ID is always set");
+                    let cmd = StreamCommand::SendInit {
+                        stream_id,
+                        user_id: self.user_id.clone(),
+                    };
+                    self.sender
+                        .start_send(cmd)
+                        .map_err(|_| self.write_zero_err())?;
+                    self.shared().update_state(
+                        self.conn,
+                        Some(stream_id),
+                        State::Open {
+                            acknowledged: false,
+                        },
+                    );
+
+                    // Need to poll_ready again before sending data
+                    ready!(
+                        self.sender
+                            .poll_ready(cx)
+                            .map_err(|_| self.write_zero_err())?
+                    );
+                }
+                Mode::Server => {
+                    self.shared().writer = Some(cx.waker().clone());
+                    return Poll::Pending;
+                }
+            }
+        }
+
+        let stream_id = stream_id.expect("stream ID should be set after init");
         let body = {
             let mut shared = self.shared();
             if !shared.state().can_write() {
-                log::debug!("{}/{}: can no longer write", self.conn, self.id);
+                log::debug!("{}: can no longer write", self);
                 return Poll::Ready(Err(self.write_zero_err()));
             }
             if shared.send_window() == 0 {
-                log::trace!("{}/{}: no more credit left", self.conn, self.id);
+                log::trace!("{}: no more credit left", self);
                 shared.writer = Some(cx.waker().clone());
                 return Poll::Pending;
             }
@@ -385,17 +454,22 @@ impl AsyncWrite for Stream {
             Vec::from(&buf[..k as usize])
         };
         let n = body.len();
-        let mut frame = Frame::data(self.id, body).expect("body <= u32::MAX").left();
+        let mut frame = Frame::data(stream_id, body)
+            .expect("body <= u32::MAX")
+            .left();
         self.add_flag(frame.header_mut());
-        log::trace!("{}/{}: write {} bytes", self.conn, self.id, n);
+        log::trace!("{}: write {} bytes", self, n);
 
         // technically, the frame hasn't been sent yet on the wire but from the perspective of this data structure, we've queued the frame for sending
         // We are tracking this information:
         // a) to be consistent with outbound streams
         // b) to correctly test our behaviour around timing of when ACKs are sent. See `ack_timing.rs` test.
         if frame.header().flags().contains(ACK) {
-            self.shared()
-                .update_state(self.conn, self.id, State::Open { acknowledged: true });
+            self.shared().update_state(
+                self.conn,
+                Some(stream_id),
+                State::Open { acknowledged: true },
+            );
         }
 
         let cmd = StreamCommand::SendFrame(frame);
@@ -415,29 +489,39 @@ impl AsyncWrite for Stream {
         if self.is_closed() {
             return Poll::Ready(Ok(()));
         }
-        ready!(self
-            .sender
-            .poll_ready(cx)
-            .map_err(|_| self.write_zero_err())?);
+
+        // Can't close without stream_id (unmatched server stream)
+        let Some(stream_id) = self.stream_id() else {
+            // Just mark as closed locally
+            self.shared().update_state(self.conn, None, State::Closed);
+            return Poll::Ready(Ok(()));
+        };
+
+        ready!(
+            self.sender
+                .poll_ready(cx)
+                .map_err(|_| self.write_zero_err())?
+        );
         let ack = if self.flag == Flag::Ack {
             self.flag = Flag::None;
             true
         } else {
             false
         };
-        log::trace!("{}/{}: close", self.conn, self.id);
-        let cmd = StreamCommand::CloseStream { ack };
+        log::trace!("{}: close", self);
+        let cmd = StreamCommand::CloseStream { stream_id, ack };
         self.sender
             .start_send(cmd)
             .map_err(|_| self.write_zero_err())?;
         self.shared()
-            .update_state(self.conn, self.id, State::SendClosed);
+            .update_state(self.conn, Some(stream_id), State::SendClosed);
         Poll::Ready(Ok(()))
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct Shared {
+    stream_id: Option<StreamId>,
     state: State,
     flow_controller: FlowController,
     pub(crate) buffer: Chunks,
@@ -447,6 +531,8 @@ pub(crate) struct Shared {
 
 impl Shared {
     fn new(
+        stream_id: Option<StreamId>,
+        initial_state: State,
         receive_window: u32,
         send_window: u32,
         accumulated_max_stream_windows: Arc<Mutex<usize>>,
@@ -454,9 +540,8 @@ impl Shared {
         config: Arc<Config>,
     ) -> Self {
         Shared {
-            state: State::Open {
-                acknowledged: false,
-            },
+            stream_id,
+            state: initial_state,
             flow_controller: FlowController::new(
                 receive_window,
                 send_window,
@@ -470,6 +555,14 @@ impl Shared {
         }
     }
 
+    pub(crate) fn stream_id(&self) -> Option<StreamId> {
+        self.stream_id
+    }
+
+    pub(crate) fn set_stream_id(&mut self, id: StreamId) {
+        self.stream_id = Some(id);
+    }
+
     pub(crate) fn state(&self) -> State {
         self.state
     }
@@ -478,7 +571,7 @@ impl Shared {
     pub(crate) fn update_state(
         &mut self,
         cid: connection::Id,
-        sid: StreamId,
+        sid: Option<StreamId>,
         next: State,
     ) -> State {
         use self::State::*;
@@ -487,21 +580,28 @@ impl Shared {
 
         match (current, next) {
             (Closed, _) => {}
+            (Initializing, Open { .. }) => self.state = next,
+            (Initializing, Closed) => self.state = Closed,
+            (Initializing, _) => {} // Can only go to Open or Closed from Initializing
             (Open { .. }, _) => self.state = next,
             (RecvClosed, Closed) => self.state = Closed,
-            (RecvClosed, Open { .. }) => {}
+            (RecvClosed, Open { .. } | Initializing) => {}
             (RecvClosed, RecvClosed) => {}
             (RecvClosed, SendClosed) => self.state = Closed,
             (SendClosed, Closed) => self.state = Closed,
-            (SendClosed, Open { .. }) => {}
+            (SendClosed, Open { .. } | Initializing) => {}
             (SendClosed, RecvClosed) => self.state = Closed,
             (SendClosed, SendClosed) => {}
         }
 
+        let sid_str = sid
+            .map(|id| id.val())
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "pending".to_string());
         log::trace!(
             "{}/{}: update state: (from {:?} to {:?} -> {:?})",
             cid,
-            sid,
+            sid_str,
             current,
             next,
             self.state
@@ -518,9 +618,10 @@ impl Shared {
     pub fn is_pending_ack(&self) -> bool {
         matches!(
             self.state(),
-            State::Open {
-                acknowledged: false
-            }
+            State::Initializing
+                | State::Open {
+                    acknowledged: false
+                }
         )
     }
 

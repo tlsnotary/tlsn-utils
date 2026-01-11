@@ -1,4 +1,5 @@
 use crate::connection::StreamCommand;
+use crate::frame::header;
 use crate::frame::Frame;
 use crate::tagged_stream::TaggedStream;
 use crate::Result;
@@ -71,9 +72,13 @@ where
                         Poll::Ready(Some((_, Some(StreamCommand::SendFrame(frame))))) => {
                             this.pending_frames.push_back(frame.into());
                         }
-                        Poll::Ready(Some((id, Some(StreamCommand::CloseStream { ack })))) => {
+                        Poll::Ready(Some((_, Some(StreamCommand::CloseStream { stream_id, ack })))) => {
                             this.pending_frames
-                                .push_back(Frame::close_stream(id, ack).into());
+                                .push_back(Frame::close_stream(stream_id, ack).into());
+                        }
+                        Poll::Ready(Some((_, Some(StreamCommand::SendInit { stream_id, user_id })))) => {
+                            let frame = Frame::<header::StreamInit>::stream_init(stream_id, Some(&user_id));
+                            this.pending_frames.push_back(frame.into());
                         }
                         Poll::Ready(Some((_, None))) => {}
                         Poll::Pending | Poll::Ready(None) => {
@@ -233,11 +238,11 @@ mod tests {
         ));
         stream_receivers.push(receiver(
             &frame_close,
-            StreamCommand::CloseStream { ack: false },
+            StreamCommand::CloseStream { stream_id: StreamId::new(5), ack: false },
         ));
         stream_receivers.push(receiver(
             &frame_close_ack,
-            StreamCommand::CloseStream { ack: true },
+            StreamCommand::CloseStream { stream_id: StreamId::new(6), ack: true },
         ));
         let pending_frames = vec![frame_pending];
         let mut socket = Socket {

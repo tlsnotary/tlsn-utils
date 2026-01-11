@@ -13,7 +13,7 @@ pub mod header;
 mod io;
 
 use futures::future::Either;
-use header::{Data, GoAway, Header, Ping, StreamId, WindowUpdate};
+use header::{Data, GoAway, Header, Ping, StreamId, StreamInit, WindowUpdate};
 use std::{convert::TryInto, num::TryFromIntError};
 
 pub use io::FrameDecodeError;
@@ -86,6 +86,13 @@ impl Frame<()> {
     pub(crate) fn into_ping(self) -> Frame<Ping> {
         Frame {
             header: self.header.into_ping(),
+            body: self.body,
+        }
+    }
+
+    pub(crate) fn into_stream_init(self) -> Frame<StreamInit> {
+        Frame {
+            header: self.header.into_stream_init(),
             body: self.body,
         }
     }
@@ -168,6 +175,24 @@ impl Frame<GoAway> {
         Frame {
             header: Header::internal_error(),
             body: Vec::new(),
+        }
+    }
+}
+
+impl Frame<StreamInit> {
+    pub fn stream_init(id: StreamId, user_id: Option<&[u8]>) -> Self {
+        let body = user_id.map(|id| id.to_vec()).unwrap_or_default();
+        Frame {
+            header: Header::stream_init(id, body.len() as u32),
+            body,
+        }
+    }
+
+    pub fn into_user_id(self) -> Option<Vec<u8>> {
+        if self.body.is_empty() {
+            None
+        } else {
+            Some(self.body)
         }
     }
 }

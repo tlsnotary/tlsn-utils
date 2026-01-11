@@ -84,7 +84,7 @@ async fn oneway(
     let server = Connection::new(server, Config::default(), Mode::Server);
     let client = Connection::new(client, Config::default(), Mode::Client);
 
-    task::spawn(dev_null_server(server));
+    task::spawn(dev_null_server(server, nstreams));
 
     let messages = iter::repeat(data)
         .map(|b| Msg(b.0.to_vec()))

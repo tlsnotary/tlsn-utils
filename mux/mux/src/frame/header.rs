@@ -102,9 +102,14 @@ impl Header<()> {
         debug_assert_eq!(self.tag, Tag::Ping);
         self.cast()
     }
+
+    pub(crate) fn into_stream_init(self) -> Header<StreamInit> {
+        debug_assert_eq!(self.tag, Tag::StreamInit);
+        self.cast()
+    }
 }
 
-impl<T: HasSyn> Header<T> {
+impl Header<Ping> {
     /// Set the [`SYN`] flag.
     pub fn syn(&mut self) {
         self.flags.0 |= SYN.0
@@ -212,6 +217,20 @@ impl Header<GoAway> {
     }
 }
 
+impl Header<StreamInit> {
+    /// Create a new stream init frame header.
+    pub fn stream_init(id: StreamId, user_id_len: u32) -> Self {
+        Header {
+            version: Version(0),
+            tag: Tag::StreamInit,
+            flags: Flags(0),
+            stream_id: id,
+            length: Len(user_id_len),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
 /// Data message type.
 #[derive(Clone, Debug)]
 pub enum Data {}
@@ -228,12 +247,9 @@ pub enum Ping {}
 #[derive(Clone, Debug)]
 pub enum GoAway {}
 
-/// Types which have a `syn` method.
-pub trait HasSyn: private::Sealed {}
-impl HasSyn for Data {}
-impl HasSyn for WindowUpdate {}
-impl HasSyn for Ping {}
-impl<A: HasSyn, B: HasSyn> HasSyn for Either<A, B> {}
+/// Stream Init message type.
+#[derive(Clone, Debug)]
+pub enum StreamInit {}
 
 /// Types which have an `ack` method.
 pub trait HasAck: private::Sealed {}
@@ -259,6 +275,7 @@ pub(super) mod private {
     impl Sealed for super::WindowUpdate {}
     impl Sealed for super::Ping {}
     impl Sealed for super::GoAway {}
+    impl Sealed for super::StreamInit {}
     impl<A: Sealed, B: Sealed> Sealed for super::Either<A, B> {}
 }
 
@@ -269,6 +286,7 @@ pub enum Tag {
     WindowUpdate,
     Ping,
     GoAway,
+    StreamInit,
 }
 
 /// The protocol version a message corresponds to.
@@ -296,16 +314,6 @@ pub struct StreamId(u32);
 impl StreamId {
     pub(crate) fn new(val: u32) -> Self {
         StreamId(val)
-    }
-
-    // TODO: remove and use is multiple_of() on the next minor release.
-    #[allow(clippy::manual_is_multiple_of)]
-    pub fn is_server(self) -> bool {
-        self.0 % 2 == 0
-    }
-
-    pub fn is_client(self) -> bool {
-        !self.is_server()
     }
 
     pub fn is_session(self) -> bool {
@@ -378,6 +386,7 @@ pub fn decode(buf: &[u8; HEADER_SIZE]) -> Result<Header<()>, HeaderDecodeError> 
             1 => Tag::WindowUpdate,
             2 => Tag::Ping,
             3 => Tag::GoAway,
+            4 => Tag::StreamInit,
             t => return Err(HeaderDecodeError::Type(t)),
         },
         flags: Flags(u16::from_be_bytes([buf[2], buf[3]])),
@@ -418,7 +427,7 @@ mod tests {
     impl Arbitrary for Header<()> {
         fn arbitrary(g: &mut Gen) -> Self {
             let tag = *g
-                .choose(&[Tag::Data, Tag::WindowUpdate, Tag::Ping, Tag::GoAway])
+                .choose(&[Tag::Data, Tag::WindowUpdate, Tag::Ping, Tag::GoAway, Tag::StreamInit])
                 .unwrap();
 
             Header {

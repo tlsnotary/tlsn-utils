@@ -30,29 +30,28 @@ use tokio_util::compat::TokioAsyncReadCompatExt;
 async fn stream_is_acknowledged_on_first_use() {
     let _ = env_logger::try_init();
 
+    let stream_id = b"test-stream";
+
     let (listener, address) = bind(None).await.expect("bind");
 
     let server = async {
         let socket = listener.accept().await.expect("accept").0.compat();
         let connection = Connection::new(socket, Config::default(), Mode::Server);
 
-        Server::new(connection).await
+        Server::new(connection, stream_id).await
     };
 
     let client = async {
         let socket = TcpStream::connect(address).await.expect("connect").compat();
         let connection = Connection::new(socket, Config::default(), Mode::Client);
 
-        Client::new(connection).await
+        Client::new(connection, stream_id).await
     };
 
     let ((), ()) = future::try_join(server, client).await.unwrap();
 }
 
 enum Server<T> {
-    Accepting {
-        connection: Connection<T>,
-    },
     Working {
         connection: Connection<T>,
         stream: BoxFuture<'static, tlsn_mux::Result<()>>,
@@ -63,9 +62,16 @@ enum Server<T> {
     Poisoned,
 }
 
-impl<T> Server<T> {
-    fn new(connection: Connection<T>) -> Self {
-        Server::Accepting { connection }
+impl<T> Server<T>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    fn new(mut connection: Connection<T>, stream_id: &[u8]) -> Self {
+        let stream = connection.new_stream(stream_id).expect("new_stream");
+        Server::Working {
+            connection,
+            stream: pong_ping(stream).boxed(),
+        }
     }
 }
 
@@ -80,22 +86,6 @@ where
 
         loop {
             match mem::replace(this, Self::Poisoned) {
-                Self::Accepting { mut connection } => match connection.poll_next_inbound(cx)? {
-                    Poll::Ready(Some(stream)) => {
-                        *this = Self::Working {
-                            connection,
-                            stream: pong_ping(stream).boxed(),
-                        };
-                        continue;
-                    }
-                    Poll::Ready(None) => {
-                        panic!("connection closed before receiving a new stream")
-                    }
-                    Poll::Pending => {
-                        *this = Self::Accepting { connection };
-                        return Poll::Pending;
-                    }
-                },
                 Self::Working {
                     mut connection,
                     mut stream,
@@ -108,12 +98,15 @@ where
                         Poll::Pending => {}
                     }
 
-                    match connection.poll_next_inbound(cx)? {
-                        Poll::Ready(Some(_)) => {
-                            panic!("not expecting new stream");
+                    match connection.poll(cx) {
+                        Poll::Ready(Ok(())) => {
+                            return Poll::Ready(Ok(()));
                         }
-                        Poll::Ready(None) => {
-                            panic!("connection closed before stream completed")
+                        Poll::Ready(Err(ConnectionError::Closed)) => {
+                            return Poll::Ready(Ok(()));
+                        }
+                        Poll::Ready(Err(e)) => {
+                            return Poll::Ready(Err(e));
                         }
                         Poll::Pending => {
                             *this = Self::Working { connection, stream };
@@ -121,11 +114,10 @@ where
                         }
                     }
                 }
-                Self::Idle { mut connection } => match connection.poll_next_inbound(cx)? {
-                    Poll::Ready(Some(_)) => {
-                        panic!("not expecting new stream");
-                    }
-                    Poll::Ready(None) => return Poll::Ready(Ok(())),
+                Self::Idle { mut connection } => match connection.poll(cx) {
+                    Poll::Ready(Ok(())) => return Poll::Ready(Ok(())),
+                    Poll::Ready(Err(ConnectionError::Closed)) => return Poll::Ready(Ok(())),
+                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                     Poll::Pending => {
                         *this = Self::Idle { connection };
                         return Poll::Pending;
@@ -138,9 +130,6 @@ where
 }
 
 enum Client<T> {
-    Opening {
-        connection: Connection<T>,
-    },
     Working {
         connection: Connection<T>,
         stream: BoxFuture<'static, tlsn_mux::Result<()>>,
@@ -148,9 +137,16 @@ enum Client<T> {
     Poisoned,
 }
 
-impl<T> Client<T> {
-    fn new(connection: Connection<T>) -> Self {
-        Self::Opening { connection }
+impl<T> Client<T>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    fn new(mut connection: Connection<T>, stream_id: &[u8]) -> Self {
+        let stream = connection.new_stream(stream_id).expect("new_stream");
+        Self::Working {
+            connection,
+            stream: ping_pong(stream).boxed(),
+        }
     }
 }
 
@@ -165,19 +161,6 @@ where
 
         loop {
             match mem::replace(this, Self::Poisoned) {
-                Self::Opening { mut connection } => match connection.poll_new_outbound(cx)? {
-                    Poll::Ready(stream) => {
-                        *this = Self::Working {
-                            connection,
-                            stream: ping_pong(stream).boxed(),
-                        };
-                        continue;
-                    }
-                    Poll::Pending => {
-                        *this = Self::Opening { connection };
-                        return Poll::Pending;
-                    }
-                },
                 Self::Working {
                     mut connection,
                     mut stream,
@@ -189,12 +172,15 @@ where
                         Poll::Pending => {}
                     }
 
-                    match connection.poll_next_inbound(cx)? {
-                        Poll::Ready(Some(_)) => {
-                            panic!("not expecting new stream");
+                    match connection.poll(cx) {
+                        Poll::Ready(Ok(())) => {
+                            return Poll::Ready(Ok(()));
                         }
-                        Poll::Ready(None) => {
-                            panic!("connection closed before stream completed")
+                        Poll::Ready(Err(ConnectionError::Closed)) => {
+                            return Poll::Ready(Ok(()));
+                        }
+                        Poll::Ready(Err(e)) => {
+                            return Poll::Ready(Err(e));
                         }
                         Poll::Pending => {
                             *this = Self::Working { connection, stream };

@@ -25,6 +25,12 @@ pub enum ConnectionError {
     Closed,
     /// Too many streams are open, so no further ones can be opened at this time.
     TooManyStreams,
+    /// Server cannot open streams; only the client can initiate streams.
+    ServerCannotOpenStreams,
+    /// User ID exceeds maximum length (32 bytes).
+    InvalidUserIdLength,
+    /// User ID is already in use by another stream.
+    DuplicateUserId,
 }
 
 impl std::fmt::Display for ConnectionError {
@@ -37,6 +43,13 @@ impl std::fmt::Display for ConnectionError {
             }
             ConnectionError::Closed => f.write_str("connection is closed"),
             ConnectionError::TooManyStreams => f.write_str("maximum number of streams reached"),
+            ConnectionError::ServerCannotOpenStreams => {
+                f.write_str("server cannot open streams")
+            }
+            ConnectionError::InvalidUserIdLength => {
+                f.write_str("user ID exceeds maximum length")
+            }
+            ConnectionError::DuplicateUserId => f.write_str("duplicate user ID"),
         }
     }
 }
@@ -48,7 +61,10 @@ impl std::error::Error for ConnectionError {
             ConnectionError::Decode(e) => Some(e),
             ConnectionError::NoMoreStreamIds
             | ConnectionError::Closed
-            | ConnectionError::TooManyStreams => None,
+            | ConnectionError::TooManyStreams
+            | ConnectionError::ServerCannotOpenStreams
+            | ConnectionError::InvalidUserIdLength
+            | ConnectionError::DuplicateUserId => None,
         }
     }
 }

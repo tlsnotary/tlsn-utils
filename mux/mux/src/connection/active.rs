@@ -1,9 +1,12 @@
 use crate::{
-    Config, DEFAULT_CREDIT, MAX_ACK_BACKLOG, Result,
+    Config, Result,
     error::ConnectionError,
     frame::{
         self, Frame,
-        header::{self, CONNECTION_ID, Data, GoAway, Header, Ping, StreamId, Tag, WindowUpdate},
+        header::{
+            self, CONNECTION_ID, Data, GoAway, Header, Ping, StreamId, StreamInit, Tag,
+            WindowUpdate,
+        },
     },
     tagged_stream::TaggedStream,
 };
@@ -16,21 +19,34 @@ use futures::{
 use nohash_hasher::IntMap;
 use parking_lot::Mutex;
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, HashSet, VecDeque},
     fmt,
     sync::Arc,
     task::{Context, Poll, Waker},
 };
 
-use super::{Id, Mode, cleanup::Cleanup, closing::Closing, rtt, stream::{self, State, Stream}};
+type PendingFrames = VecDeque<Frame<()>>;
+
+use super::{
+    Id, Mode,
+    cleanup::Cleanup,
+    closing::Closing,
+    rtt,
+    stream::{self, State, Stream},
+};
 
 /// `Stream` to `Connection` commands.
 #[derive(Debug)]
 pub(crate) enum StreamCommand {
     /// A new frame should be sent to the remote.
     SendFrame(Frame<Either<Data, WindowUpdate>>),
+    /// Send StreamInit frame (client only, on first write).
+    SendInit {
+        stream_id: StreamId,
+        user_id: Vec<u8>,
+    },
     /// Close a stream.
-    CloseStream { ack: bool },
+    CloseStream { stream_id: StreamId, ack: bool },
 }
 
 /// Possible actions as a result of incoming frame handling.
@@ -38,8 +54,6 @@ pub(crate) enum StreamCommand {
 pub(crate) enum Action {
     /// Nothing to be done.
     None,
-    /// A new stream has been opened by the remote.
-    New(Stream),
     /// A ping should be answered.
     Ping(Frame<Ping>),
     /// The connection should be terminated.
@@ -58,9 +72,17 @@ pub(crate) struct Active<T> {
     stream_receivers: SelectAll<TaggedStream<StreamId, mpsc::Receiver<StreamCommand>>>,
     no_streams_waker: Option<Waker>,
 
+    /// Server only: streams pre-registered via new_stream, waiting for client's StreamInit.
+    /// Stores shared state and the receiver for command handling.
+    pending_streams: HashMap<Vec<u8>, (Arc<Mutex<stream::Shared>>, mpsc::Receiver<StreamCommand>)>,
+    /// Server only: StreamInit frames received before server called new_stream.
+    buffered_inits: HashMap<Vec<u8>, StreamId>,
+
+    /// Tracks used user-defined stream IDs to ensure uniqueness.
+    user_ids: HashSet<Vec<u8>>,
+
     pending_read_frame: Option<Frame<()>>,
     pending_write_frame: Option<Frame<()>>,
-    new_outbound_stream_waker: Option<Waker>,
 
     rtt: rtt::Rtt,
 
@@ -109,13 +131,12 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             streams: IntMap::default(),
             stream_receivers: SelectAll::default(),
             no_streams_waker: None,
-            next_id: match mode {
-                Mode::Client => 1,
-                Mode::Server => 2,
-            },
+            pending_streams: HashMap::default(),
+            buffered_inits: HashMap::default(),
+            user_ids: HashSet::default(),
+            next_id: 1,
             pending_read_frame: None,
             pending_write_frame: None,
-            new_outbound_stream_waker: None,
             rtt: rtt::Rtt::new(),
             accumulated_max_stream_windows: Default::default(),
         }
@@ -128,7 +149,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             .pending_read_frame
             .into_iter()
             .chain(self.pending_write_frame)
-            .collect::<VecDeque<Frame<()>>>();
+            .collect::<PendingFrames>();
         Closing::new(
             self.id,
             self.stream_receivers,
@@ -148,7 +169,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             .pending_read_frame
             .into_iter()
             .chain(self.pending_write_frame)
-            .collect::<VecDeque<Frame<()>>>();
+            .collect::<PendingFrames>();
         Closing::new(
             self.id,
             self.stream_receivers,
@@ -169,7 +190,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         Cleanup::new(self.stream_receivers, error)
     }
 
-    pub(super) fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Result<Stream>> {
+    pub(super) fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         loop {
             if self.socket.poll_ready_unpin(cx).is_ready() {
                 // Note `next_ping` does not register a waker and thus if not called regularly
@@ -210,10 +231,19 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                         self.pending_write_frame.replace(frame.into());
                         continue;
                     }
-                    Poll::Ready(Some((id, Some(StreamCommand::CloseStream { ack })))) => {
-                        log::trace!("{}/{}: sending close", self.id, id);
+                    Poll::Ready(Some((
+                        _,
+                        Some(StreamCommand::SendInit { stream_id, user_id }),
+                    ))) => {
+                        log::trace!("{}/{}: sending StreamInit", self.id, stream_id);
+                        let frame = Frame::<StreamInit>::stream_init(stream_id, Some(&user_id));
+                        self.pending_write_frame.replace(frame.into());
+                        continue;
+                    }
+                    Poll::Ready(Some((_, Some(StreamCommand::CloseStream { stream_id, ack })))) => {
+                        log::trace!("{}/{}: sending close", self.id, stream_id);
                         self.pending_write_frame
-                            .replace(Frame::close_stream(id, ack).into());
+                            .replace(Frame::close_stream(stream_id, ack).into());
                         continue;
                     }
                     Poll::Ready(Some((id, None))) => {
@@ -235,10 +265,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                     Poll::Ready(Some(frame)) => {
                         match self.on_frame(frame?)? {
                             Action::None => {}
-                            Action::New(stream) => {
-                                log::trace!("{}: new inbound {} of {}", self.id, stream, self);
-                                return Poll::Ready(Ok(stream));
-                            }
                             Action::Ping(f) => {
                                 log::trace!("{}/{}: pong", self.id, f.header().stream_id());
                                 self.pending_read_frame.replace(f.into());
@@ -263,29 +289,75 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         }
     }
 
-    pub(super) fn poll_new_outbound(&mut self, cx: &mut Context<'_>) -> Poll<Result<Stream>> {
-        if self.streams.len() >= self.config.max_num_streams {
+    /// Create a new stream.
+    ///
+    /// For client mode: Creates stream in Initializing state, StreamInit will be sent on first write.
+    /// For server mode: Pre-registers stream or matches with buffered StreamInit.
+    pub(super) fn new_stream(&mut self, user_id: &[u8]) -> Result<Stream> {
+        // Validate user ID length (1-32 bytes)
+        if user_id.is_empty() || user_id.len() > 32 {
+            return Err(ConnectionError::InvalidUserIdLength);
+        }
+
+        // Check uniqueness
+        if self.user_ids.contains(user_id) {
+            return Err(ConnectionError::DuplicateUserId);
+        }
+
+        let total_streams = self.streams.len() + self.pending_streams.len();
+        if total_streams >= self.config.max_num_streams {
             log::error!("{}: maximum number of streams reached", self.id);
-            return Poll::Ready(Err(ConnectionError::TooManyStreams));
+            return Err(ConnectionError::TooManyStreams);
         }
 
-        if self.ack_backlog() >= MAX_ACK_BACKLOG {
-            log::debug!(
-                "{MAX_ACK_BACKLOG} streams waiting for ACK, registering task for wake-up until remote acknowledges at least one stream"
-            );
-            self.new_outbound_stream_waker = Some(cx.waker().clone());
-            return Poll::Pending;
+        let user_id_vec = user_id.to_vec();
+        self.user_ids.insert(user_id_vec.clone());
+
+        match self.mode {
+            Mode::Client => {
+                let stream_id = self.next_stream_id()?;
+                log::trace!("{}: creating new client stream {}", self.id, stream_id);
+
+                let stream = self.make_client_stream(stream_id, user_id_vec);
+                self.streams.insert(stream_id, stream.clone_shared());
+
+                log::debug!("{}: new client stream {} of {}", self.id, stream, self);
+                Ok(stream)
+            }
+            Mode::Server => {
+                // Check if we have a buffered StreamInit for this user_id
+                if let Some(stream_id) = self.buffered_inits.remove(&user_id_vec) {
+                    log::trace!(
+                        "{}: matching buffered StreamInit {} for user_id",
+                        self.id,
+                        stream_id
+                    );
+                    let stream = self.make_server_matched_stream(stream_id, user_id_vec);
+                    self.streams.insert(stream_id, stream.clone_shared());
+
+                    log::debug!(
+                        "{}: new matched server stream {} of {}",
+                        self.id,
+                        stream,
+                        self
+                    );
+                    Ok(stream)
+                } else {
+                    log::trace!("{}: pre-registering server stream for user_id", self.id);
+                    let (stream, receiver) = self.make_server_pending_stream(user_id_vec.clone());
+                    self.pending_streams
+                        .insert(user_id_vec, (stream.clone_shared(), receiver));
+
+                    log::debug!(
+                        "{}: new pending server stream {} of {}",
+                        self.id,
+                        stream,
+                        self
+                    );
+                    Ok(stream)
+                }
+            }
         }
-
-        log::trace!("{}: creating new outbound stream", self.id);
-
-        let id = self.next_stream_id()?;
-        let stream = self.make_new_outbound_stream(id);
-
-        log::debug!("{}: new outbound {} of {}", self.id, stream, self);
-        self.streams.insert(id, stream.clone_shared());
-
-        Poll::Ready(Ok(stream))
     }
 
     fn on_drop_stream(&mut self, stream_id: StreamId) -> Option<Frame<()>> {
@@ -294,7 +366,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         log::trace!("{}: removing dropped stream {}", self.id, stream_id);
         let frame = {
             let mut shared = s.lock();
-            let frame = match shared.update_state(self.id, stream_id, State::Closed) {
+            let frame = match shared.update_state(self.id, Some(stream_id), State::Closed) {
+                // Stream was in Initializing state - remote doesn't know about it yet.
+                // No need to send anything.
+                State::Initializing => None,
                 // The stream was dropped without calling `poll_close`.
                 // We reset the stream to inform the remote of the closure.
                 State::Open { .. } => {
@@ -353,10 +428,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             if let Some(stream) = self.streams.get(&id) {
                 stream
                     .lock()
-                    .update_state(self.id, id, State::Open { acknowledged: true });
-            }
-            if let Some(waker) = self.new_outbound_stream_waker.take() {
-                waker.wake();
+                    .update_state(self.id, Some(id), State::Open { acknowledged: true });
             }
         }
 
@@ -365,6 +437,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             Tag::WindowUpdate => self.on_window_update(&frame.into_window_update()),
             Tag::Ping => self.on_ping(&frame.into_ping()),
             Tag::GoAway => return Err(ConnectionError::Closed),
+            Tag::StreamInit => self.on_stream_init(frame.into_stream_init()),
         };
         Ok(action)
     }
@@ -376,7 +449,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             // stream reset
             if let Some(s) = self.streams.get_mut(&stream_id) {
                 let mut shared = s.lock();
-                shared.update_state(self.id, stream_id, State::Closed);
+                shared.update_state(self.id, Some(stream_id), State::Closed);
                 if let Some(w) = shared.reader.take() {
                     w.wake()
                 }
@@ -389,39 +462,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
 
         let is_finish = frame.header().flags().contains(header::FIN); // half-close
 
+        // SYN flag on Data frames is no longer used for stream initiation.
+        // Streams are now initiated via StreamInit frames.
         if frame.header().flags().contains(header::SYN) {
-            // new stream
-            if !self.is_valid_remote_id(stream_id, Tag::Data) {
-                log::error!("{}: invalid stream id {}", self.id, stream_id);
-                return Action::Terminate(Frame::protocol_error());
-            }
-            if frame.body().len() > DEFAULT_CREDIT as usize {
-                log::error!(
-                    "{}/{}: 1st body of stream exceeds default credit",
-                    self.id,
-                    stream_id
-                );
-                return Action::Terminate(Frame::protocol_error());
-            }
-            if self.streams.contains_key(&stream_id) {
-                log::error!("{}/{}: stream already exists", self.id, stream_id);
-                return Action::Terminate(Frame::protocol_error());
-            }
-            if self.streams.len() == self.config.max_num_streams {
-                log::error!("{}: maximum number of streams reached", self.id);
-                return Action::Terminate(Frame::internal_error());
-            }
-            let stream = self.make_new_inbound_stream(stream_id, DEFAULT_CREDIT);
-            {
-                let mut shared = stream.shared();
-                if is_finish {
-                    shared.update_state(self.id, stream_id, State::RecvClosed);
-                }
-                shared.consume_receive_window(frame.body_len());
-                shared.buffer.push(frame.into_body());
-            }
-            self.streams.insert(stream_id, stream.clone_shared());
-            return Action::New(stream);
+            log::error!("{}: SYN flag on Data frame is not allowed", self.id);
+            return Action::Terminate(Frame::protocol_error());
         }
 
         if let Some(s) = self.streams.get_mut(&stream_id) {
@@ -435,7 +480,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                 return Action::Terminate(Frame::protocol_error());
             }
             if is_finish {
-                shared.update_state(self.id, stream_id, State::RecvClosed);
+                shared.update_state(self.id, Some(stream_id), State::RecvClosed);
             }
             shared.consume_receive_window(frame.body_len());
             shared.buffer.push(frame.into_body());
@@ -470,7 +515,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             // stream reset
             if let Some(s) = self.streams.get_mut(&stream_id) {
                 let mut shared = s.lock();
-                shared.update_state(self.id, stream_id, State::Closed);
+                shared.update_state(self.id, Some(stream_id), State::Closed);
                 if let Some(w) = shared.reader.take() {
                     w.wake()
                 }
@@ -483,38 +528,18 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
 
         let is_finish = frame.header().flags().contains(header::FIN); // half-close
 
+        // SYN flag on WindowUpdate frames is no longer used for stream initiation.
+        // Streams are now initiated via StreamInit frames.
         if frame.header().flags().contains(header::SYN) {
-            // new stream
-            if !self.is_valid_remote_id(stream_id, Tag::WindowUpdate) {
-                log::error!("{}: invalid stream id {}", self.id, stream_id);
-                return Action::Terminate(Frame::protocol_error());
-            }
-            if self.streams.contains_key(&stream_id) {
-                log::error!("{}/{}: stream already exists", self.id, stream_id);
-                return Action::Terminate(Frame::protocol_error());
-            }
-            if self.streams.len() == self.config.max_num_streams {
-                log::error!("{}: maximum number of streams reached", self.id);
-                return Action::Terminate(Frame::internal_error());
-            }
-
-            let credit = frame.header().credit() + DEFAULT_CREDIT;
-            let stream = self.make_new_inbound_stream(stream_id, credit);
-
-            if is_finish {
-                stream
-                    .shared()
-                    .update_state(self.id, stream_id, State::RecvClosed);
-            }
-            self.streams.insert(stream_id, stream.clone_shared());
-            return Action::New(stream);
+            log::error!("{}: SYN flag on WindowUpdate frame is not allowed", self.id);
+            return Action::Terminate(Frame::protocol_error());
         }
 
         if let Some(s) = self.streams.get_mut(&stream_id) {
             let mut shared = s.lock();
             shared.increase_send_window_by(frame.header().credit());
             if is_finish {
-                shared.update_state(self.id, stream_id, State::RecvClosed);
+                shared.update_state(self.id, Some(stream_id), State::RecvClosed);
 
                 if let Some(w) = shared.reader.take() {
                     w.wake()
@@ -571,37 +596,133 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         Action::None
     }
 
-    fn make_new_inbound_stream(&mut self, id: StreamId, credit: u32) -> Stream {
+    fn on_stream_init(&mut self, frame: Frame<StreamInit>) -> Action {
+        let stream_id = frame.header().stream_id();
+
+        // Only server can receive StreamInit (only client can open streams)
+        if self.mode == Mode::Client {
+            log::error!("{}: server cannot send StreamInit frames", self.id);
+            return Action::Terminate(Frame::protocol_error());
+        }
+
+        if stream_id.is_session() {
+            log::error!("{}: invalid stream id 0 for StreamInit", self.id);
+            return Action::Terminate(Frame::protocol_error());
+        }
+
+        if self.streams.contains_key(&stream_id) {
+            log::error!("{}/{}: stream already exists", self.id, stream_id);
+            return Action::Terminate(Frame::protocol_error());
+        }
+
+        let user_id = frame.into_user_id().unwrap_or_default();
+
+        // Check if server has pre-registered a stream for this user_id
+        if let Some((shared, receiver)) = self.pending_streams.remove(&user_id) {
+            log::trace!(
+                "{}/{}: matching pre-registered stream for user_id",
+                self.id,
+                stream_id
+            );
+            // Set stream_id, transition to Open, and wake waiters
+            {
+                let mut s = shared.lock();
+                s.set_stream_id(stream_id);
+                s.update_state(
+                    self.id,
+                    Some(stream_id),
+                    State::Open {
+                        acknowledged: false,
+                    },
+                );
+                if let Some(w) = s.reader.take() {
+                    w.wake();
+                }
+                if let Some(w) = s.writer.take() {
+                    w.wake();
+                }
+            }
+            // Move to streams map
+            self.streams.insert(stream_id, shared.clone());
+            // Set up command receiver
+            self.stream_receivers
+                .push(TaggedStream::new(stream_id, receiver));
+            if let Some(waker) = self.no_streams_waker.take() {
+                waker.wake();
+            }
+            Action::None
+        } else {
+            // Only check limit when buffering - matching doesn't increase total count
+            let total_streams =
+                self.streams.len() + self.pending_streams.len() + self.buffered_inits.len();
+            if total_streams >= self.config.max_num_streams {
+                log::error!("{}: maximum number of streams reached", self.id);
+                return Action::Terminate(Frame::internal_error());
+            }
+
+            log::trace!(
+                "{}/{}: buffering StreamInit for user_id (no pre-registration)",
+                self.id,
+                stream_id
+            );
+            // Buffer for later registration by server
+            self.buffered_inits.insert(user_id, stream_id);
+            Action::None
+        }
+    }
+
+    fn make_client_stream(&mut self, id: StreamId, user_id: Vec<u8>) -> Stream {
         let config = self.config.clone();
 
-        let (sender, receiver) = mpsc::channel(10); // 10 is an arbitrary number.
+        let (sender, receiver) = mpsc::channel(10);
         self.stream_receivers.push(TaggedStream::new(id, receiver));
         if let Some(waker) = self.no_streams_waker.take() {
             waker.wake();
         }
 
-        Stream::new_inbound(
+        Stream::new_client(
             id,
+            user_id,
             self.id,
             config,
-            credit,
             sender,
             self.rtt.clone(),
             self.accumulated_max_stream_windows.clone(),
         )
     }
 
-    fn make_new_outbound_stream(&mut self, id: StreamId) -> Stream {
+    fn make_server_pending_stream(
+        &mut self,
+        user_id: Vec<u8>,
+    ) -> (Stream, mpsc::Receiver<StreamCommand>) {
         let config = self.config.clone();
 
-        let (sender, receiver) = mpsc::channel(10); // 10 is an arbitrary number.
+        let (sender, receiver) = mpsc::channel(10);
+        // Receiver will be pushed to stream_receivers when matched
+
+        let stream = Stream::new_server_pending(
+            user_id,
+            self.id,
+            config,
+            sender,
+            self.rtt.clone(),
+            self.accumulated_max_stream_windows.clone(),
+        );
+        (stream, receiver)
+    }
+
+    fn make_server_matched_stream(&mut self, id: StreamId, user_id: Vec<u8>) -> Stream {
+        let config = self.config.clone();
+
+        let (sender, receiver) = mpsc::channel(10);
         self.stream_receivers.push(TaggedStream::new(id, receiver));
         if let Some(waker) = self.no_streams_waker.take() {
             waker.wake();
         }
 
-        Stream::new_outbound(
+        Stream::new_server_matched(
             id,
+            user_id,
             self.id,
             config,
             sender,
@@ -614,45 +735,9 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         let proposed = StreamId::new(self.next_id);
         self.next_id = self
             .next_id
-            .checked_add(2)
+            .checked_add(1)
             .ok_or(ConnectionError::NoMoreStreamIds)?;
-        match self.mode {
-            Mode::Client => assert!(proposed.is_client()),
-            Mode::Server => assert!(proposed.is_server()),
-        }
         Ok(proposed)
-    }
-
-    /// The ACK backlog is defined as the number of outbound streams that have
-    /// not yet been acknowledged.
-    fn ack_backlog(&mut self) -> usize {
-        self.streams
-            .iter()
-            // Whether this is an outbound stream.
-            //
-            // Clients use odd IDs and servers use even IDs.
-            // A stream is outbound if:
-            //
-            // - Its ID is odd and we are the client.
-            // - Its ID is even and we are the server.
-            .filter(|(id, _)| match self.mode {
-                Mode::Client => id.is_client(),
-                Mode::Server => id.is_server(),
-            })
-            .filter(|(_, s)| s.lock().is_pending_ack())
-            .count()
-    }
-
-    // Check if the given stream ID is valid w.r.t. the provided tag and our
-    // connection mode.
-    fn is_valid_remote_id(&self, id: StreamId, tag: Tag) -> bool {
-        if tag == Tag::Ping || tag == Tag::GoAway {
-            return id.is_session();
-        }
-        match self.mode {
-            Mode::Client => id.is_server(),
-            Mode::Server => id.is_client(),
-        }
     }
 }
 
@@ -661,7 +746,18 @@ impl<T> Active<T> {
     pub(super) fn drop_all_streams(&mut self) {
         for (id, s) in self.streams.drain() {
             let mut shared = s.lock();
-            shared.update_state(self.id, id, State::Closed);
+            shared.update_state(self.id, Some(id), State::Closed);
+            if let Some(w) = shared.reader.take() {
+                w.wake()
+            }
+            if let Some(w) = shared.writer.take() {
+                w.wake()
+            }
+        }
+        // Also close pending streams
+        for (_, (s, _receiver)) in self.pending_streams.drain() {
+            let mut shared = s.lock();
+            shared.update_state(self.id, None, State::Closed);
             if let Some(w) = shared.reader.take() {
                 w.wake()
             }

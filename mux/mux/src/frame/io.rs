@@ -235,7 +235,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Stream for Io<T> {
 
                         log::trace!("{}: read: {}", this.id, header);
 
-                        if header.tag() != header::Tag::Data {
+                        if !matches!(header.tag(), header::Tag::Data | header::Tag::StreamInit) {
                             this.read_state = ReadState::Init;
                             return Poll::Ready(Some(Ok(Frame::new(header))));
                         }
@@ -374,13 +374,21 @@ mod tests {
     impl Arbitrary for Frame<()> {
         fn arbitrary(g: &mut Gen) -> Self {
             let mut header: header::Header<()> = Arbitrary::arbitrary(g);
-            let body = if header.tag() == header::Tag::Data {
-                header.set_len(header.len().val() % 4096);
-                let mut b = vec![0; header.len().val() as usize];
-                rand::rng().fill_bytes(&mut b);
-                b
-            } else {
-                Vec::new()
+            let body = match header.tag() {
+                header::Tag::Data => {
+                    header.set_len(header.len().val() % 4096);
+                    let mut b = vec![0; header.len().val() as usize];
+                    rand::rng().fill_bytes(&mut b);
+                    b
+                }
+                header::Tag::StreamInit => {
+                    // User ID max length is 32
+                    header.set_len(header.len().val() % 33);
+                    let mut b = vec![0; header.len().val() as usize];
+                    rand::rng().fill_bytes(&mut b);
+                    b
+                }
+                _ => Vec::new(),
             };
             Frame { header, body }
         }
