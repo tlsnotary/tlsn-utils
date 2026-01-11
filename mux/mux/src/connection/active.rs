@@ -28,7 +28,7 @@ use std::{
 type PendingFrames = VecDeque<Frame<()>>;
 
 use super::{
-    Id, Mode,
+    Id, Mode, UserId,
     cleanup::Cleanup,
     closing::Closing,
     rtt,
@@ -43,7 +43,7 @@ pub(crate) enum StreamCommand {
     /// Send StreamInit frame (client only, on first write).
     SendInit {
         stream_id: StreamId,
-        user_id: Vec<u8>,
+        user_id: UserId,
     },
     /// Close a stream.
     CloseStream { stream_id: StreamId, ack: bool },
@@ -72,14 +72,15 @@ pub(crate) struct Active<T> {
     stream_receivers: SelectAll<TaggedStream<StreamId, mpsc::Receiver<StreamCommand>>>,
     no_streams_waker: Option<Waker>,
 
-    /// Server only: streams pre-registered via new_stream, waiting for client's StreamInit.
-    /// Stores shared state and the receiver for command handling.
-    pending_streams: HashMap<Vec<u8>, (Arc<Mutex<stream::Shared>>, mpsc::Receiver<StreamCommand>)>,
+    /// Server only: streams pre-registered via new_stream, waiting for client's
+    /// StreamInit. Stores shared state and the receiver for command
+    /// handling.
+    pending_streams: HashMap<UserId, (Arc<Mutex<stream::Shared>>, mpsc::Receiver<StreamCommand>)>,
     /// Server only: StreamInit frames received before server called new_stream.
-    buffered_inits: HashMap<Vec<u8>, StreamId>,
+    buffered_inits: HashMap<UserId, StreamId>,
 
     /// Tracks used user-defined stream IDs to ensure uniqueness.
-    user_ids: HashSet<Vec<u8>>,
+    user_ids: HashSet<UserId>,
 
     pending_read_frame: Option<Frame<()>>,
     pending_write_frame: Option<Frame<()>>,
@@ -236,7 +237,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                         Some(StreamCommand::SendInit { stream_id, user_id }),
                     ))) => {
                         log::trace!("{}/{}: sending StreamInit", self.id, stream_id);
-                        let frame = Frame::<StreamInit>::stream_init(stream_id, Some(&user_id));
+                        let frame = Frame::<StreamInit>::stream_init(stream_id, &user_id);
                         self.pending_write_frame.replace(frame.into());
                         continue;
                     }
@@ -291,16 +292,14 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
 
     /// Create a new stream.
     ///
-    /// For client mode: Creates stream in Initializing state, StreamInit will be sent on first write.
-    /// For server mode: Pre-registers stream or matches with buffered StreamInit.
+    /// For client mode: Creates stream in Initializing state, StreamInit will
+    /// be sent on first write. For server mode: Pre-registers stream or
+    /// matches with buffered StreamInit.
     pub(super) fn new_stream(&mut self, user_id: &[u8]) -> Result<Stream> {
-        // Validate user ID length (1-32 bytes)
-        if user_id.is_empty() || user_id.len() > 32 {
-            return Err(ConnectionError::InvalidUserIdLength);
-        }
+        let user_id = UserId::new(user_id)?;
 
         // Check uniqueness
-        if self.user_ids.contains(user_id) {
+        if self.user_ids.contains(&user_id) {
             return Err(ConnectionError::DuplicateUserId);
         }
 
@@ -310,15 +309,14 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             return Err(ConnectionError::TooManyStreams);
         }
 
-        let user_id_vec = user_id.to_vec();
-        self.user_ids.insert(user_id_vec.clone());
+        self.user_ids.insert(user_id.clone());
 
         match self.mode {
             Mode::Client => {
                 let stream_id = self.next_stream_id()?;
                 log::trace!("{}: creating new client stream {}", self.id, stream_id);
 
-                let stream = self.make_client_stream(stream_id, user_id_vec);
+                let stream = self.make_client_stream(stream_id, user_id);
                 self.streams.insert(stream_id, stream.clone_shared());
 
                 log::debug!("{}: new client stream {} of {}", self.id, stream, self);
@@ -326,13 +324,13 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             }
             Mode::Server => {
                 // Check if we have a buffered StreamInit for this user_id
-                if let Some(stream_id) = self.buffered_inits.remove(&user_id_vec) {
+                if let Some(stream_id) = self.buffered_inits.remove(&user_id) {
                     log::trace!(
                         "{}: matching buffered StreamInit {} for user_id",
                         self.id,
                         stream_id
                     );
-                    let stream = self.make_server_matched_stream(stream_id, user_id_vec);
+                    let stream = self.make_server_matched_stream(stream_id, user_id);
                     self.streams.insert(stream_id, stream.clone_shared());
 
                     log::debug!(
@@ -344,9 +342,9 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                     Ok(stream)
                 } else {
                     log::trace!("{}: pre-registering server stream for user_id", self.id);
-                    let (stream, receiver) = self.make_server_pending_stream(user_id_vec.clone());
+                    let (stream, receiver) = self.make_server_pending_stream(user_id.clone());
                     self.pending_streams
-                        .insert(user_id_vec, (stream.clone_shared(), receiver));
+                        .insert(user_id, (stream.clone_shared(), receiver));
 
                     log::debug!(
                         "{}: new pending server stream {} of {}",
@@ -615,7 +613,18 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             return Action::Terminate(Frame::protocol_error());
         }
 
-        let user_id = frame.into_user_id().unwrap_or_default();
+        let user_id_bytes = frame.into_user_id().unwrap_or_default();
+        let user_id = match UserId::new(user_id_bytes) {
+            Ok(id) => id,
+            Err(_) => {
+                log::error!(
+                    "{}/{}: invalid user_id length in StreamInit",
+                    self.id,
+                    stream_id
+                );
+                return Action::Terminate(Frame::protocol_error());
+            }
+        };
 
         // Check if server has pre-registered a stream for this user_id
         if let Some((shared, receiver)) = self.pending_streams.remove(&user_id) {
@@ -671,7 +680,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         }
     }
 
-    fn make_client_stream(&mut self, id: StreamId, user_id: Vec<u8>) -> Stream {
+    fn make_client_stream(&mut self, id: StreamId, user_id: UserId) -> Stream {
         let config = self.config.clone();
 
         let (sender, receiver) = mpsc::channel(10);
@@ -693,7 +702,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
 
     fn make_server_pending_stream(
         &mut self,
-        user_id: Vec<u8>,
+        user_id: UserId,
     ) -> (Stream, mpsc::Receiver<StreamCommand>) {
         let config = self.config.clone();
 
@@ -711,7 +720,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         (stream, receiver)
     }
 
-    fn make_server_matched_stream(&mut self, id: StreamId, user_id: Vec<u8>) -> Stream {
+    fn make_server_matched_stream(&mut self, id: StreamId, user_id: UserId) -> Stream {
         let config = self.config.clone();
 
         let (sender, receiver) = mpsc::channel(10);

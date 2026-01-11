@@ -3,7 +3,7 @@ use std::{cmp, sync::Arc};
 use parking_lot::Mutex;
 use web_time::Instant;
 
-use crate::{connection::rtt::Rtt, Config, DEFAULT_CREDIT};
+use crate::{Config, DEFAULT_CREDIT, connection::rtt::Rtt};
 
 #[derive(Debug)]
 pub(crate) struct FlowController {
@@ -37,8 +37,9 @@ impl FlowController {
         }
     }
 
-    /// Calculate the number of additional window bytes the receiving side (local) should grant the
-    /// sending side (remote) via a window update message.
+    /// Calculate the number of additional window bytes the receiving side
+    /// (local) should grant the sending side (remote) via a window update
+    /// message.
     ///
     /// Returns `None` if too small to justify a window update message.
     pub(crate) fn next_window_update(&mut self, buffer_len: usize) -> Option<u32> {
@@ -48,7 +49,8 @@ impl FlowController {
         let mut next_window_update =
             bytes_received.saturating_sub(buffer_len.try_into().unwrap_or(u32::MAX));
 
-        // Don't send an update in case half or more of the window is still available to the sender.
+        // Don't send an update in case half or more of the window is still available to
+        // the sender.
         if next_window_update < self.max_receive_window / 2 {
             return None;
         }
@@ -63,19 +65,20 @@ impl FlowController {
 
         // Auto-tuning `max_receive_window`
         //
-        // The ideal `max_receive_window` is equal to the bandwidth-delay-product (BDP), thus
-        // allowing the remote sender to exhaust the entire available bandwidth on a single stream.
-        // Choosing `max_receive_window` too small prevents the remote sender from exhausting the
-        // available bandwidth. Choosing `max_receive_window` to large is wasteful and delays
+        // The ideal `max_receive_window` is equal to the bandwidth-delay-product (BDP),
+        // thus allowing the remote sender to exhaust the entire available
+        // bandwidth on a single stream. Choosing `max_receive_window` too small
+        // prevents the remote sender from exhausting the available bandwidth.
+        // Choosing `max_receive_window` to large is wasteful and delays
         // backpressure from the receiver to the sender on the stream.
         //
-        // In case the remote sender has exhausted half or more of its credit in less than 2
-        // round-trips, try to double `max_receive_window`.
+        // In case the remote sender has exhausted half or more of its credit in less
+        // than 2 round-trips, try to double `max_receive_window`.
         //
         // For simplicity `max_receive_window` is never decreased.
         //
-        // This implementation is heavily influenced by QUIC. See document below for rational on the
-        // above strategy.
+        // This implementation is heavily influenced by QUIC. See document below for
+        // rational on the above strategy.
         //
         // https://docs.google.com/document/d/1F2YfdDXKpy20WVKJueEf4abn_LVZHhMUMS5gX6Pgjl4/edit?usp=sharing
         if self
@@ -153,8 +156,7 @@ impl FlowController {
             "The maximum never exceeds its maximum portion of the configured connection limit."
         );
         assert!(
-            (self.max_receive_window - DEFAULT_CREDIT) as usize
-                <= accumulated_max_stream_windows,
+            (self.max_receive_window - DEFAULT_CREDIT) as usize <= accumulated_max_stream_windows,
             "The amount by which the stream maximum exceeds DEFAULT_CREDIT is tracked in accumulated_max_stream_windows."
         );
         if rtt.is_none() {

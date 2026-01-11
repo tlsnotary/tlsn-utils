@@ -1,16 +1,22 @@
-use crate::connection::StreamCommand;
-use crate::frame::header;
-use crate::frame::Frame;
-use crate::tagged_stream::TaggedStream;
-use crate::Result;
-use crate::{frame, StreamId};
-use futures::channel::mpsc;
-use futures::stream::{Fuse, SelectAll};
-use futures::{ready, AsyncRead, AsyncWrite, SinkExt, StreamExt};
-use std::collections::VecDeque;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use crate::{
+    Result, StreamId,
+    connection::StreamCommand,
+    frame,
+    frame::{Frame, header},
+    tagged_stream::TaggedStream,
+};
+use futures::{
+    AsyncRead, AsyncWrite, SinkExt, StreamExt,
+    channel::mpsc,
+    ready,
+    stream::{Fuse, SelectAll},
+};
+use std::{
+    collections::VecDeque,
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 /// A [`Future`] that gracefully closes the multiplexer connection.
 #[must_use]
@@ -72,12 +78,19 @@ where
                         Poll::Ready(Some((_, Some(StreamCommand::SendFrame(frame))))) => {
                             this.pending_frames.push_back(frame.into());
                         }
-                        Poll::Ready(Some((_, Some(StreamCommand::CloseStream { stream_id, ack })))) => {
+                        Poll::Ready(Some((
+                            _,
+                            Some(StreamCommand::CloseStream { stream_id, ack }),
+                        ))) => {
                             this.pending_frames
                                 .push_back(Frame::close_stream(stream_id, ack).into());
                         }
-                        Poll::Ready(Some((_, Some(StreamCommand::SendInit { stream_id, user_id })))) => {
-                            let frame = Frame::<header::StreamInit>::stream_init(stream_id, Some(&user_id));
+                        Poll::Ready(Some((
+                            _,
+                            Some(StreamCommand::SendInit { stream_id, user_id }),
+                        ))) => {
+                            let frame =
+                                Frame::<header::StreamInit>::stream_init(stream_id, &user_id);
                             this.pending_frames.push_back(frame.into());
                         }
                         Poll::Ready(Some((_, None))) => {}
@@ -165,8 +178,7 @@ enum State {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::future::poll_fn;
-    use futures::FutureExt;
+    use futures::{FutureExt, future::poll_fn};
 
     struct Socket {
         written: Vec<u8>,
@@ -238,11 +250,17 @@ mod tests {
         ));
         stream_receivers.push(receiver(
             &frame_close,
-            StreamCommand::CloseStream { stream_id: StreamId::new(5), ack: false },
+            StreamCommand::CloseStream {
+                stream_id: StreamId::new(5),
+                ack: false,
+            },
         ));
         stream_receivers.push(receiver(
             &frame_close_ack,
-            StreamCommand::CloseStream { stream_id: StreamId::new(6), ack: true },
+            StreamCommand::CloseStream {
+                stream_id: StreamId::new(6),
+                ack: true,
+            },
         ));
         let pending_frames = vec![frame_pending];
         let mut socket = Socket {

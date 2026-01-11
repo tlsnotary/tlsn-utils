@@ -1,7 +1,8 @@
 // Copyright (c) 2018-2019 Parity Technologies (UK) Ltd.
 // Modifications Copyright (c) 2026 TLSNotary
 //
-// Licensed under the Apache License, Version 2.0 or MIT license, at your option.
+// Licensed under the Apache License, Version 2.0 or MIT license, at your
+// option.
 //
 // A copy of the Apache License, Version 2.0 is included in the software as
 // LICENSE-APACHE and a copy of the MIT license is included in the software
@@ -23,7 +24,8 @@ pub enum ConnectionError {
     NoMoreStreamIds,
     /// An operation fails because the connection is closed.
     Closed,
-    /// Too many streams are open, so no further ones can be opened at this time.
+    /// Too many streams are open, so no further ones can be opened at this
+    /// time.
     TooManyStreams,
     /// Server cannot open streams; only the client can initiate streams.
     ServerCannotOpenStreams,
@@ -43,12 +45,8 @@ impl std::fmt::Display for ConnectionError {
             }
             ConnectionError::Closed => f.write_str("connection is closed"),
             ConnectionError::TooManyStreams => f.write_str("maximum number of streams reached"),
-            ConnectionError::ServerCannotOpenStreams => {
-                f.write_str("server cannot open streams")
-            }
-            ConnectionError::InvalidUserIdLength => {
-                f.write_str("user ID exceeds maximum length")
-            }
+            ConnectionError::ServerCannotOpenStreams => f.write_str("server cannot open streams"),
+            ConnectionError::InvalidUserIdLength => f.write_str("user ID exceeds maximum length"),
             ConnectionError::DuplicateUserId => f.write_str("duplicate user ID"),
         }
     }

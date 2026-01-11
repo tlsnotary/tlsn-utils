@@ -1,7 +1,8 @@
 // Copyright (c) 2023 Protocol Labs.
 // Modifications Copyright (c) 2026 TLSNotary
 //
-// Licensed under the Apache License, Version 2.0 or MIT license, at your option.
+// Licensed under the Apache License, Version 2.0 or MIT license, at your
+// option.
 //
 // A copy of the Apache License, Version 2.0 is included in the software as
 // LICENSE-APACHE and a copy of the MIT license is included in the software
@@ -16,8 +17,10 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use web_time::{Duration, Instant};
 
-use crate::connection::Action;
-use crate::frame::{header::Ping, Frame};
+use crate::{
+    connection::Action,
+    frame::{Frame, header::Ping},
+};
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 

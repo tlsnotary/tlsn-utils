@@ -1,7 +1,8 @@
 // Copyright (c) 2018-2019 Parity Technologies (UK) Ltd.
 // Modifications Copyright (c) 2026 TLSNotary
 //
-// Licensed under the Apache License, Version 2.0 or MIT license, at your option.
+// Licensed under the Apache License, Version 2.0 or MIT license, at your
+// option.
 //
 // A copy of the Apache License, Version 2.0 is included in the software as
 // LICENSE-APACHE and a copy of the MIT license is included in the software
@@ -12,6 +13,7 @@
 pub mod header;
 mod io;
 
+use crate::connection::UserId;
 use futures::future::Either;
 use header::{Data, GoAway, Header, Ping, StreamId, StreamInit, WindowUpdate};
 use std::{convert::TryInto, num::TryFromIntError};
@@ -180,8 +182,8 @@ impl Frame<GoAway> {
 }
 
 impl Frame<StreamInit> {
-    pub fn stream_init(id: StreamId, user_id: Option<&[u8]>) -> Self {
-        let body = user_id.map(|id| id.to_vec()).unwrap_or_default();
+    pub fn stream_init(id: StreamId, user_id: &UserId) -> Self {
+        let body = user_id.as_bytes().to_vec();
         Frame {
             header: Header::stream_init(id, body.len() as u32),
             body,

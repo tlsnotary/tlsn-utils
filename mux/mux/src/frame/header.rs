@@ -1,7 +1,8 @@
 // Copyright (c) 2018-2019 Parity Technologies (UK) Ltd.
 // Modifications Copyright (c) 2026 TLSNotary
 //
-// Licensed under the Apache License, Version 2.0 or MIT license, at your option.
+// Licensed under the Apache License, Version 2.0 or MIT license, at your
+// option.
 //
 // A copy of the Apache License, Version 2.0 is included in the software as
 // LICENSE-APACHE and a copy of the MIT license is included in the software
@@ -427,7 +428,13 @@ mod tests {
     impl Arbitrary for Header<()> {
         fn arbitrary(g: &mut Gen) -> Self {
             let tag = *g
-                .choose(&[Tag::Data, Tag::WindowUpdate, Tag::Ping, Tag::GoAway, Tag::StreamInit])
+                .choose(&[
+                    Tag::Data,
+                    Tag::WindowUpdate,
+                    Tag::Ping,
+                    Tag::GoAway,
+                    Tag::StreamInit,
+                ])
                 .unwrap();
 
             Header {

@@ -1,12 +1,10 @@
-use crate::connection::StreamCommand;
-use crate::tagged_stream::TaggedStream;
-use crate::{ConnectionError, StreamId};
-use futures::channel::mpsc;
-use futures::stream::SelectAll;
-use futures::StreamExt;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use crate::{ConnectionError, StreamId, connection::StreamCommand, tagged_stream::TaggedStream};
+use futures::{StreamExt, channel::mpsc, stream::SelectAll};
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 /// A [`Future`] that cleans up resources in case of an error.
 #[must_use]
@@ -52,7 +50,7 @@ impl Future for Cleanup {
                             this.error
                                 .take()
                                 .expect("to not be called after completion"),
-                        )
+                        );
                     }
                 },
             }

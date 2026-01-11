@@ -1,7 +1,8 @@
 // Copyright (c) 2018-2019 Parity Technologies (UK) Ltd.
 // Modifications Copyright (c) 2026 TLSNotary
 //
-// Licensed under the Apache License, Version 2.0 or MIT license, at your option.
+// Licensed under the Apache License, Version 2.0 or MIT license, at your
+// option.
 //
 // A copy of the Apache License, Version 2.0 is included in the software as
 // LICENSE-APACHE and a copy of the MIT license is included in the software
@@ -16,8 +17,8 @@
 //!
 //! The two primary objects, clients of this crate interact with, are:
 //!
-//! - [`Connection`], which wraps the underlying I/O resource, e.g. a socket, and
-//!   provides methods for opening outbound or accepting inbound streams.
+//! - [`Connection`], which wraps the underlying I/O resource, e.g. a socket,
+//!   and provides methods for opening outbound or accepting inbound streams.
 //! - [`Stream`], which implements [`futures::io::AsyncRead`] and
 //!   [`futures::io::AsyncWrite`].
 
@@ -30,11 +31,13 @@ mod frame;
 pub(crate) mod connection;
 mod tagged_stream;
 
-pub use crate::connection::{Connection, Mode, Packet, Stream};
-pub use crate::error::ConnectionError;
-pub use crate::frame::{
-    header::{HeaderDecodeError, StreamId},
-    FrameDecodeError,
+pub use crate::{
+    connection::{Connection, Mode, Stream},
+    error::ConnectionError,
+    frame::{
+        FrameDecodeError,
+        header::{HeaderDecodeError, StreamId},
+    },
 };
 
 const KIB: usize = 1024;
@@ -61,7 +64,8 @@ const DEFAULT_SPLIT_SEND_SIZE: usize = 16 * KIB;
 ///
 /// The default configuration values are as follows:
 ///
-/// - max. for the total receive window size across all streams of a connection = 1 GiB
+/// - max. for the total receive window size across all streams of a connection
+///   = 1 GiB
 /// - max. number of streams = 512
 /// - read after close = true
 /// - split send size = 16 KiB
@@ -91,34 +95,39 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Set the upper limit for the total receive window size across all streams of a connection.
+    /// Set the upper limit for the total receive window size across all streams
+    /// of a connection.
     ///
-    /// Must be `>= 256 KiB * max_num_streams` to allow each stream at least the default
-    /// window size.
+    /// Must be `>= 256 KiB * max_num_streams` to allow each stream at least the
+    /// default window size.
     ///
-    /// The window of a stream starts at 256 KiB and is increased (auto-tuned) based on the
-    /// connection's round-trip time and the stream's bandwidth (striving for the
-    /// bandwidth-delay-product).
+    /// The window of a stream starts at 256 KiB and is increased (auto-tuned)
+    /// based on the connection's round-trip time and the stream's bandwidth
+    /// (striving for the bandwidth-delay-product).
     ///
-    /// Set to `None` to disable limit, i.e. allow each stream to grow receive window based on
-    /// connection's round-trip time and stream's bandwidth without limit.
+    /// Set to `None` to disable limit, i.e. allow each stream to grow receive
+    /// window based on connection's round-trip time and stream's bandwidth
+    /// without limit.
     ///
     /// ## DOS attack mitigation
     ///
-    /// A remote node (attacker) might trick the local node (target) into allocating large stream
-    /// receive windows, trying to make the local node run out of memory.
+    /// A remote node (attacker) might trick the local node (target) into
+    /// allocating large stream receive windows, trying to make the local
+    /// node run out of memory.
     ///
-    /// This attack is difficult, as the local node only increases the stream receive window up to
-    /// 2x the bandwidth-delay-product, where bandwidth is the amount of bytes read, not just
-    /// received. In other words, the attacker has to send (and have the local node read)
-    /// significant amount of bytes on a stream over a long period of time to increase the stream
-    /// receive window. E.g. on a 60ms 10Gbit/s connection the bandwidth-delay-product is ~75 MiB
-    /// and thus the local node will at most allocate ~150 MiB (2x bandwidth-delay-product) per
-    /// stream.
+    /// This attack is difficult, as the local node only increases the stream
+    /// receive window up to 2x the bandwidth-delay-product, where bandwidth
+    /// is the amount of bytes read, not just received. In other words, the
+    /// attacker has to send (and have the local node read) significant
+    /// amount of bytes on a stream over a long period of time to increase the
+    /// stream receive window. E.g. on a 60ms 10Gbit/s connection the
+    /// bandwidth-delay-product is ~75 MiB and thus the local node will at
+    /// most allocate ~150 MiB (2x bandwidth-delay-product) per stream.
     ///
     /// Despite the difficulty of the attack one should choose a reasonable
-    /// `max_connection_receive_window` to protect against this attack, especially since an attacker
-    /// might use more than one stream per connection.
+    /// `max_connection_receive_window` to protect against this attack,
+    /// especially since an attacker might use more than one stream per
+    /// connection.
     pub fn set_max_connection_receive_window(&mut self, n: Option<usize>) -> &mut Self {
         self.max_connection_receive_window = n;
 

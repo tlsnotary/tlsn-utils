@@ -1,7 +1,8 @@
 // Copyright (c) 2018-2019 Parity Technologies (UK) Ltd.
 // Modifications Copyright (c) 2026 TLSNotary
 //
-// Licensed under the Apache License, Version 2.0 or MIT license, at your option.
+// Licensed under the Apache License, Version 2.0 or MIT license, at your
+// option.
 //
 // A copy of the Apache License, Version 2.0 is included in the software as
 // LICENSE-APACHE and a copy of the MIT license is included in the software
@@ -9,16 +10,13 @@
 // at https://www.apache.org/licenses/LICENSE-2.0 and a copy of the MIT license
 // at https://opensource.org/licenses/MIT.
 
-use crate::Mode;
-use crate::connection::rtt::Rtt;
-use crate::frame::header::ACK;
 use crate::{
-    Config, DEFAULT_CREDIT,
+    Config, DEFAULT_CREDIT, Mode,
     chunks::Chunks,
-    connection::{self, StreamCommand, rtt},
+    connection::{self, StreamCommand, UserId, rtt, rtt::Rtt},
     frame::{
         Frame,
-        header::{Data, Header, StreamId, WindowUpdate},
+        header::{ACK, Data, Header, StreamId, WindowUpdate},
     },
 };
 use flow_control::FlowController;
@@ -51,11 +49,13 @@ pub enum State {
     Open {
         /// Whether the stream is acknowledged.
         ///
-        /// For outbound streams, this tracks whether the remote has acknowledged our stream.
-        /// For inbound streams, this tracks whether we have acknowledged the stream to the remote.
+        /// For outbound streams, this tracks whether the remote has
+        /// acknowledged our stream. For inbound streams, this tracks
+        /// whether we have acknowledged the stream to the remote.
         ///
-        /// This starts out with `false` and is set to `true` when we receive or send an `ACK` flag for this stream.
-        /// We may also directly transition:
+        /// This starts out with `false` and is set to `true` when we receive or
+        /// send an `ACK` flag for this stream. We may also directly
+        /// transition:
         /// - from `Open` to `RecvClosed` if the remote immediately sends `FIN`.
         /// - from `Open` to `Closed` if the remote immediately sends `RST`.
         acknowledged: bool,
@@ -105,7 +105,7 @@ pub(crate) enum Flag {
 /// `Stream` implements [`AsyncRead`] and [`AsyncWrite`] and also
 /// [`futures::stream::Stream`].
 pub struct Stream {
-    user_id: Vec<u8>,
+    user_id: UserId,
     conn: connection::Id,
     config: Arc<Config>,
     mode: Mode,
@@ -134,10 +134,11 @@ impl fmt::Display for Stream {
 }
 
 impl Stream {
-    /// Create a new stream for client mode (outbound, will send StreamInit on first write).
+    /// Create a new stream for client mode (outbound, will send StreamInit on
+    /// first write).
     pub(crate) fn new_client(
         stream_id: StreamId,
-        user_id: Vec<u8>,
+        user_id: UserId,
         conn: connection::Id,
         config: Arc<Config>,
         sender: mpsc::Sender<StreamCommand>,
@@ -165,7 +166,7 @@ impl Stream {
 
     /// Create a new stream for server mode (pending, waiting for StreamInit).
     pub(crate) fn new_server_pending(
-        user_id: Vec<u8>,
+        user_id: UserId,
         conn: connection::Id,
         config: Arc<Config>,
         sender: mpsc::Sender<StreamCommand>,
@@ -191,10 +192,11 @@ impl Stream {
         }
     }
 
-    /// Create a new stream for server mode (matched, StreamInit already received).
+    /// Create a new stream for server mode (matched, StreamInit already
+    /// received).
     pub(crate) fn new_server_matched(
         stream_id: StreamId,
-        user_id: Vec<u8>,
+        user_id: UserId,
         conn: connection::Id,
         config: Arc<Config>,
         sender: mpsc::Sender<StreamCommand>,
@@ -224,11 +226,12 @@ impl Stream {
 
     /// Get this stream's user-defined identifier.
     pub fn id(&self) -> &[u8] {
-        &self.user_id
+        self.user_id.as_bytes()
     }
 
-    /// Get the stream ID. Returns None for server streams that haven't been matched yet.
-    pub fn stream_id(&self) -> Option<StreamId> {
+    /// Get the stream ID. Returns None for server streams that haven't been
+    /// matched yet.
+    pub(crate) fn stream_id(&self) -> Option<StreamId> {
         self.shared.lock().stream_id()
     }
 
@@ -272,11 +275,6 @@ impl Stream {
     /// Send new credit to the sending side via a window update message if
     /// permitted.
     fn send_window_update(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
-        // Can't send window updates without a stream_id
-        let Some(stream_id) = self.stream_id() else {
-            return Poll::Ready(Ok(()));
-        };
-
         if !self.shared.lock().state.can_read() {
             return Poll::Ready(Ok(()));
         }
@@ -287,9 +285,14 @@ impl Stream {
                 .map_err(|_| self.write_zero_err())?
         );
 
-        let Some(credit) = self.shared.lock().next_window_update() else {
+        let mut shared = self.shared.lock();
+        let stream_id = shared
+            .stream_id()
+            .expect("stream ID is set if ready to read");
+        let Some(credit) = shared.next_window_update() else {
             return Poll::Ready(Ok(()));
         };
+        drop(shared);
 
         let mut frame = Frame::window_update(stream_id, credit).right();
         self.add_flag(frame.header_mut());
@@ -299,16 +302,6 @@ impl Stream {
             .map_err(|_| self.write_zero_err())?;
 
         Poll::Ready(Ok(()))
-    }
-}
-
-/// Byte data produced by the [`futures::stream::Stream`] impl of [`Stream`].
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Packet(Vec<u8>);
-
-impl AsRef<[u8]> for Packet {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_ref()
     }
 }
 
@@ -460,10 +453,12 @@ impl AsyncWrite for Stream {
         self.add_flag(frame.header_mut());
         log::trace!("{}: write {} bytes", self, n);
 
-        // technically, the frame hasn't been sent yet on the wire but from the perspective of this data structure, we've queued the frame for sending
+        // technically, the frame hasn't been sent yet on the wire but from the
+        // perspective of this data structure, we've queued the frame for sending
         // We are tracking this information:
         // a) to be consistent with outbound streams
-        // b) to correctly test our behaviour around timing of when ACKs are sent. See `ack_timing.rs` test.
+        // b) to correctly test our behaviour around timing of when ACKs are sent. See
+        // `ack_timing.rs` test.
         if frame.header().flags().contains(ACK) {
             self.shared().update_state(
                 self.conn,

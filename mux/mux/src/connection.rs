@@ -19,6 +19,9 @@ mod cleanup;
 mod closing;
 mod rtt;
 mod stream;
+mod user_id;
+
+pub(crate) use user_id::UserId;
 
 use crate::{Config, Result, error::ConnectionError};
 use active::Active;
@@ -31,7 +34,7 @@ use std::{
 };
 
 pub(crate) use active::{Action, StreamCommand};
-pub use stream::{Packet, State, Stream};
+pub use stream::Stream;
 
 /// How the connection is used.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -40,16 +43,6 @@ pub enum Mode {
     Client,
     /// Server to client connection.
     Server,
-}
-
-impl Mode {
-    pub(crate) fn is_client(&self) -> bool {
-        matches!(self, Mode::Client)
-    }
-
-    pub(crate) fn is_server(&self) -> bool {
-        matches!(self, Mode::Server)
-    }
 }
 
 /// The connection identifier.
@@ -102,8 +95,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
     /// For server mode: Pre-registers the stream or matches with a buffered
     /// StreamInit if one has already been received for this user_id.
     ///
-    /// The `user_id` parameter is a required user-defined stream identifier (1-32 bytes).
-    /// User IDs must be unique within the session.
+    /// The `user_id` parameter is a required user-defined stream identifier
+    /// (1-32 bytes). User IDs must be unique within the session.
     pub fn new_stream(&mut self, user_id: &[u8]) -> Result<Stream> {
         match &mut self.inner {
             ConnectionState::Active(active) => active.new_stream(user_id),
@@ -128,7 +121,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
 
     /// Poll the connection.
     ///
-    /// This drives the connection state machine, handling I/O and stream commands.
+    /// This drives the connection state machine, handling I/O and stream
+    /// commands.
     ///
     /// Returns:
     /// - `Poll::Ready(Ok(()))` when the connection is closed gracefully
