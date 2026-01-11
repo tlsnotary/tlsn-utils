@@ -193,9 +193,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
     ///
     /// Returns `Err(self)` if the connection is not in the closed state
     /// or if the IO is not available (e.g., after an error cleanup).
+    #[allow(clippy::result_large_err)]
     pub fn try_into_io(mut self) -> std::result::Result<T, Self> {
         match &mut self.inner {
-            ConnectionState::Closed(io) => io.take().ok_or_else(|| self),
+            ConnectionState::Closed(io) => io.take().ok_or(self),
             _ => Err(self),
         }
     }
@@ -213,6 +214,7 @@ impl<T> Drop for Connection<T> {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 enum ConnectionState<T> {
     /// The connection is alive and healthy.
     Active(Active<T>),
