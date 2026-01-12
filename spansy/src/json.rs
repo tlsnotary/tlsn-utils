@@ -10,25 +10,25 @@
 //! # Example
 //!
 //! ```
-//! use spansy::{json, Spanned};
+//! use spansy::json;
 //!
-//! let src = "{\"foo\": {\"bar\": [42, 14]}}";
+//! let src = b"{\"foo\": {\"bar\": [42, 14]}}";
 //!
-//! let value = json::parse_str(src).unwrap();
+//! let value = json::parse(src).unwrap();
 //!
 //! // We can assert that the value present at the path "foo.bar.1" is the number 14.
-//! assert_eq!(value.get("foo.bar.1").unwrap().span(), "14");
+//! assert_eq!(value.get("foo.bar.1").unwrap().view().as_str().as_ref(), "14");
 //!
 //! let bar = value.get("foo.bar").unwrap();
 //!
 //! // The span of the `bar` array is 16..24 within the source string.
-//! assert_eq!(bar.span().indices(), 16..24);
+//! assert_eq!(bar.view().indices(), &rangeset::set::RangeSet::from(16usize..24));
 //! ```
 
 mod span;
 mod types;
 mod visit;
 
-pub use span::{parse, parse_slice, parse_str};
+pub use span::parse;
 pub use types::{Array, Bool, JsonKey, JsonValue, KeyValue, Null, Number, Object, String};
 pub use visit::JsonVisit;
