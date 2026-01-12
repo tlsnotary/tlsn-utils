@@ -337,7 +337,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                             frame.header().stream_id(),
                             frame.header()
                         );
-                        self.pending_write_frame.replace(frame.into());
+                        self.pending_write_frame.replace(frame);
                         continue;
                     }
                     Poll::Ready(Some((_, Some(StreamCommand::CloseStream { stream_id })))) => {

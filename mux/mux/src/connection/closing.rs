@@ -75,7 +75,7 @@ where
                 State::DrainingStreamReceiver => {
                     match this.stream_receivers.poll_next_unpin(cx) {
                         Poll::Ready(Some((_, Some(StreamCommand::SendFrame(frame))))) => {
-                            this.pending_frames.push_back(frame.into());
+                            this.pending_frames.push_back(frame);
                         }
                         Poll::Ready(Some((_, Some(StreamCommand::CloseStream { stream_id })))) => {
                             this.pending_frames
