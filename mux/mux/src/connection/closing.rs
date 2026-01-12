@@ -1,8 +1,7 @@
 use crate::{
     Result, StreamId,
     connection::StreamCommand,
-    frame,
-    frame::{Frame, header},
+    frame::{self, Frame},
     tagged_stream::TaggedStream,
 };
 use futures::{
@@ -80,18 +79,10 @@ where
                         }
                         Poll::Ready(Some((
                             _,
-                            Some(StreamCommand::CloseStream { stream_id, ack }),
+                            Some(StreamCommand::CloseStream { stream_id }),
                         ))) => {
                             this.pending_frames
-                                .push_back(Frame::close_stream(stream_id, ack).into());
-                        }
-                        Poll::Ready(Some((
-                            _,
-                            Some(StreamCommand::SendInit { stream_id, user_id }),
-                        ))) => {
-                            let frame =
-                                Frame::<header::StreamInit>::stream_init(stream_id, &user_id);
-                            this.pending_frames.push_back(frame.into());
+                                .push_back(Frame::close_stream(stream_id).into());
                         }
                         Poll::Ready(Some((_, None))) => {}
                         Poll::Pending | Poll::Ready(None) => {
@@ -217,10 +208,9 @@ mod tests {
 
     #[test]
     fn pending_frames() {
-        let frame_pending = Frame::data(StreamId::new(1), vec![2]).unwrap().into();
-        let frame_data = Frame::data(StreamId::new(3), vec![4]).unwrap().into();
-        let frame_close = Frame::close_stream(StreamId::new(5), false).into();
-        let frame_close_ack = Frame::close_stream(StreamId::new(6), true).into();
+        let frame_pending = Frame::data(StreamId::new(b"stream1"), vec![2]).unwrap().into();
+        let frame_data = Frame::data(StreamId::new(b"stream3"), vec![4]).unwrap().into();
+        let frame_close = Frame::close_stream(StreamId::new(b"stream5")).into();
         let frame_term = Frame::term().into();
         fn encode(buf: &mut Vec<u8>, frame: &Frame<()>) {
             buf.extend_from_slice(&frame::header::encode(frame.header()));
@@ -232,7 +222,6 @@ mod tests {
         encode(&mut expected_written, &frame_pending);
         encode(&mut expected_written, &frame_data);
         encode(&mut expected_written, &frame_close);
-        encode(&mut expected_written, &frame_close_ack);
         encode(&mut expected_written, &frame_term);
 
         let receiver = |frame: &Frame<_>, command: StreamCommand| {
@@ -246,20 +235,12 @@ mod tests {
         let mut stream_receivers: SelectAll<_> = Default::default();
         stream_receivers.push(receiver(
             &frame_data,
-            StreamCommand::SendFrame(frame_data.clone().into_data().left()),
+            StreamCommand::SendFrame(frame_data.clone()),
         ));
         stream_receivers.push(receiver(
             &frame_close,
             StreamCommand::CloseStream {
-                stream_id: StreamId::new(5),
-                ack: false,
-            },
-        ));
-        stream_receivers.push(receiver(
-            &frame_close_ack,
-            StreamCommand::CloseStream {
-                stream_id: StreamId::new(6),
-                ack: true,
+                stream_id: StreamId::new(b"stream5"),
             },
         ));
         let pending_frames = vec![frame_pending];

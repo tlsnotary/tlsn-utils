@@ -20,17 +20,15 @@ pub enum ConnectionError {
     Io(std::io::Error),
     /// Decoding a message frame failed.
     Decode(FrameDecodeError),
-    /// The whole range of stream IDs has been used up.
-    NoMoreStreamIds,
     /// An operation fails because the connection is closed.
     Closed,
     /// Too many streams are open, so no further ones can be opened at this
     /// time.
     TooManyStreams,
-    /// User ID exceeds maximum length (32 bytes).
+    /// User ID exceeds maximum length (256 bytes).
     InvalidUserIdLength,
-    /// User ID is already in use by another stream.
-    DuplicateUserId,
+    /// Stream ID is already in use by another stream.
+    DuplicateStreamId,
 }
 
 impl std::fmt::Display for ConnectionError {
@@ -38,13 +36,10 @@ impl std::fmt::Display for ConnectionError {
         match self {
             ConnectionError::Io(e) => write!(f, "i/o error: {e}"),
             ConnectionError::Decode(e) => write!(f, "decode error: {e}"),
-            ConnectionError::NoMoreStreamIds => {
-                f.write_str("number of stream ids has been exhausted")
-            }
             ConnectionError::Closed => f.write_str("connection is closed"),
             ConnectionError::TooManyStreams => f.write_str("maximum number of streams reached"),
             ConnectionError::InvalidUserIdLength => f.write_str("user ID exceeds maximum length"),
-            ConnectionError::DuplicateUserId => f.write_str("duplicate user ID"),
+            ConnectionError::DuplicateStreamId => f.write_str("duplicate stream ID"),
         }
     }
 }
@@ -54,11 +49,10 @@ impl std::error::Error for ConnectionError {
         match self {
             ConnectionError::Io(e) => Some(e),
             ConnectionError::Decode(e) => Some(e),
-            ConnectionError::NoMoreStreamIds
-            | ConnectionError::Closed
+            ConnectionError::Closed
             | ConnectionError::TooManyStreams
             | ConnectionError::InvalidUserIdLength
-            | ConnectionError::DuplicateUserId => None,
+            | ConnectionError::DuplicateStreamId => None,
         }
     }
 }

@@ -21,7 +21,7 @@ use futures::{
 use quickcheck::QuickCheck;
 use std::{panic::panic_any, pin::pin};
 use test_harness::*;
-use tlsn_mux::{Config, Connection, ConnectionError, Mode};
+use tlsn_mux::{Config, Connection, ConnectionError};
 use tokio::{net::TcpStream, task};
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
@@ -39,7 +39,7 @@ fn prop_config_send_recv_multi() {
 
         let server = async {
             let socket = listener.accept().await.expect("accept").0.compat();
-            let mut connection = Connection::new(socket, cfg1, Mode::Server);
+            let mut connection = Connection::new(socket, cfg1);
 
             // Pre-register streams
             let mut streams = Vec::new();
@@ -73,7 +73,7 @@ fn prop_config_send_recv_multi() {
 
         let client = async {
             let socket = TcpStream::connect(address).await.expect("connect").compat();
-            let mut connection = Connection::new(socket, cfg2, Mode::Client);
+            let mut connection = Connection::new(socket, cfg2);
 
             // Create streams
             let mut streams = Vec::new();
@@ -394,7 +394,7 @@ fn write_deadlock() {
     let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(capacity, capacity);
 
     // Create and spawn a "server" that echoes every message back to the client.
-    let mut server = Connection::new(server_endpoint, Config::default(), Mode::Server);
+    let mut server = Connection::new(server_endpoint, Config::default());
     let server_stream = server.new_stream(stream_id).unwrap();
     pool.spawner()
         .spawn_obj(
@@ -425,7 +425,7 @@ fn write_deadlock() {
         .unwrap();
 
     // Create and spawn a "client"
-    let mut client = Connection::new(client_endpoint, Config::default(), Mode::Client);
+    let mut client = Connection::new(client_endpoint, Config::default());
     let stream = client.new_stream(stream_id).unwrap();
 
     // Continuously advance the multiplexer connection of the client
@@ -473,8 +473,8 @@ fn close_through_drop_of_stream_propagates_to_remote() {
     let stream_id = b"drop-test";
 
     let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(1024, 1024);
-    let mut server = Connection::new(server_endpoint, Config::default(), Mode::Server);
-    let mut client = Connection::new(client_endpoint, Config::default(), Mode::Client);
+    let mut server = Connection::new(server_endpoint, Config::default());
+    let mut client = Connection::new(client_endpoint, Config::default());
 
     // Pre-register stream on server
     let mut stream_server_side = server.new_stream(stream_id).unwrap();
@@ -530,8 +530,8 @@ fn close_sync() {
     let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(1024, 1024);
     let mut config = Config::default();
     config.set_close_sync(true);
-    let mut server = Connection::new(server_endpoint, config.clone(), Mode::Server);
-    let mut client = Connection::new(client_endpoint, config, Mode::Client);
+    let mut server = Connection::new(server_endpoint, config.clone());
+    let mut client = Connection::new(client_endpoint, config);
 
     let waker = std::task::Waker::noop();
     let mut cx = std::task::Context::from_waker(waker);

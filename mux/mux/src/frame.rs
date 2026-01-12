@@ -13,9 +13,7 @@
 pub mod header;
 mod io;
 
-use crate::connection::UserId;
-use futures::future::Either;
-use header::{Data, GoAway, Header, Ping, StreamId, StreamInit, WindowUpdate};
+use header::{Data, GoAway, Header, Ping, StreamId, WindowUpdate};
 use std::{convert::TryInto, num::TryFromIntError};
 
 pub use io::FrameDecodeError;
@@ -38,26 +36,6 @@ impl<T> Frame<T> {
 
     pub fn header(&self) -> &Header<T> {
         &self.header
-    }
-
-    pub fn header_mut(&mut self) -> &mut Header<T> {
-        &mut self.header
-    }
-
-    /// Introduce this frame to the right of a binary frame type.
-    pub(crate) fn right<U>(self) -> Frame<Either<U, T>> {
-        Frame {
-            header: self.header.right(),
-            body: self.body,
-        }
-    }
-
-    /// Introduce this frame to the left of a binary frame type.
-    pub(crate) fn left<U>(self) -> Frame<Either<T, U>> {
-        Frame {
-            header: self.header.left(),
-            body: self.body,
-        }
     }
 }
 
@@ -91,13 +69,6 @@ impl Frame<()> {
             body: self.body,
         }
     }
-
-    pub(crate) fn into_stream_init(self) -> Frame<StreamInit> {
-        Frame {
-            header: self.header.into_stream_init(),
-            body: self.body,
-        }
-    }
 }
 
 impl Frame<Data> {
@@ -108,13 +79,9 @@ impl Frame<Data> {
         })
     }
 
-    pub fn close_stream(id: StreamId, ack: bool) -> Self {
+    pub fn close_stream(id: StreamId) -> Self {
         let mut header = Header::data(id, 0);
         header.fin();
-        if ack {
-            header.ack()
-        }
-
         Frame::new(header)
     }
 
@@ -177,24 +144,6 @@ impl Frame<GoAway> {
         Frame {
             header: Header::internal_error(),
             body: Vec::new(),
-        }
-    }
-}
-
-impl Frame<StreamInit> {
-    pub fn stream_init(id: StreamId, user_id: &UserId) -> Self {
-        let body = user_id.as_bytes().to_vec();
-        Frame {
-            header: Header::stream_init(id, body.len() as u32),
-            body,
-        }
-    }
-
-    pub fn into_user_id(self) -> Option<Vec<u8>> {
-        if self.body.is_empty() {
-            None
-        } else {
-            Some(self.body)
         }
     }
 }

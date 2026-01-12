@@ -33,17 +33,9 @@ use std::{
     task::{Context, Poll},
 };
 
+pub use active::Handle;
 pub(crate) use active::{Action, StreamCommand};
 pub use stream::Stream;
-
-/// How the connection is used.
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum Mode {
-    /// Client to server connection.
-    Client,
-    /// Server to client connection.
-    Server,
-}
 
 /// The connection identifier.
 ///
@@ -73,27 +65,36 @@ impl fmt::Display for Id {
 /// A multiplexer connection object.
 ///
 /// Wraps the underlying I/O resource and makes progress via its
-/// [`Connection::poll_next_inbound`] method which must be called repeatedly
-/// until `Ok(None)` signals EOF or an error is encountered.
+/// [`Connection::poll`] method which must be called repeatedly
+/// until `Ok(())` signals close or an error is encountered.
 #[derive(Debug)]
 pub struct Connection<T> {
     inner: ConnectionState<T>,
 }
 
 impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
-    pub fn new(socket: T, cfg: Config, mode: Mode) -> Self {
+    pub fn new(socket: T, cfg: Config) -> Self {
         Self {
-            inner: ConnectionState::Active(Active::new(socket, cfg, mode)),
+            inner: ConnectionState::Active(Active::new(socket, cfg)),
+        }
+    }
+
+    /// Get a handle for creating streams concurrently.
+    ///
+    /// The handle can be cloned and used from multiple tasks while the
+    /// Connection is being polled.
+    pub fn handle(&self) -> Result<Handle> {
+        match &self.inner {
+            ConnectionState::Active(active) => Ok(active.handle()),
+            _ => Err(ConnectionError::Closed),
         }
     }
 
     /// Create a new stream with the given user ID.
     ///
-    /// For client mode: Creates a stream in Initializing state. StreamInit
-    /// will be sent on first write.
-    ///
-    /// For server mode: Pre-registers the stream or matches with a buffered
-    /// StreamInit if one has already been received for this user_id.
+    /// The stream ID is computed from the user ID using BLAKE3.
+    /// Either side can create streams with the same user ID - they will
+    /// automatically merge into the same stream.
     ///
     /// The `user_id` parameter is a required user-defined stream identifier
     /// (1-256 bytes). User IDs must be unique within the session.

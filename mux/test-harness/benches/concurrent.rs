@@ -14,7 +14,7 @@ use constrained_connection::{new_unconstrained_connection, samples, Endpoint};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::{iter, sync::Arc};
 use test_harness::{dev_null_server, MessageSender, MessageSenderStrategy, Msg};
-use tlsn_mux::{Config, Connection, Mode};
+use tlsn_mux::{Config, Connection};
 use tokio::{runtime::Runtime, task};
 
 criterion_group!(benches, concurrent);
@@ -81,15 +81,15 @@ async fn oneway(
     server: Endpoint,
     client: Endpoint,
 ) {
-    let server = Connection::new(server, Config::default(), Mode::Server);
-    let client = Connection::new(client, Config::default(), Mode::Client);
+    let server = Connection::new(server, Config::default());
+    let client = Connection::new(client, Config::default());
 
-    task::spawn(dev_null_server(server, nstreams));
+    let server_handle = task::spawn(dev_null_server(server, nstreams));
 
     let messages = iter::repeat(data)
         .map(|b| Msg(b.0.to_vec()))
         .take(nstreams)
-        .collect(); // `MessageSender` will use 1 stream per message.
+        .collect();
     let num_streams_used = MessageSender::new(client, messages, true)
         .with_message_multiplier(nmessages as u64)
         .with_strategy(MessageSenderStrategy::Send)
@@ -97,4 +97,5 @@ async fn oneway(
         .unwrap();
 
     assert_eq!(num_streams_used, nstreams);
+    server_handle.await.ok();
 }
