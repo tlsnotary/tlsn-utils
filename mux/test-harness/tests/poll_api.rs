@@ -534,7 +534,7 @@ fn close_sync() {
     let mut client = Connection::new(client_endpoint, config, Mode::Client);
 
     let waker = std::task::Waker::noop();
-    let mut cx = std::task::Context::from_waker(&waker);
+    let mut cx = std::task::Context::from_waker(waker);
 
     // Create streams on both sides with same ID
     let stream_id = b"test";
