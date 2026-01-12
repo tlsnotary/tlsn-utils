@@ -3,6 +3,8 @@ members = [
     "serio",
     "spansy",
     "uid-mux",
+    "mux/mux",
+    "mux/test-harness",
     "utils",
     "websocket-relay",
     "futures-limit",
@@ -21,6 +23,7 @@ spansy = { path = "spansy" }
 tlsn-utils = { path = "utils" }
 tlsn-utils-aio = { path = "utils-aio" }
 uid-mux = { path = "uid-mux" }
+tlsn-mux = { path = "mux/mux" }
 rangeset = { path = "rangeset" }
 
 async-trait = "0.1"
