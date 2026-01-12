@@ -116,7 +116,8 @@ impl Stream {
         }
     }
 
-    /// Create a stream with existing shared state (for merging with implicit stream).
+    /// Create a stream with existing shared state (for merging with implicit
+    /// stream).
     pub(crate) fn with_shared(
         stream_id: StreamId,
         user_id: UserId,

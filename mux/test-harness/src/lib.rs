@@ -255,7 +255,10 @@ where
         // Spawn connection poll loop
         tokio::spawn(async move {
             loop {
-                if futures::future::poll_fn(|cx| self.conn.poll(cx)).await.is_ok() {
+                if futures::future::poll_fn(|cx| self.conn.poll(cx))
+                    .await
+                    .is_ok()
+                {
                     break;
                 }
             }

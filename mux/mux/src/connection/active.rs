@@ -51,7 +51,9 @@ impl StreamRegistry {
         config: Arc<Config>,
         rtt: rtt::Rtt,
         accumulated_max_stream_windows: Arc<Mutex<usize>>,
-        new_receiver_tx: mpsc::UnboundedSender<TaggedStream<StreamId, mpsc::Receiver<StreamCommand>>>,
+        new_receiver_tx: mpsc::UnboundedSender<
+            TaggedStream<StreamId, mpsc::Receiver<StreamCommand>>,
+        >,
     ) -> Self {
         Self {
             id,
@@ -92,7 +94,8 @@ impl StreamRegistry {
         Ok(stream)
     }
 
-    /// Create a Stream using existing Shared state (for merging with implicit stream).
+    /// Create a Stream using existing Shared state (for merging with implicit
+    /// stream).
     fn make_stream_with_shared(
         &mut self,
         id: StreamId,
@@ -100,7 +103,9 @@ impl StreamRegistry {
         shared: Arc<Mutex<stream::Shared>>,
     ) -> Stream {
         let (sender, receiver) = mpsc::channel(10);
-        let _ = self.new_receiver_tx.unbounded_send(TaggedStream::new(id, receiver));
+        let _ = self
+            .new_receiver_tx
+            .unbounded_send(TaggedStream::new(id, receiver));
 
         if let Some(waker) = self.waker.take() {
             waker.wake();
@@ -111,7 +116,9 @@ impl StreamRegistry {
 
     fn make_stream(&mut self, id: StreamId, user_id: UserId) -> Stream {
         let (sender, receiver) = mpsc::channel(10);
-        let _ = self.new_receiver_tx.unbounded_send(TaggedStream::new(id, receiver));
+        let _ = self
+            .new_receiver_tx
+            .unbounded_send(TaggedStream::new(id, receiver));
 
         Stream::new(
             id,

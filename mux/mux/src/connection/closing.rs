@@ -77,10 +77,7 @@ where
                         Poll::Ready(Some((_, Some(StreamCommand::SendFrame(frame))))) => {
                             this.pending_frames.push_back(frame.into());
                         }
-                        Poll::Ready(Some((
-                            _,
-                            Some(StreamCommand::CloseStream { stream_id }),
-                        ))) => {
+                        Poll::Ready(Some((_, Some(StreamCommand::CloseStream { stream_id })))) => {
                             this.pending_frames
                                 .push_back(Frame::close_stream(stream_id).into());
                         }
@@ -208,8 +205,12 @@ mod tests {
 
     #[test]
     fn pending_frames() {
-        let frame_pending = Frame::data(StreamId::new(b"stream1"), vec![2]).unwrap().into();
-        let frame_data = Frame::data(StreamId::new(b"stream3"), vec![4]).unwrap().into();
+        let frame_pending = Frame::data(StreamId::new(b"stream1"), vec![2])
+            .unwrap()
+            .into();
+        let frame_data = Frame::data(StreamId::new(b"stream3"), vec![4])
+            .unwrap()
+            .into();
         let frame_close = Frame::close_stream(StreamId::new(b"stream5")).into();
         let frame_term = Frame::term().into();
         fn encode(buf: &mut Vec<u8>, frame: &Frame<()>) {
