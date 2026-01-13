@@ -79,6 +79,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
         }
     }
 
+    /// Returns `true` if the connection is complete.
+    pub fn is_complete(&self) -> bool {
+        matches!(self.inner, ConnectionState::Closed(_))
+    }
+
     /// Get a handle for creating streams concurrently.
     ///
     /// The handle can be cloned and used from multiple tasks while the
