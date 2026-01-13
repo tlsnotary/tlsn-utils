@@ -1,7 +1,8 @@
 // Copyright (c) 2018-2019 Parity Technologies (UK) Ltd.
 // Modifications Copyright (c) 2026 TLSNotary
 //
-// Licensed under the Apache License, Version 2.0 or MIT license, at your option.
+// Licensed under the Apache License, Version 2.0 or MIT license, at your
+// option.
 //
 // A copy of the Apache License, Version 2.0 is included in the software as
 // LICENSE-APACHE and a copy of the MIT license is included in the software
@@ -12,14 +13,13 @@
 pub mod header;
 mod io;
 
-use futures::future::Either;
 use header::{Data, GoAway, Header, Ping, StreamId, WindowUpdate};
 use std::{convert::TryInto, num::TryFromIntError};
 
 pub use io::FrameDecodeError;
 pub(crate) use io::Io;
 
-/// A Yamux message frame consisting of header and body.
+/// A message frame consisting of header and body.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Frame<T> {
     header: Header<T>,
@@ -36,26 +36,6 @@ impl<T> Frame<T> {
 
     pub fn header(&self) -> &Header<T> {
         &self.header
-    }
-
-    pub fn header_mut(&mut self) -> &mut Header<T> {
-        &mut self.header
-    }
-
-    /// Introduce this frame to the right of a binary frame type.
-    pub(crate) fn right<U>(self) -> Frame<Either<U, T>> {
-        Frame {
-            header: self.header.right(),
-            body: self.body,
-        }
-    }
-
-    /// Introduce this frame to the left of a binary frame type.
-    pub(crate) fn left<U>(self) -> Frame<Either<T, U>> {
-        Frame {
-            header: self.header.left(),
-            body: self.body,
-        }
     }
 }
 
@@ -99,13 +79,9 @@ impl Frame<Data> {
         })
     }
 
-    pub fn close_stream(id: StreamId, ack: bool) -> Self {
+    pub fn close_stream(id: StreamId) -> Self {
         let mut header = Header::data(id, 0);
         header.fin();
-        if ack {
-            header.ack()
-        }
-
         Frame::new(header)
     }
 

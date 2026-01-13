@@ -2,7 +2,6 @@
 members = [
     "serio",
     "spansy",
-    "uid-mux",
     "mux/mux",
     "mux/test-harness",
     "utils",
@@ -22,7 +21,6 @@ serio = { path = "serio" }
 spansy = { path = "spansy" }
 tlsn-utils = { path = "utils" }
 tlsn-utils-aio = { path = "utils-aio" }
-uid-mux = { path = "uid-mux" }
 tlsn-mux = { path = "mux/mux" }
 rangeset = { path = "rangeset" }
 

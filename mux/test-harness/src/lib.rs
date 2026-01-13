@@ -10,24 +10,14 @@
 // at https://www.apache.org/licenses/LICENSE-2.0 and a copy of the MIT license
 // at https://opensource.org/licenses/MIT.
 
-use futures::{
-    future, future::BoxFuture, stream, stream::FuturesUnordered, AsyncRead, AsyncReadExt,
-    AsyncWrite, AsyncWriteExt, FutureExt, Stream, StreamExt, TryStreamExt,
-};
+use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use quickcheck::{Arbitrary, Gen};
 use std::{
-    fmt,
-    future::Future,
-    io, mem,
+    io,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    pin::Pin,
-    task::{Context, Poll},
 };
-use tlsn_mux::{Config, Connection, ConnectionError, Mode};
-use tokio::{
-    net::{TcpListener, TcpSocket, TcpStream},
-    task,
-};
+use tlsn_mux::{Config, Connection, ConnectionError};
+use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 
 pub async fn connected_peers(
@@ -39,19 +29,11 @@ pub async fn connected_peers(
 
     let server = async {
         let (stream, _) = listener.accept().await?;
-        Ok(Connection::new(
-            stream.compat(),
-            server_config,
-            Mode::Server,
-        ))
+        Ok(Connection::new(stream.compat(), server_config))
     };
     let client = async {
         let stream = new_socket(buffer_sizes)?.connect(addr).await?;
-        Ok(Connection::new(
-            stream.compat(),
-            client_config,
-            Mode::Client,
-        ))
+        Ok(Connection::new(stream.compat(), client_config))
     };
 
     futures::future::try_join(server, client).await
@@ -78,173 +60,6 @@ fn new_socket(buffer_sizes: Option<TcpBufferSizes>) -> io::Result<TcpSocket> {
     }
 
     Ok(socket)
-}
-
-/// For each incoming stream of `c` echo back to the sender.
-pub async fn echo_server<T>(mut c: Connection<T>) -> Result<(), ConnectionError>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    stream::poll_fn(|cx| c.poll_next_inbound(cx))
-        .try_for_each_concurrent(None, |mut stream| async move {
-            {
-                let (mut r, mut w) = AsyncReadExt::split(&mut stream);
-                futures::io::copy(&mut r, &mut w).await.unwrap();
-            }
-            stream.close().await?;
-            Ok(())
-        })
-        .await
-}
-
-/// For each incoming stream of `c`, read to end but don't write back.
-pub async fn dev_null_server<T>(mut c: Connection<T>) -> Result<(), ConnectionError>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    stream::poll_fn(|cx| c.poll_next_inbound(cx))
-        .try_for_each_concurrent(None, |mut stream| async move {
-            let mut buf = [0u8; 1024];
-
-            while let Ok(n) = stream.read(&mut buf).await {
-                if n == 0 {
-                    break;
-                }
-            }
-
-            stream.close().await?;
-            Ok(())
-        })
-        .await
-}
-
-pub struct MessageSender<T> {
-    connection: Connection<T>,
-    pending_messages: Vec<Msg>,
-    worker_streams: FuturesUnordered<BoxFuture<'static, ()>>,
-    streams_processed: usize,
-    /// Whether to spawn a new task for each stream.
-    spawn_tasks: bool,
-    /// How many times to send each message on the stream
-    message_multiplier: u64,
-    strategy: MessageSenderStrategy,
-}
-
-#[derive(Copy, Clone)]
-pub enum MessageSenderStrategy {
-    SendRecv,
-    Send,
-}
-
-impl<T> MessageSender<T> {
-    pub fn new(connection: Connection<T>, messages: Vec<Msg>, spawn_tasks: bool) -> Self {
-        Self {
-            connection,
-            pending_messages: messages,
-            worker_streams: FuturesUnordered::default(),
-            streams_processed: 0,
-            spawn_tasks,
-            message_multiplier: 1,
-            strategy: MessageSenderStrategy::SendRecv,
-        }
-    }
-
-    pub fn with_message_multiplier(mut self, multiplier: u64) -> Self {
-        self.message_multiplier = multiplier;
-        self
-    }
-
-    pub fn with_strategy(mut self, strategy: MessageSenderStrategy) -> Self {
-        self.strategy = strategy;
-        self
-    }
-}
-
-impl<T> Future for MessageSender<T>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    type Output = tlsn_mux::Result<usize>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-
-        loop {
-            if this.pending_messages.is_empty() && this.worker_streams.is_empty() {
-                futures::ready!(this.connection.poll_close(cx)?);
-
-                return Poll::Ready(Ok(this.streams_processed));
-            }
-
-            if let Some(message) = this.pending_messages.pop() {
-                match this.connection.poll_new_outbound(cx)? {
-                    Poll::Ready(mut stream) => {
-                        let multiplier = this.message_multiplier;
-                        let strategy = this.strategy;
-
-                        let future = async move {
-                            for _ in 0..multiplier {
-                                match strategy {
-                                    MessageSenderStrategy::SendRecv => {
-                                        send_recv_message(&mut stream, &message).await.unwrap()
-                                    }
-                                    MessageSenderStrategy::Send => {
-                                        stream.write_all(&message.0).await.unwrap()
-                                    }
-                                };
-                            }
-
-                            stream.close().await.unwrap();
-                        };
-
-                        let worker_stream_future = if this.spawn_tasks {
-                            async { task::spawn(future).await.unwrap() }.boxed()
-                        } else {
-                            future.boxed()
-                        };
-
-                        this.worker_streams.push(worker_stream_future);
-                        continue;
-                    }
-                    Poll::Pending => {
-                        this.pending_messages.push(message);
-                    }
-                }
-            }
-
-            match this.worker_streams.poll_next_unpin(cx) {
-                Poll::Ready(Some(())) => {
-                    this.streams_processed += 1;
-                    continue;
-                }
-                Poll::Ready(None) | Poll::Pending => {}
-            }
-
-            match this.connection.poll_next_inbound(cx)? {
-                Poll::Ready(Some(stream)) => {
-                    drop(stream);
-                    panic!("Did not expect remote to open a stream");
-                }
-                Poll::Ready(None) => {
-                    panic!("Did not expect remote to close the connection");
-                }
-                Poll::Pending => {}
-            }
-
-            return Poll::Pending;
-        }
-    }
-}
-
-/// For each incoming stream, do nothing.
-pub async fn noop_server(
-    c: impl Stream<Item = Result<tlsn_mux::Stream, tlsn_mux::ConnectionError>>,
-) {
-    c.for_each(|maybe_stream| {
-        drop(maybe_stream);
-        future::ready(())
-    })
-    .await;
 }
 
 /// Send and receive buffer size for a TCP socket.
@@ -274,18 +89,18 @@ impl Arbitrary for TcpBufferSizes {
 }
 
 pub async fn send_recv_message(stream: &mut tlsn_mux::Stream, Msg(msg): &Msg) -> io::Result<()> {
-    let id = stream.id();
+    let id = stream.id().to_vec();
     let (mut reader, mut writer) = AsyncReadExt::split(stream);
 
     let len = msg.len();
     let write_fut = async {
         writer.write_all(msg).await.unwrap();
-        log::debug!("C: {id}: sent {len} bytes");
+        log::debug!("C: {id:?}: sent {len} bytes");
     };
     let mut data = vec![0; msg.len()];
     let read_fut = async {
         reader.read_exact(&mut data).await.unwrap();
-        log::debug!("C: {}: received {} bytes", id, data.len());
+        log::debug!("C: {:?}: received {} bytes", id, data.len());
     };
     futures::future::join(write_fut, read_fut).await;
     assert_eq!(&data, msg);
@@ -307,136 +122,6 @@ pub async fn send_on_single_stream(
     stream.close().await?;
 
     Ok(())
-}
-
-pub struct EchoServer<T> {
-    connection: Connection<T>,
-    worker_streams: FuturesUnordered<BoxFuture<'static, tlsn_mux::Result<()>>>,
-    streams_processed: usize,
-    connection_closed: bool,
-}
-
-impl<T> EchoServer<T> {
-    pub fn new(connection: Connection<T>) -> Self {
-        Self {
-            connection,
-            worker_streams: FuturesUnordered::default(),
-            streams_processed: 0,
-            connection_closed: false,
-        }
-    }
-}
-
-impl<T> Future for EchoServer<T>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    type Output = tlsn_mux::Result<usize>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-
-        loop {
-            match this.worker_streams.poll_next_unpin(cx) {
-                Poll::Ready(Some(Ok(()))) => {
-                    this.streams_processed += 1;
-                    continue;
-                }
-                Poll::Ready(Some(Err(e))) => {
-                    eprintln!("A stream failed: {e}");
-                    continue;
-                }
-                Poll::Ready(None) => {
-                    if this.connection_closed {
-                        return Poll::Ready(Ok(this.streams_processed));
-                    }
-                }
-                Poll::Pending => {}
-            }
-
-            match this.connection.poll_next_inbound(cx) {
-                Poll::Ready(Some(Ok(mut stream))) => {
-                    this.worker_streams.push(
-                        async move {
-                            {
-                                let (mut r, mut w) = AsyncReadExt::split(&mut stream);
-                                futures::io::copy(&mut r, &mut w).await?;
-                            }
-                            stream.close().await?;
-                            Ok(())
-                        }
-                        .boxed(),
-                    );
-                    continue;
-                }
-                Poll::Ready(None) | Poll::Ready(Some(Err(_))) => {
-                    this.connection_closed = true;
-                    continue;
-                }
-                Poll::Pending => {}
-            }
-
-            return Poll::Pending;
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct OpenStreamsClient<T> {
-    connection: Option<Connection<T>>,
-    streams: Vec<tlsn_mux::Stream>,
-    to_open: usize,
-}
-
-impl<T> OpenStreamsClient<T> {
-    pub fn new(connection: Connection<T>, to_open: usize) -> Self {
-        Self {
-            connection: Some(connection),
-            streams: vec![],
-            to_open,
-        }
-    }
-}
-
-impl<T> Future for OpenStreamsClient<T>
-where
-    T: AsyncRead + AsyncWrite + Unpin + fmt::Debug,
-{
-    type Output = tlsn_mux::Result<(Connection<T>, Vec<tlsn_mux::Stream>)>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        let connection = this.connection.as_mut().unwrap();
-
-        loop {
-            // Drive connection to make progress.
-            match connection.poll_next_inbound(cx)? {
-                Poll::Ready(_stream) => {
-                    panic!("Unexpected inbound stream");
-                }
-                Poll::Pending => {}
-            }
-
-            if this.streams.len() < this.to_open {
-                match connection.poll_new_outbound(cx)? {
-                    Poll::Ready(stream) => {
-                        this.streams.push(stream);
-                        continue;
-                    }
-                    Poll::Pending => {}
-                }
-            }
-
-            if this.streams.len() == this.to_open {
-                return Poll::Ready(Ok((
-                    this.connection.take().unwrap(),
-                    mem::take(&mut this.streams),
-                )));
-            }
-
-            return Poll::Pending;
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -478,5 +163,137 @@ impl Arbitrary for TestConfig {
         }
 
         TestConfig(c)
+    }
+}
+
+/// A server that reads from pre-registered streams and discards all data.
+pub async fn dev_null_server<T>(mut conn: Connection<T>, nstreams: usize)
+where
+    T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    // Pre-register streams with matching IDs
+    let mut streams = Vec::with_capacity(nstreams);
+    for i in 0..nstreams {
+        let id = format!("stream-{i}");
+        streams.push(conn.new_stream(id.as_bytes()).unwrap());
+    }
+
+    // Spawn connection poll loop
+    tokio::spawn(async move {
+        loop {
+            if futures::future::poll_fn(|cx| conn.poll(cx)).await.is_ok() {
+                break;
+            }
+        }
+    });
+
+    // Read and discard data from each stream
+    let mut handles = Vec::new();
+    for mut stream in streams {
+        handles.push(tokio::spawn(async move {
+            let mut buf = vec![0u8; 4096];
+            loop {
+                match stream.read(&mut buf).await {
+                    Ok(0) => break,
+                    Ok(_) => continue,
+                    Err(_) => break,
+                }
+            }
+        }));
+    }
+
+    for handle in handles {
+        handle.await.ok();
+    }
+}
+
+/// Strategy for sending messages.
+#[derive(Debug, Clone, Copy)]
+pub enum MessageSenderStrategy {
+    /// Just send data without waiting for echo.
+    Send,
+}
+
+/// Sends messages over multiple streams.
+pub struct MessageSender<T> {
+    conn: Connection<T>,
+    messages: Vec<Msg>,
+    message_multiplier: u64,
+}
+
+impl<T> MessageSender<T>
+where
+    T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    pub fn new(conn: Connection<T>, messages: Vec<Msg>, _one_stream_per_message: bool) -> Self {
+        Self {
+            conn,
+            messages,
+            message_multiplier: 1,
+        }
+    }
+
+    pub fn with_message_multiplier(mut self, multiplier: u64) -> Self {
+        self.message_multiplier = multiplier;
+        self
+    }
+
+    pub fn with_strategy(self, _strategy: MessageSenderStrategy) -> Self {
+        self
+    }
+
+    pub async fn run(mut self) -> Result<usize, ConnectionError> {
+        let stream_count = self.messages.len();
+
+        // Create streams with matching IDs
+        let mut streams = Vec::with_capacity(stream_count);
+        for i in 0..stream_count {
+            let id = format!("stream-{i}");
+            streams.push(self.conn.new_stream(id.as_bytes())?);
+        }
+
+        // Spawn connection poll loop
+        tokio::spawn(async move {
+            loop {
+                if futures::future::poll_fn(|cx| self.conn.poll(cx))
+                    .await
+                    .is_ok()
+                {
+                    break;
+                }
+            }
+        });
+
+        // Send messages
+        let mut handles = Vec::new();
+        for (mut stream, msg) in streams.into_iter().zip(self.messages) {
+            let multiplier = self.message_multiplier;
+            handles.push(tokio::spawn(async move {
+                for _ in 0..multiplier {
+                    if stream.write_all(&msg.0).await.is_err() {
+                        break;
+                    }
+                }
+                stream.close().await.ok();
+            }));
+        }
+
+        for handle in handles {
+            handle.await.ok();
+        }
+
+        Ok(stream_count)
+    }
+}
+
+impl<T> std::future::IntoFuture for MessageSender<T>
+where
+    T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    type Output = Result<usize, ConnectionError>;
+    type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.run())
     }
 }

@@ -1,7 +1,8 @@
 // Copyright (c) 2019 Parity Technologies (UK) Ltd.
 // Modifications Copyright (c) 2026 TLSNotary
 //
-// Licensed under the Apache License, Version 2.0 or MIT license, at your option.
+// Licensed under the Apache License, Version 2.0 or MIT license, at your
+// option.
 //
 // A copy of the Apache License, Version 2.0 is included in the software as
 // LICENSE-APACHE and a copy of the MIT license is included in the software
@@ -10,8 +11,8 @@
 // at https://opensource.org/licenses/MIT.
 
 use super::{
-    header::{self, HeaderDecodeError},
     Frame,
+    header::{self, HeaderDecodeError},
 };
 use crate::connection::Id;
 use futures::{prelude::*, ready};
@@ -21,9 +22,10 @@ use std::{
     task::{Context, Poll},
 };
 
-/// Maximum Yamux frame body length
+/// Maximum frame body length.
 ///
-/// Limits the amount of bytes a remote can cause the local node to allocate at once when reading.
+/// Limits the amount of bytes a remote can cause the local node to allocate at
+/// once when reading.
 ///
 /// Chosen based on intuition in past iterations.
 const MAX_FRAME_BODY_LEN: usize = crate::MIB;
@@ -45,6 +47,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Io<T> {
             read_state: ReadState::Init,
             write_state: WriteState::Init,
         }
+    }
+
+    pub(crate) fn into_inner(self) -> T {
+        self.io
     }
 }
 
@@ -95,7 +101,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Sink<Frame<()>> for Io<T> {
                 WriteState::Header {
                     header,
                     buffer,
-                    ref mut offset,
+                    offset,
                 } => match Pin::new(&mut this.io).poll_write(cx, &header[*offset..]) {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
@@ -126,38 +132,37 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Sink<Frame<()>> for Io<T> {
                         }
                     }
                 },
-                WriteState::Body {
-                    buffer,
-                    ref mut offset,
-                } => match Pin::new(&mut this.io).poll_write(cx, &buffer[*offset..]) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                    Poll::Ready(Ok(n)) => {
-                        if n == 0 {
-                            return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
-                        }
-                        *offset += n;
+                WriteState::Body { buffer, offset } => {
+                    match Pin::new(&mut this.io).poll_write(cx, &buffer[*offset..]) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Ready(Ok(n)) => {
+                            if n == 0 {
+                                return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
+                            }
+                            *offset += n;
 
-                        if *offset > buffer.len() {
-                            let err = io::Error::other(format!(
-                                "Writer body returned invalid write count n={n}: {offset} > {} ",
-                                buffer.len(),
-                            ));
+                            if *offset > buffer.len() {
+                                let err = io::Error::other(format!(
+                                    "Writer body returned invalid write count n={n}: {offset} > {} ",
+                                    buffer.len(),
+                                ));
 
-                            this.write_state = WriteState::Poisoned;
+                                this.write_state = WriteState::Poisoned;
 
-                            return Poll::Ready(Err(err));
-                        }
+                                return Poll::Ready(Err(err));
+                            }
 
-                        if *offset == buffer.len() {
-                            this.write_state = WriteState::Init;
+                            if *offset == buffer.len() {
+                                this.write_state = WriteState::Init;
+                            }
                         }
                     }
-                },
+                }
                 WriteState::Poisoned => {
                     return Poll::Ready(Err(io::Error::other(
                         "Sink is in poisoned state due to previous write error",
-                    )))
+                    )));
                 }
             }
         }
@@ -230,7 +235,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Stream for Io<T> {
 
                         log::trace!("{}: read: {}", this.id, header);
 
-                        if header.tag() != header::Tag::Data {
+                        if !matches!(header.tag(), header::Tag::Data) {
                             this.read_state = ReadState::Init;
                             return Poll::Ready(Some(Ok(Frame::new(header))));
                         }
@@ -369,13 +374,14 @@ mod tests {
     impl Arbitrary for Frame<()> {
         fn arbitrary(g: &mut Gen) -> Self {
             let mut header: header::Header<()> = Arbitrary::arbitrary(g);
-            let body = if header.tag() == header::Tag::Data {
-                header.set_len(header.len().val() % 4096);
-                let mut b = vec![0; header.len().val() as usize];
-                rand::rng().fill_bytes(&mut b);
-                b
-            } else {
-                Vec::new()
+            let body = match header.tag() {
+                header::Tag::Data => {
+                    header.set_len(header.len().val() % 4096);
+                    let mut b = vec![0; header.len().val() as usize];
+                    rand::rng().fill_bytes(&mut b);
+                    b
+                }
+                _ => Vec::new(),
             };
             Frame { header, body }
         }

@@ -1,7 +1,8 @@
 // Copyright (c) 2019 Parity Technologies (UK) Ltd.
 // Modifications Copyright (c) 2026 TLSNotary
 //
-// Licensed under the Apache License, Version 2.0 or MIT license, at your option.
+// Licensed under the Apache License, Version 2.0 or MIT license, at your
+// option.
 //
 // A copy of the Apache License, Version 2.0 is included in the software as
 // LICENSE-APACHE and a copy of the MIT license is included in the software
@@ -98,11 +99,6 @@ impl Chunk {
 
         self.cursor
             .set_position(self.cursor.position() + amount as u64);
-    }
-
-    /// Consume `self` and return the inner vector.
-    pub(crate) fn into_vec(self) -> Vec<u8> {
-        self.cursor.into_inner()
     }
 }
 

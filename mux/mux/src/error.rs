@@ -1,7 +1,8 @@
 // Copyright (c) 2018-2019 Parity Technologies (UK) Ltd.
 // Modifications Copyright (c) 2026 TLSNotary
 //
-// Licensed under the Apache License, Version 2.0 or MIT license, at your option.
+// Licensed under the Apache License, Version 2.0 or MIT license, at your
+// option.
 //
 // A copy of the Apache License, Version 2.0 is included in the software as
 // LICENSE-APACHE and a copy of the MIT license is included in the software
@@ -17,14 +18,17 @@ use crate::frame::FrameDecodeError;
 pub enum ConnectionError {
     /// An underlying I/O error occured.
     Io(std::io::Error),
-    /// Decoding a Yamux message frame failed.
+    /// Decoding a message frame failed.
     Decode(FrameDecodeError),
-    /// The whole range of stream IDs has been used up.
-    NoMoreStreamIds,
     /// An operation fails because the connection is closed.
     Closed,
-    /// Too many streams are open, so no further ones can be opened at this time.
+    /// Too many streams are open, so no further ones can be opened at this
+    /// time.
     TooManyStreams,
+    /// User ID exceeds maximum length (256 bytes).
+    InvalidUserIdLength,
+    /// Stream ID is already in use by another stream.
+    DuplicateStreamId,
 }
 
 impl std::fmt::Display for ConnectionError {
@@ -32,11 +36,10 @@ impl std::fmt::Display for ConnectionError {
         match self {
             ConnectionError::Io(e) => write!(f, "i/o error: {e}"),
             ConnectionError::Decode(e) => write!(f, "decode error: {e}"),
-            ConnectionError::NoMoreStreamIds => {
-                f.write_str("number of stream ids has been exhausted")
-            }
             ConnectionError::Closed => f.write_str("connection is closed"),
             ConnectionError::TooManyStreams => f.write_str("maximum number of streams reached"),
+            ConnectionError::InvalidUserIdLength => f.write_str("user ID exceeds maximum length"),
+            ConnectionError::DuplicateStreamId => f.write_str("duplicate stream ID"),
         }
     }
 }
@@ -46,9 +49,10 @@ impl std::error::Error for ConnectionError {
         match self {
             ConnectionError::Io(e) => Some(e),
             ConnectionError::Decode(e) => Some(e),
-            ConnectionError::NoMoreStreamIds
-            | ConnectionError::Closed
-            | ConnectionError::TooManyStreams => None,
+            ConnectionError::Closed
+            | ConnectionError::TooManyStreams
+            | ConnectionError::InvalidUserIdLength
+            | ConnectionError::DuplicateStreamId => None,
         }
     }
 }
