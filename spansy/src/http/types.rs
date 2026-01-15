@@ -4,7 +4,7 @@ use bytes::Bytes;
 use rangeset::{
     iter::{IntoRangeIterator, RangeIterator},
     ops::Set,
-    set::RangeSet,
+    set::{RangeIter, RangeSet},
 };
 
 use crate::{Span, Store, View, json::JsonValue};
@@ -602,6 +602,14 @@ macro_rules! impl_span_str {
             }
         }
 
+        impl<'a, S: Store> IntoRangeIterator<usize> for &'a $ty<S> {
+            type IntoIter = RangeIter<'a, usize>;
+
+            fn into_range_iter(self) -> Self::IntoIter {
+                self.view.indices().into_range_iter()
+            }
+        }
+
         impl<S: Store> Span<str> for $ty<S> {
             fn data(&self) -> Cow<'_, str> {
                 self.view.as_str()
@@ -657,6 +665,14 @@ macro_rules! impl_span_bytes {
 
             fn into_range_iter(self) -> Self::IntoIter {
                 self.view.indices().clone().into_range_iter()
+            }
+        }
+
+        impl<'a, S: Store> IntoRangeIterator<usize> for &'a $ty<S> {
+            type IntoIter = RangeIter<'a, usize>;
+
+            fn into_range_iter(self) -> Self::IntoIter {
+                self.view.indices().into_range_iter()
             }
         }
 
