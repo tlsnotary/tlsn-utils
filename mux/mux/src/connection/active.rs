@@ -28,8 +28,14 @@ use super::{
     cleanup::Cleanup,
     closing::Closing,
     rtt,
-    stream::{self, State, Stream},
+    stream::{self, Stream},
 };
+
+/// Entry in the stream registry.
+struct StreamEntry {
+    shared: Arc<Mutex<stream::Shared>>,
+    has_handle: bool,
+}
 
 /// Shared state for stream management.
 ///
@@ -37,7 +43,7 @@ use super::{
 /// poll loop and Handle for concurrent stream creation.
 pub(crate) struct StreamRegistry {
     id: Id,
-    streams: IntMap<StreamId, Arc<Mutex<stream::Shared>>>,
+    streams: IntMap<StreamId, StreamEntry>,
     new_receiver_tx: mpsc::UnboundedSender<TaggedStream<StreamId, mpsc::Receiver<StreamCommand>>>,
     waker: Option<Waker>,
     config: Arc<Config>,
@@ -66,7 +72,7 @@ impl StreamRegistry {
         }
     }
 
-    fn new_stream(&mut self, user_id: &[u8]) -> Result<Stream> {
+    fn get_stream(&mut self, user_id: &[u8]) -> Result<Stream> {
         let user_id = UserId::new(user_id)?;
         let stream_id = StreamId::new(user_id.as_bytes());
 
@@ -75,15 +81,23 @@ impl StreamRegistry {
             return Err(ConnectionError::TooManyStreams);
         }
 
-        // Check if stream already exists (created implicitly by remote)
-        if let Some(existing) = self.streams.get(&stream_id) {
+        // Check if stream already exists (created implicitly by remote or reopening)
+        if let Some(entry) = self.streams.get_mut(&stream_id) {
             log::trace!("{}/{}: merging with existing stream", self.id, stream_id);
-            let stream = self.make_stream_with_shared(stream_id, user_id, existing.clone());
+            entry.has_handle = true;
+            let shared = entry.shared.clone();
+            let stream = self.make_stream_with_shared(stream_id, user_id, shared);
             return Ok(stream);
         }
 
         let stream = self.make_stream(stream_id, user_id);
-        self.streams.insert(stream_id, stream.clone_shared());
+        self.streams.insert(
+            stream_id,
+            StreamEntry {
+                shared: stream.clone_shared(),
+                has_handle: true,
+            },
+        );
 
         log::debug!("{}: new stream {}", self.id, stream);
 
@@ -133,7 +147,6 @@ impl StreamRegistry {
 
     fn make_implicit_stream_shared(&mut self) -> Arc<Mutex<stream::Shared>> {
         Arc::new(Mutex::new(stream::Shared::new(
-            State::Open,
             crate::DEFAULT_CREDIT,
             crate::DEFAULT_CREDIT,
             self.accumulated_max_stream_windows.clone(),
@@ -143,7 +156,7 @@ impl StreamRegistry {
     }
 }
 
-/// A handle for creating streams concurrently.
+/// A handle for obtaining streams concurrently.
 ///
 /// This type can be cloned and used from multiple tasks while the
 /// Connection is being polled.
@@ -153,11 +166,11 @@ pub struct Handle {
 }
 
 impl Handle {
-    /// Create a new stream with the given user ID.
+    /// Get a stream handle for the given user ID.
     ///
     /// The stream ID is computed from the user ID using BLAKE3.
-    pub fn new_stream(&self, user_id: &[u8]) -> Result<Stream> {
-        self.registry.lock().new_stream(user_id)
+    pub fn get_stream(&self, user_id: &[u8]) -> Result<Stream> {
+        self.registry.lock().get_stream(user_id)
     }
 }
 
@@ -166,8 +179,6 @@ impl Handle {
 pub(crate) enum StreamCommand {
     /// A new frame should be sent to the remote.
     SendFrame(Frame<()>),
-    /// Close a stream.
-    CloseStream { stream_id: StreamId },
 }
 
 /// Possible actions as a result of incoming frame handling.
@@ -246,7 +257,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         }
     }
 
-    /// Get a handle for creating streams concurrently.
+    /// Get a handle for obtaining streams concurrently.
     pub(super) fn handle(&self) -> Handle {
         Handle {
             registry: self.registry.clone(),
@@ -340,17 +351,9 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                         self.pending_write_frame.replace(frame);
                         continue;
                     }
-                    Poll::Ready(Some((_, Some(StreamCommand::CloseStream { stream_id })))) => {
-                        log::trace!("{}/{}: sending close", self.id, stream_id);
-                        self.pending_write_frame
-                            .replace(Frame::close_stream(stream_id).into());
-                        continue;
-                    }
                     Poll::Ready(Some((id, None))) => {
-                        if let Some(frame) = self.on_drop_stream(id) {
-                            log::trace!("{}/{}: sending: {}", self.id, id, frame.header());
-                            self.pending_write_frame.replace(frame);
-                        };
+                        // Handle dropped - transition to buffering or remove
+                        self.on_drop_stream(id);
                         continue;
                     }
                     Poll::Ready(None) => {
@@ -387,11 +390,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         }
     }
 
-    /// Create a new stream.
+    /// Get a stream handle for the given user ID.
     ///
     /// The stream ID is computed from the user ID using BLAKE3.
-    pub(super) fn new_stream(&mut self, user_id: &[u8]) -> Result<Stream> {
-        let stream = self.registry.lock().new_stream(user_id)?;
+    pub(super) fn get_stream(&mut self, user_id: &[u8]) -> Result<Stream> {
+        let stream = self.registry.lock().get_stream(user_id)?;
         // Drain new receivers immediately so they're available before poll
         while let Ok(Some(receiver)) = self.new_receiver_rx.try_next() {
             self.stream_receivers.push(receiver);
@@ -400,37 +403,40 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
     }
 
     fn on_drop_stream(&mut self, stream_id: StreamId) -> Option<Frame<()>> {
-        let Some(s) = self.registry.lock().streams.remove(&stream_id) else {
+        let mut registry = self.registry.lock();
+        let Some(entry) = registry.streams.get_mut(&stream_id) else {
             log::warn!("{}: stream {} not found on drop", self.id, stream_id);
             return None;
         };
 
-        log::trace!("{}: removing dropped stream {}", self.id, stream_id);
-        let frame = {
-            let mut shared = s.lock();
-            let frame = match shared.update_state(self.id, stream_id, State::Closed) {
-                State::Open => {
-                    let mut header = Header::data(stream_id, 0);
-                    header.rst();
-                    Some(Frame::new(header))
-                }
-                State::RecvClosed => {
-                    let mut header = Header::data(stream_id, 0);
-                    header.fin();
-                    Some(Frame::new(header))
-                }
-                State::SendClosed => None,
-                State::Closed => None,
-            };
-            if let Some(w) = shared.reader.take() {
-                w.wake()
+        // Mark as no longer having a handle
+        entry.has_handle = false;
+
+        // Check if buffer is empty - if so, remove from registry
+        let shared = entry.shared.lock();
+        if shared.buffer.is_empty() {
+            drop(shared);
+            log::trace!(
+                "{}: removing dropped stream {} (buffer empty)",
+                self.id,
+                stream_id
+            );
+            registry.streams.remove(&stream_id);
+        } else {
+            log::trace!(
+                "{}: stream {} transitioned to buffering",
+                self.id,
+                stream_id
+            );
+            // Wake any waiting readers/writers to let them know handle is gone
+            if let Some(w) = shared.reader.clone() {
+                drop(shared);
+                w.wake();
             }
-            if let Some(w) = shared.writer.take() {
-                w.wake()
-            }
-            frame
-        };
-        frame.map(Into::into)
+        }
+
+        // No protocol message sent - closing is just dropping the handle
+        None
     }
 
     fn on_frame(&mut self, frame: Frame<()>) -> Result<Action> {
@@ -448,20 +454,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
     fn on_data(&mut self, frame: Frame<Data>) -> Action {
         let stream_id = frame.header().stream_id();
         let mut registry = self.registry.lock();
-
-        if frame.header().flags().contains(header::RST) {
-            if let Some(s) = registry.streams.get_mut(&stream_id) {
-                let mut shared = s.lock();
-                shared.update_state(self.id, stream_id, State::Closed);
-                if let Some(w) = shared.reader.take() {
-                    w.wake()
-                }
-                if let Some(w) = shared.writer.take() {
-                    w.wake()
-                }
-            }
-            return Action::None;
-        }
 
         let is_finish = frame.header().flags().contains(header::FIN);
 
@@ -490,24 +482,37 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                 stream_id
             );
             let shared = registry.make_implicit_stream_shared();
-            registry.streams.insert(stream_id, shared);
+            registry.streams.insert(
+                stream_id,
+                StreamEntry {
+                    shared,
+                    has_handle: false,
+                },
+            );
         }
 
-        if let Some(s) = registry.streams.get_mut(&stream_id) {
-            let mut shared = s.lock();
-            if frame.body_len() > shared.receive_window() {
+        if let Some(entry) = registry.streams.get_mut(&stream_id) {
+            let mut shared = entry.shared.lock();
+            // FIN markers consume 32 bytes of window (size of ChunkOrFin) to prevent FIN
+            // spam DoS
+            let fin_cost = if is_finish { 32 } else { 0 };
+            let total_cost = frame.body_len() + fin_cost;
+            if total_cost > shared.receive_window() {
                 log::error!(
-                    "{}/{}: frame body larger than window of stream",
+                    "{}/{}: frame cost {} exceeds window {}",
                     self.id,
-                    stream_id
+                    stream_id,
+                    total_cost,
+                    shared.receive_window()
                 );
                 return Action::Terminate(Frame::protocol_error());
             }
-            if is_finish {
-                shared.update_state(self.id, stream_id, State::RecvClosed);
-            }
-            shared.consume_receive_window(frame.body_len());
+            shared.consume_receive_window(total_cost);
             shared.buffer.push(frame.into_body());
+            // Push FIN marker to buffer (in-order with data)
+            if is_finish {
+                shared.buffer.push_fin();
+            }
             if let Some(w) = shared.reader.take() {
                 w.wake()
             }
@@ -519,22 +524,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
     fn on_window_update(&mut self, frame: &Frame<WindowUpdate>) -> Action {
         let stream_id = frame.header().stream_id();
         let mut registry = self.registry.lock();
-
-        if frame.header().flags().contains(header::RST) {
-            if let Some(s) = registry.streams.get_mut(&stream_id) {
-                let mut shared = s.lock();
-                shared.update_state(self.id, stream_id, State::Closed);
-                if let Some(w) = shared.reader.take() {
-                    w.wake()
-                }
-                if let Some(w) = shared.writer.take() {
-                    w.wake()
-                }
-            }
-            return Action::None;
-        }
-
-        let is_finish = frame.header().flags().contains(header::FIN);
 
         // SYN flag on WindowUpdate frames is not allowed
         if frame.header().flags().contains(header::SYN) {
@@ -559,18 +548,18 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                 stream_id
             );
             let shared = registry.make_implicit_stream_shared();
-            registry.streams.insert(stream_id, shared);
+            registry.streams.insert(
+                stream_id,
+                StreamEntry {
+                    shared,
+                    has_handle: false,
+                },
+            );
         }
 
-        if let Some(s) = registry.streams.get_mut(&stream_id) {
-            let mut shared = s.lock();
+        if let Some(entry) = registry.streams.get_mut(&stream_id) {
+            let mut shared = entry.shared.lock();
             shared.increase_send_window_by(frame.header().credit());
-            if is_finish {
-                shared.update_state(self.id, stream_id, State::RecvClosed);
-                if let Some(w) = shared.reader.take() {
-                    w.wake()
-                }
-            }
             if let Some(w) = shared.writer.take() {
                 w.wake()
             }
@@ -603,9 +592,8 @@ impl<T> Active<T> {
     /// Close and drop all `Stream`s and wake any pending `Waker`s.
     pub(super) fn drop_all_streams(&mut self) {
         let mut registry = self.registry.lock();
-        for (id, s) in registry.streams.drain() {
-            let mut shared = s.lock();
-            shared.update_state(self.id, id, State::Closed);
+        for (_id, entry) in registry.streams.drain() {
+            let mut shared = entry.shared.lock();
             if let Some(w) = shared.reader.take() {
                 w.wake()
             }

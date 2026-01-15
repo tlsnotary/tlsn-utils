@@ -8,7 +8,7 @@ MUX is a symmetric stream multiplexing protocol designed to run over reliable, o
 
 - Lightweight framing with minimal overhead (14-byte headers)
 - Per-stream flow control with automatic window tuning
-- Graceful and abrupt stream termination
+- Fast stream open/close with ID reuse
 - Connection-level resource limits
 - Symmetric operation (no client/server distinction)
 - Deterministic stream IDs derived from user-defined identifiers
@@ -98,15 +98,14 @@ Flags modify frame behavior. Multiple flags MAY be set simultaneously by combini
 
 | Flag | Value | Applicable Types | Description |
 |------|-------|------------------|-------------|
-| FIN | `0x01` | Data, Window Update | Half-closes the stream in the sender's direction. |
-| RST | `0x02` | Data, Window Update | Immediately resets (terminates) the stream. |
+| FIN | `0x01` | Data | Signals end-of-stream marker (see Section 5.4). |
 | SYN | `0x04` | Ping | Ping request. |
 | ACK | `0x08` | Ping | Ping response. |
 
 ### 4.1 Flag Constraints
 
-- FIN and RST MUST NOT be set together. If both are set, RST takes precedence.
 - SYN and ACK are only valid on Ping frames.
+- FIN is only valid on Data frames.
 
 ## 5. Stream Management
 
@@ -141,46 +140,45 @@ Streams are created implicitly when the first frame for a Stream ID is sent or r
 
 ### 5.3 Stream Lifecycle
 
+Streams have a simplified lifecycle optimized for fast open/close with ID reuse:
+
+**Local stream states:**
+- **Active**: Application holds a handle to the stream. Can read/write.
+- **Buffering**: No handle, but buffered data exists. Data continues to be received.
+- **Removed**: No handle and no buffered data. Stream ID available for reuse.
+
+**Opening a stream:**
+1. Compute Stream ID from user identifier.
+2. If stream exists in Buffering state, transition to Active (access buffered data).
+3. If stream does not exist, create new stream in Active state.
+
+**Closing a stream:**
+1. Application drops the stream handle.
+2. If buffer is empty, remove stream (ID available for reuse).
+3. If buffer is non-empty, transition to Buffering state.
+
+**Key properties:**
+- Stream IDs can be reused after the stream is removed.
+- Dropping a handle does NOT send any protocol message.
+- Remote peer is not notified when local handle is dropped.
+- Flow control remains active for Buffering streams.
+
+### 5.4 End-of-Stream Marker (FIN)
+
+FIN is an in-band marker signaling the end of a logical message or stream segment. Unlike traditional half-close:
+
+- FIN is buffered in-order with data frames.
+- Reading FIN returns EOF (0 bytes).
+- **Data MAY be sent after FIN.** FIN does not prevent further transmission.
+- Applications use FIN for framing; the protocol does not enforce termination.
+
+**Example usage:**
 ```
-                     +-------+
-                     | Open  |
-                     +-------+
-                    /    |    \
-              FIN← /     |     \ →FIN
-                  /      |      \
-           +----------+  |  +----------+
-           |RecvClosed|  |  |SendClosed|
-           +----------+  |  +----------+
-                  \      |      /
-              FIN→ \     |     / ←FIN
-                    \    |    /
-                     +-------+
-                     |Closed |
-                     +-------+
-                          ↑
-                      RST (any state)
+Sender: Data("hello") → FIN → Data("world") → FIN
+Reader: reads "hello" → reads EOF → reads "world" → reads EOF
 ```
 
-| State | Description |
-|-------|-------------|
-| Open | Bidirectional data flow. |
-| SendClosed | Local side sent FIN. Can still receive data. |
-| RecvClosed | Remote side sent FIN. Can still send data. |
-| Closed | Both directions closed. Stream resources may be released. |
-
-### 5.4 Half-Close (FIN)
-
-Sending FIN indicates the sender will transmit no more data on this stream. The stream transitions:
-- `Open` → `SendClosed`
-- `RecvClosed` → `Closed`
-
-Receiving FIN transitions:
-- `Open` → `RecvClosed`
-- `SendClosed` → `Closed`
-
-### 5.5 Reset (RST)
-
-RST immediately terminates a stream from any state. Both sides SHOULD release stream resources upon sending or receiving RST. No further frames SHOULD be sent on a reset stream.
+This allows FIN to delimit messages within a long-lived stream.
 
 ## 6. Flow Control
 
@@ -195,6 +193,7 @@ Each stream maintains an independent receive window representing the number of b
 **Behavior:**
 - Senders MUST NOT send more data than the receiver's advertised window.
 - Each byte of Data payload consumes one byte of window.
+- Each FIN marker consumes 32 bytes of window (to prevent FIN spam attacks).
 - Window Update frames replenish the window.
 
 ### 6.2 Window Updates
@@ -267,7 +266,7 @@ Upon detecting a protocol violation, implementations MUST:
 
 ### 8.2 Stream Errors vs Connection Errors
 
-- **Stream errors** (e.g., application-level errors) SHOULD be handled with RST on that stream.
+- **Stream errors** (e.g., application-level errors) are handled by the application dropping the stream handle. The remote peer is not explicitly notified.
 - **Connection errors** (e.g., protocol violations) MUST be handled with GoAway and connection closure.
 
 ## 9. Constants Summary

@@ -10,19 +10,12 @@
 // at https://www.apache.org/licenses/LICENSE-2.0 and a copy of the MIT license
 // at https://opensource.org/licenses/MIT.
 
-use futures::{
-    executor::LocalPool,
-    future,
-    future::join,
-    prelude::*,
-    task::{Spawn, SpawnExt},
-    AsyncReadExt, AsyncWriteExt, FutureExt,
-};
+use futures::{future, future::join, prelude::*, AsyncReadExt, AsyncWriteExt, FutureExt};
 use quickcheck::QuickCheck;
-use std::{panic::panic_any, pin::pin};
+use std::{panic::panic_any, pin::pin, time::Duration};
 use test_harness::*;
 use tlsn_mux::{Config, Connection, ConnectionError};
-use tokio::{net::TcpStream, task};
+use tokio::{net::TcpStream, task, time::timeout};
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
 #[test]
@@ -41,30 +34,29 @@ fn prop_config_send_recv_multi() {
             let socket = listener.accept().await.expect("accept").0.compat();
             let mut connection = Connection::new(socket, cfg1);
 
-            // Pre-register streams
             let mut streams = Vec::new();
             for i in 0..num_messages {
                 let id = format!("stream-{}", i);
-                streams.push(connection.new_stream(id.as_bytes()).unwrap());
+                streams.push(connection.get_stream(id.as_bytes()).unwrap());
             }
 
-            // Spawn connection poll loop
             task::spawn(async move {
                 future::poll_fn(|cx| connection.poll(cx)).await.ok();
             });
 
-            // Echo each stream
-            let mut tasks = Vec::new();
-            for mut stream in streams {
-                tasks.push(task::spawn(async move {
-                    {
-                        let (mut r, mut w) = AsyncReadExt::split(&mut stream);
-                        futures::io::copy(&mut r, &mut w).await?;
-                    }
-                    stream.close().await?;
-                    Ok::<_, ConnectionError>(())
-                }));
-            }
+            let tasks: Vec<_> = streams
+                .into_iter()
+                .map(|mut stream| {
+                    task::spawn(async move {
+                        {
+                            let (mut r, mut w) = AsyncReadExt::split(&mut stream);
+                            futures::io::copy(&mut r, &mut w).await?;
+                        }
+                        stream.close().await?;
+                        Ok::<_, ConnectionError>(())
+                    })
+                })
+                .collect();
 
             for task in tasks {
                 task.await.unwrap().unwrap();
@@ -75,34 +67,33 @@ fn prop_config_send_recv_multi() {
             let socket = TcpStream::connect(address).await.expect("connect").compat();
             let mut connection = Connection::new(socket, cfg2);
 
-            // Create streams
             let mut streams = Vec::new();
             for i in 0..num_messages {
                 let id = format!("stream-{}", i);
-                streams.push(connection.new_stream(id.as_bytes()).unwrap());
+                streams.push(connection.get_stream(id.as_bytes()).unwrap());
             }
 
-            // Spawn connection poll loop
             task::spawn(async move {
                 future::poll_fn(|cx| connection.poll(cx)).await.ok();
             });
 
-            // Send/recv on each stream
-            let mut tasks = Vec::new();
-            for (stream, msg) in streams.into_iter().zip(msgs.into_iter()) {
-                tasks.push(task::spawn(async move {
-                    let mut stream = stream;
-                    send_recv_message(&mut stream, &msg).await.unwrap();
-                    stream.close().await.unwrap();
-                }));
-            }
+            let tasks: Vec<_> = streams
+                .into_iter()
+                .zip(msgs)
+                .map(|(mut stream, msg)| {
+                    task::spawn(async move {
+                        send_recv_message(&mut stream, &msg).await.unwrap();
+                        stream.close().await.unwrap();
+                    })
+                })
+                .collect();
 
             for task in tasks {
                 task.await.unwrap();
             }
         };
 
-        futures::future::join(server, client).await;
+        join(server, client).await;
     }
 
     fn prop(msgs: Vec<Msg>, TestConfig(cfg1): TestConfig, TestConfig(cfg2): TestConfig) {
@@ -134,21 +125,14 @@ fn concurrent_streams() {
             .await
             .unwrap();
 
-        // Pre-register streams on server
         let mut server_streams = Vec::new();
-        for i in 0..n_streams {
-            let id = format!("stream-{}", i);
-            server_streams.push(server.new_stream(id.as_bytes()).unwrap());
-        }
-
-        // Create streams on client
         let mut client_streams = Vec::new();
         for i in 0..n_streams {
             let id = format!("stream-{}", i);
-            client_streams.push(client.new_stream(id.as_bytes()).unwrap());
+            server_streams.push(server.get_stream(id.as_bytes()).unwrap());
+            client_streams.push(client.get_stream(id.as_bytes()).unwrap());
         }
 
-        // Spawn connection poll loops
         task::spawn(async move {
             future::poll_fn(|cx| server.poll(cx)).await.ok();
         });
@@ -156,7 +140,6 @@ fn concurrent_streams() {
             future::poll_fn(|cx| client.poll(cx)).await.ok();
         });
 
-        // Server echoes
         let server_tasks: Vec<_> = server_streams
             .into_iter()
             .map(|mut stream| {
@@ -171,7 +154,6 @@ fn concurrent_streams() {
             })
             .collect();
 
-        // Client send/recv
         let client_tasks: Vec<_> = client_streams
             .into_iter()
             .map(|mut stream| {
@@ -183,12 +165,9 @@ fn concurrent_streams() {
             })
             .collect();
 
-        // Wait for all client tasks
         for task in client_tasks {
             task.await.unwrap();
         }
-
-        // Wait for all server tasks
         for task in server_tasks {
             task.await.unwrap().unwrap();
         }
@@ -210,26 +189,19 @@ fn prop_max_streams() {
     async fn run_test(n: usize) -> Result<bool, ConnectionError> {
         let max_streams = n % 100;
         if max_streams == 0 {
-            return Ok(true); // Skip zero streams
+            return Ok(true);
         }
         let mut cfg = Config::default();
         cfg.set_max_num_streams(max_streams);
 
         let (mut server, mut client) = connected_peers(cfg.clone(), cfg.clone(), None).await?;
 
-        // Pre-register streams on server
         for i in 0..max_streams {
             let id = format!("stream-{}", i);
-            server.new_stream(id.as_bytes())?;
+            server.get_stream(id.as_bytes())?;
+            client.get_stream(id.as_bytes())?;
         }
 
-        // Create streams on client
-        for i in 0..max_streams {
-            let id = format!("stream-{}", i);
-            client.new_stream(id.as_bytes())?;
-        }
-
-        // Spawn connection poll loops
         task::spawn(async move {
             future::poll_fn(|cx| server.poll(cx)).await.ok();
         });
@@ -237,20 +209,16 @@ fn prop_max_streams() {
             future::poll_fn(|cx| client.poll(cx)).await.ok();
         });
 
-        // Can't open more on a fresh connection since we've already created max streams
-        // But we need a fresh connection to test this
         let (mut _server2, mut client2) = connected_peers(cfg.clone(), cfg, None).await?;
 
-        // Open max_streams on client2
         for i in 0..max_streams {
             let id = format!("stream-{}", i);
-            client2.new_stream(id.as_bytes())?;
+            client2.get_stream(id.as_bytes())?;
         }
 
-        // Try to open one more stream - should fail
         let extra_id = format!("stream-{}", max_streams);
-        let open_result = client2.new_stream(extra_id.as_bytes());
-        Ok(matches!(open_result, Err(ConnectionError::TooManyStreams)))
+        let result = client2.get_stream(extra_id.as_bytes());
+        Ok(matches!(result, Err(ConnectionError::TooManyStreams)))
     }
 
     fn prop(n: usize) -> Result<bool, ConnectionError> {
@@ -264,63 +232,66 @@ fn prop_max_streams() {
     QuickCheck::new().tests(7).quickcheck(prop as fn(_) -> _)
 }
 
+/// Test half-close: client sends FIN, server echoes and sends FIN, client reads
+/// echo then EOF.
 #[test]
-fn prop_send_recv_half_closed() {
-    async fn run_test(msg: Msg) -> Result<(), ConnectionError> {
-        let msg_len = msg.0.len();
-        let stream_id = b"test-stream";
+fn half_closed() {
+    let _ = env_logger::try_init();
+    let stream_id = b"half-close";
+    let message = b"echo me";
 
-        let (mut server, mut client) =
-            connected_peers(Config::default(), Config::default(), None).await?;
+    let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(4096, 4096);
+    let mut server = Connection::new(server_endpoint, Config::default());
+    let mut client = Connection::new(client_endpoint, Config::default());
 
-        // Create streams before spawning connections
-        let mut server_stream = server.new_stream(stream_id)?;
-        let mut client_stream = client.new_stream(stream_id)?;
+    let mut server_stream = server.get_stream(stream_id).unwrap();
+    let mut client_stream = client.get_stream(stream_id).unwrap();
 
-        // Spawn connection poll loops
-        task::spawn(async move {
-            future::poll_fn(|cx| server.poll(cx)).await.ok();
-        });
-        task::spawn(async move {
-            future::poll_fn(|cx| client.poll(cx)).await.ok();
-        });
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
 
-        // Server echoes back
-        let server_task = task::spawn(async move {
-            let mut buf = vec![0; msg_len];
-            server_stream.read_exact(&mut buf).await?;
-            server_stream.write_all(&buf).await?;
-            server_stream.close().await?;
-            Ok::<_, ConnectionError>(())
-        });
+    // Client writes and closes (sends FIN)
+    assert!(pin!(&mut client_stream)
+        .poll_write(&mut cx, message)
+        .is_ready());
+    assert!(pin!(&mut client_stream).poll_close(&mut cx).is_ready());
 
-        // Client writes, closes, then reads response
-        client_stream.write_all(&msg.0).await?;
-        client_stream.close().await?;
-
-        assert!(client_stream.is_write_closed());
-        let mut buf = vec![0; msg_len];
-        client_stream.read_exact(&mut buf).await?;
-
-        assert_eq!(buf, msg.0);
-        assert_eq!(Some(0), client_stream.read(&mut buf).await.ok());
-        assert!(client_stream.is_closed());
-
-        server_task.await.unwrap()?;
-
-        Ok(())
+    // Poll to exchange frames
+    for _ in 0..20 {
+        let _ = server.poll(&mut cx);
+        let _ = client.poll(&mut cx);
     }
 
-    fn prop(msg: Msg) {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(run_test(msg))
-            .unwrap();
+    // Server reads the data
+    let mut buf = [0u8; 7];
+    let result = pin!(&mut server_stream).poll_read(&mut cx, &mut buf);
+    assert!(matches!(result, std::task::Poll::Ready(Ok(7))));
+    assert_eq!(&buf, message);
+
+    // Server reads EOF (FIN marker)
+    let result = pin!(&mut server_stream).poll_read(&mut cx, &mut buf);
+    assert!(matches!(result, std::task::Poll::Ready(Ok(0))));
+
+    // Server echoes and closes
+    assert!(pin!(&mut server_stream)
+        .poll_write(&mut cx, message)
+        .is_ready());
+    assert!(pin!(&mut server_stream).poll_close(&mut cx).is_ready());
+
+    // Poll to exchange frames
+    for _ in 0..20 {
+        let _ = server.poll(&mut cx);
+        let _ = client.poll(&mut cx);
     }
 
-    QuickCheck::new().tests(7).quickcheck(prop as fn(_) -> _)
+    // Client reads echo
+    let result = pin!(&mut client_stream).poll_read(&mut cx, &mut buf);
+    assert!(matches!(result, std::task::Poll::Ready(Ok(7))));
+    assert_eq!(&buf, message);
+
+    // Client reads EOF (FIN marker)
+    let result = pin!(&mut client_stream).poll_read(&mut cx, &mut buf);
+    assert!(matches!(result, std::task::Poll::Ready(Ok(0))));
 }
 
 #[test]
@@ -335,11 +306,9 @@ fn prop_config_send_recv_single() {
 
         let (mut server, mut client) = connected_peers(cfg1, cfg2, None).await?;
 
-        // Create streams before spawning connections
-        let mut server_stream = server.new_stream(stream_id)?;
-        let client_stream = client.new_stream(stream_id)?;
+        let mut server_stream = server.get_stream(stream_id)?;
+        let client_stream = client.get_stream(stream_id)?;
 
-        // Spawn connection poll loops
         task::spawn(async move {
             future::poll_fn(|cx| server.poll(cx)).await.ok();
         });
@@ -347,7 +316,6 @@ fn prop_config_send_recv_single() {
             future::poll_fn(|cx| client.poll(cx)).await.ok();
         });
 
-        // Server echoes
         let server_task = task::spawn(async move {
             {
                 let (mut r, mut w) = AsyncReadExt::split(&mut server_stream);
@@ -357,16 +325,12 @@ fn prop_config_send_recv_single() {
             Ok::<_, ConnectionError>(())
         });
 
-        // Client sends all messages
         send_on_single_stream(client_stream, msgs).await?;
-
         server_task.await.unwrap()?;
-
         Ok(())
     }
 
     fn prop(msgs: Vec<Msg>, TestConfig(cfg1): TestConfig, TestConfig(cfg2): TestConfig) {
-        // Use multi-threaded runtime so task::spawn works
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -380,147 +344,89 @@ fn prop_config_send_recv_single() {
         .quickcheck(prop as fn(_, _, _) -> _)
 }
 
-/// This test simulates two endpoints of a multiplexer connection which may be
-/// unable to write simultaneously but can make progress by reading.
-#[test]
-fn write_deadlock() {
+#[tokio::test(flavor = "multi_thread")]
+async fn write_deadlock() {
     let _ = env_logger::try_init();
-    let mut pool = LocalPool::new();
 
     let msg = vec![1u8; 1024 * 1024];
-    let capacity = 1024;
     let stream_id = b"deadlock-test";
 
-    let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(capacity, capacity);
+    let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(1024, 1024);
 
-    // Create and spawn a "server" that echoes every message back to the client.
     let mut server = Connection::new(server_endpoint, Config::default());
-    let server_stream = server.new_stream(stream_id).unwrap();
-    pool.spawner()
-        .spawn_obj(
-            async move {
-                let mut stream = server_stream;
-                let conn_task = async {
-                    loop {
-                        if future::poll_fn(|cx| server.poll(cx)).await.is_ok() {
-                            break;
-                        }
-                    }
-                };
-                let echo_task = async {
-                    {
-                        let (mut r, mut w) = AsyncReadExt::split(&mut stream);
-                        futures::io::copy(&mut r, &mut w).await.unwrap();
-                    }
-                    stream.close().await.unwrap();
-                };
-                futures::select_biased! {
-                    _ = echo_task.fuse() => {},
-                    _ = conn_task.fuse() => {},
-                }
-            }
-            .boxed()
-            .into(),
-        )
-        .unwrap();
-
-    // Create and spawn a "client"
+    let mut server_stream = server.get_stream(stream_id).unwrap();
     let mut client = Connection::new(client_endpoint, Config::default());
-    let stream = client.new_stream(stream_id).unwrap();
+    let client_stream = client.get_stream(stream_id).unwrap();
 
-    // Continuously advance the multiplexer connection of the client
-    pool.spawner()
-        .spawn_obj(
-            async move {
-                loop {
-                    if future::poll_fn(|cx| client.poll(cx)).await.is_ok() {
-                        break;
-                    }
+    task::spawn(async move {
+        futures::select_biased! {
+            _ = async {
+                {
+                    let (mut r, mut w) = AsyncReadExt::split(&mut server_stream);
+                    futures::io::copy(&mut r, &mut w).await.unwrap();
                 }
-            }
-            .boxed()
-            .into(),
+                server_stream.close().await.unwrap();
+            }.fuse() => {},
+            _ = async { future::poll_fn(|cx| server.poll(cx)).await.ok(); }.fuse() => {},
+        }
+    });
+
+    task::spawn(async move {
+        future::poll_fn(|cx| client.poll(cx)).await.ok();
+    });
+
+    timeout(Duration::from_secs(10), async {
+        let (mut reader, mut writer) = AsyncReadExt::split(client_stream);
+        let mut buf = vec![0; msg.len()];
+        let _ = join(
+            writer.write_all(&msg).map_err(|e| panic_any(e)),
+            reader.read_exact(&mut buf).map_err(|e| panic_any(e)),
         )
-        .unwrap();
-
-    // Send the message, expecting it to be echo'd.
-    pool.run_until(
-        pool.spawner()
-            .spawn_with_handle(
-                async move {
-                    let (mut reader, mut writer) = AsyncReadExt::split(stream);
-                    let mut b = vec![0; msg.len()];
-                    let _ = join(
-                        writer.write_all(msg.as_ref()).map_err(|e| panic_any(e)),
-                        reader.read_exact(&mut b[..]).map_err(|e| panic_any(e)),
-                    )
-                    .await;
-                    let mut stream = reader.reunite(writer).unwrap();
-                    stream.close().await.unwrap();
-                    log::debug!("C: Stream {:?} done.", stream.id());
-                    assert_eq!(b, msg);
-                }
-                .boxed(),
-            )
-            .unwrap(),
-    );
+        .await;
+        let mut stream = reader.reunite(writer).unwrap();
+        stream.close().await.unwrap();
+        assert_eq!(buf, msg);
+    })
+    .await
+    .expect("timeout");
 }
 
+/// Test that data written before dropping a stream handle is still delivered.
+/// Note: With the simplified protocol, dropping does NOT send FIN to remote.
 #[test]
-fn close_through_drop_of_stream_propagates_to_remote() {
+fn drop_delivers_written_data() {
     let _ = env_logger::try_init();
-    let mut pool = LocalPool::new();
     let stream_id = b"drop-test";
 
     let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(1024, 1024);
     let mut server = Connection::new(server_endpoint, Config::default());
     let mut client = Connection::new(client_endpoint, Config::default());
 
-    // Pre-register stream on server
-    let mut stream_server_side = server.new_stream(stream_id).unwrap();
+    let mut server_stream = server.get_stream(stream_id).unwrap();
+    let client_stream = client.get_stream(stream_id).unwrap();
 
-    // Spawn client, opening a stream, writing to the stream, dropping the stream
-    let mut client_stream = client.new_stream(stream_id).unwrap();
-    pool.spawner()
-        .spawn_obj(
-            async move {
-                client_stream.write_all(&[42]).await.unwrap();
-                drop(client_stream);
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
 
-                loop {
-                    if future::poll_fn(|cx| client.poll(cx)).await.is_ok() {
-                        break;
-                    }
-                }
-            }
-            .boxed()
-            .into(),
-        )
-        .unwrap();
+    // Client writes and drops (no close/FIN)
+    assert!(pin!(client_stream).poll_write(&mut cx, &[42]).is_ready());
+    // stream dropped here
 
-    // Spawn server connection state machine.
-    pool.spawner()
-        .spawn_obj(
-            async move {
-                loop {
-                    if future::poll_fn(|cx| server.poll(cx)).await.is_ok() {
-                        break;
-                    }
-                }
-            }
-            .boxed()
-            .into(),
-        )
-        .unwrap();
+    // Poll to deliver data
+    for _ in 0..10 {
+        let _ = server.poll(&mut cx);
+        let _ = client.poll(&mut cx);
+    }
 
-    // Expect to eventually receive close on stream.
-    pool.run_until(async {
-        let mut buf = Vec::new();
-        stream_server_side.read_to_end(&mut buf).await?;
-        assert_eq!(buf, vec![42]);
-        Ok::<(), std::io::Error>(())
-    })
-    .unwrap();
+    // Server should receive the data
+    let mut buf = [0u8; 1];
+    let result = pin!(&mut server_stream).poll_read(&mut cx, &mut buf);
+    assert!(matches!(result, std::task::Poll::Ready(Ok(1))));
+    assert_eq!(buf[0], 42);
+
+    // Server does NOT get EOF (no FIN was sent)
+    let result = pin!(&mut server_stream).poll_read(&mut cx, &mut buf);
+    assert!(result.is_pending());
 }
 
 #[test]
@@ -536,23 +442,17 @@ fn close_sync() {
     let waker = std::task::Waker::noop();
     let mut cx = std::task::Context::from_waker(waker);
 
-    // Create streams on both sides with same ID
     let stream_id = b"test";
-    let client_stream = client.new_stream(stream_id).unwrap();
-    let server_stream = server.new_stream(stream_id).unwrap();
+    let client_stream = client.get_stream(stream_id).unwrap();
+    let server_stream = server.get_stream(stream_id).unwrap();
 
-    // Write from client (this sends StreamInit + Data)
     assert!(pin!(client_stream).poll_write(&mut cx, b"hello").is_ready());
-
-    // Client initiates close
     client.close();
 
-    // Poll client a bunch of times and ensure it doesn't finish closing yet.
     for _ in 0..10 {
         assert!(client.poll(&mut cx).is_pending());
     }
 
-    // Server polls to receive StreamInit and transition the stream
     let _ = server.poll(&mut cx);
     let _ = server.poll(&mut cx);
 
@@ -560,13 +460,161 @@ fn close_sync() {
     assert!(pin!(server_stream).poll_read(&mut cx, &mut buf).is_ready());
     assert_eq!(&buf, b"hello");
 
-    // Server polls more to receive GoAway
     while server.poll(&mut cx).is_pending() {}
 
-    // Now server closes
     server.close();
     let _ = server.poll(&mut cx);
 
-    // Client should now be able to finish closing
     while client.poll(&mut cx).is_pending() {}
+}
+
+/// Test that after dropping a stream handle, the stream can be reopened
+/// and any data buffered during the "closed" period can be read.
+#[test]
+fn stream_reuse_after_handle_drop() {
+    let _ = env_logger::try_init();
+    let stream_id = b"reuse-test";
+    let message = b"buffered data";
+
+    let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(4096, 4096);
+    let mut server = Connection::new(server_endpoint, Config::default());
+    let mut client = Connection::new(client_endpoint, Config::default());
+
+    let mut server_stream = server.get_stream(stream_id).unwrap();
+    let client_stream = client.get_stream(stream_id).unwrap();
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    // Drop client stream handle
+    drop(client_stream);
+
+    // Server writes data
+    assert!(pin!(&mut server_stream)
+        .poll_write(&mut cx, message)
+        .is_ready());
+    // Server sends FIN
+    assert!(pin!(&mut server_stream).poll_close(&mut cx).is_ready());
+
+    // Poll both connections to exchange frames
+    for _ in 0..20 {
+        let _ = server.poll(&mut cx);
+        let _ = client.poll(&mut cx);
+    }
+
+    // Reopen stream on client
+    let mut reopened = client.get_stream(stream_id).unwrap();
+
+    // Read buffered data
+    let mut buf = [0u8; 14];
+    let result = pin!(&mut reopened).poll_read(&mut cx, &mut buf);
+    assert!(result.is_ready());
+    if let std::task::Poll::Ready(Ok(n)) = result {
+        assert_eq!(n, message.len());
+        assert_eq!(&buf[..n], message);
+    }
+
+    // Read FIN marker (EOF)
+    let result = pin!(&mut reopened).poll_read(&mut cx, &mut buf);
+    assert!(matches!(result, std::task::Poll::Ready(Ok(0))));
+}
+
+/// Test that data can be sent after FIN (FIN is just an in-band marker).
+#[test]
+fn data_after_fin() {
+    let _ = env_logger::try_init();
+    let stream_id = b"data-after-fin";
+
+    let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(4096, 4096);
+    let mut server = Connection::new(server_endpoint, Config::default());
+    let mut client = Connection::new(client_endpoint, Config::default());
+
+    let mut server_stream = server.get_stream(stream_id).unwrap();
+    let mut client_stream = client.get_stream(stream_id).unwrap();
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    // Client sends data
+    assert!(pin!(&mut client_stream)
+        .poll_write(&mut cx, b"before")
+        .is_ready());
+
+    // Client sends FIN
+    assert!(pin!(&mut client_stream).poll_close(&mut cx).is_ready());
+
+    // Client sends more data AFTER FIN
+    assert!(pin!(&mut client_stream)
+        .poll_write(&mut cx, b"after")
+        .is_ready());
+
+    // Poll to exchange frames
+    for _ in 0..20 {
+        let _ = server.poll(&mut cx);
+        let _ = client.poll(&mut cx);
+    }
+
+    // Server reads "before"
+    let mut buf = [0u8; 6];
+    let result = pin!(&mut server_stream).poll_read(&mut cx, &mut buf);
+    assert!(matches!(result, std::task::Poll::Ready(Ok(6))));
+    assert_eq!(&buf, b"before");
+
+    // Server reads EOF (FIN marker)
+    let result = pin!(&mut server_stream).poll_read(&mut cx, &mut buf);
+    assert!(matches!(result, std::task::Poll::Ready(Ok(0))));
+
+    // Server reads "after" (data sent after FIN)
+    let mut buf = [0u8; 5];
+    let result = pin!(&mut server_stream).poll_read(&mut cx, &mut buf);
+    assert!(matches!(result, std::task::Poll::Ready(Ok(5))));
+    assert_eq!(&buf, b"after");
+}
+
+/// Test that streams can be reused multiple times on the same connection.
+#[test]
+fn stream_reuse_same_connection() {
+    let _ = env_logger::try_init();
+    let stream_id = b"reuse-multi";
+
+    let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(4096, 4096);
+    let mut server = Connection::new(server_endpoint, Config::default());
+    let mut client = Connection::new(client_endpoint, Config::default());
+
+    let mut server_stream = server.get_stream(stream_id).unwrap();
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    // First use: create, write, drop (no FIN sent)
+    let stream = client.get_stream(stream_id).unwrap();
+    assert!(pin!(stream).poll_write(&mut cx, b"first").is_ready());
+    // stream dropped here
+
+    // Poll to deliver data
+    for _ in 0..10 {
+        let _ = server.poll(&mut cx);
+        let _ = client.poll(&mut cx);
+    }
+
+    // Reopen same stream ID and write more
+    let stream = client.get_stream(stream_id).unwrap();
+    assert!(pin!(stream).poll_write(&mut cx, b"second").is_ready());
+
+    // Poll to deliver data
+    for _ in 0..10 {
+        let _ = server.poll(&mut cx);
+        let _ = client.poll(&mut cx);
+    }
+
+    // Server should receive both messages
+    let mut buf = [0u8; 5];
+    let result = pin!(&mut server_stream).poll_read(&mut cx, &mut buf);
+    assert!(matches!(result, std::task::Poll::Ready(Ok(5))));
+    assert_eq!(&buf, b"first");
+
+    let mut buf = [0u8; 6];
+    let result = pin!(&mut server_stream).poll_read(&mut cx, &mut buf);
+    assert!(matches!(result, std::task::Poll::Ready(Ok(6))));
+    assert_eq!(&buf, b"second");
 }

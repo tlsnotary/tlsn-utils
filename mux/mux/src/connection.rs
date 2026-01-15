@@ -84,7 +84,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
         matches!(self.inner, ConnectionState::Closed(_))
     }
 
-    /// Get a handle for creating streams concurrently.
+    /// Get a handle for obtaining streams concurrently.
     ///
     /// The handle can be cloned and used from multiple tasks while the
     /// Connection is being polled.
@@ -95,17 +95,21 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
         }
     }
 
-    /// Create a new stream with the given user ID.
+    /// Get a stream handle for the given user ID.
+    ///
+    /// Streams are implicit - if data has already been received for this ID,
+    /// returns a handle to the existing stream with buffered data. Otherwise,
+    /// creates a new stream.
     ///
     /// The stream ID is computed from the user ID using BLAKE3.
-    /// Either side can create streams with the same user ID - they will
-    /// automatically merge into the same stream.
+    /// Either side can get streams with the same user ID - they will
+    /// automatically refer to the same stream.
     ///
-    /// The `user_id` parameter is a required user-defined stream identifier
-    /// (1-256 bytes). User IDs must be unique within the session.
-    pub fn new_stream(&mut self, user_id: &[u8]) -> Result<Stream> {
+    /// The `user_id` parameter is a user-defined stream identifier (1-256
+    /// bytes).
+    pub fn get_stream(&mut self, user_id: &[u8]) -> Result<Stream> {
         match &mut self.inner {
-            ConnectionState::Active(active) => active.new_stream(user_id),
+            ConnectionState::Active(active) => active.get_stream(user_id),
             _ => Err(ConnectionError::Closed),
         }
     }

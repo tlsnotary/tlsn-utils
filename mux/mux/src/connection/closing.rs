@@ -77,10 +77,6 @@ where
                         Poll::Ready(Some((_, Some(StreamCommand::SendFrame(frame))))) => {
                             this.pending_frames.push_back(frame);
                         }
-                        Poll::Ready(Some((_, Some(StreamCommand::CloseStream { stream_id })))) => {
-                            this.pending_frames
-                                .push_back(Frame::close_stream(stream_id).into());
-                        }
                         Poll::Ready(Some((_, None))) => {}
                         Poll::Pending | Poll::Ready(None) => {
                             // No more frames from streams, append `Term` frame and flush them all.
@@ -211,7 +207,6 @@ mod tests {
         let frame_data = Frame::data(StreamId::new(b"stream3"), vec![4])
             .unwrap()
             .into();
-        let frame_close = Frame::close_stream(StreamId::new(b"stream5")).into();
         let frame_term = Frame::term().into();
         fn encode(buf: &mut Vec<u8>, frame: &Frame<()>) {
             buf.extend_from_slice(&frame::header::encode(frame.header()));
@@ -222,7 +217,6 @@ mod tests {
         let mut expected_written = vec![];
         encode(&mut expected_written, &frame_pending);
         encode(&mut expected_written, &frame_data);
-        encode(&mut expected_written, &frame_close);
         encode(&mut expected_written, &frame_term);
 
         let receiver = |frame: &Frame<_>, command: StreamCommand| {
@@ -237,12 +231,6 @@ mod tests {
         stream_receivers.push(receiver(
             &frame_data,
             StreamCommand::SendFrame(frame_data.clone()),
-        ));
-        stream_receivers.push(receiver(
-            &frame_close,
-            StreamCommand::CloseStream {
-                stream_id: StreamId::new(b"stream5"),
-            },
         ));
         let pending_frames = vec![frame_pending];
         let mut socket = Socket {

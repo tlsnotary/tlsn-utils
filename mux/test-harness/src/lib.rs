@@ -175,7 +175,7 @@ where
     let mut streams = Vec::with_capacity(nstreams);
     for i in 0..nstreams {
         let id = format!("stream-{i}");
-        streams.push(conn.new_stream(id.as_bytes()).unwrap());
+        streams.push(conn.get_stream(id.as_bytes()).unwrap());
     }
 
     // Spawn connection poll loop
@@ -249,7 +249,7 @@ where
         let mut streams = Vec::with_capacity(stream_count);
         for i in 0..stream_count {
             let id = format!("stream-{i}");
-            streams.push(self.conn.new_stream(id.as_bytes())?);
+            streams.push(self.conn.get_stream(id.as_bytes())?);
         }
 
         // Spawn connection poll loop

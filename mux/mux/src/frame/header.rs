@@ -114,13 +114,6 @@ impl<T: HasFin> Header<T> {
     }
 }
 
-impl<T: HasRst> Header<T> {
-    /// Set the [`RST`] flag.
-    pub fn rst(&mut self) {
-        self.flags.0 |= RST.0
-    }
-}
-
 impl Header<Data> {
     /// Create a new data frame header.
     pub fn data(id: StreamId, len: u32) -> Self {
@@ -223,11 +216,6 @@ pub trait HasFin: private::Sealed {}
 impl HasFin for Data {}
 impl HasFin for WindowUpdate {}
 
-/// Types which have a `rst` method.
-pub trait HasRst: private::Sealed {}
-impl HasRst for Data {}
-impl HasRst for WindowUpdate {}
-
 pub(super) mod private {
     pub trait Sealed {}
 
@@ -319,9 +307,6 @@ impl Flags {
 
 /// Indicates the half-closing of a stream.
 pub const FIN: Flags = Flags(0x01);
-
-/// Indicates an immediate stream reset.
-pub const RST: Flags = Flags(0x02);
 
 /// Indicates a ping request.
 pub const SYN: Flags = Flags(0x04);

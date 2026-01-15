@@ -12,14 +12,21 @@
 
 use std::{collections::VecDeque, io};
 
-/// A sequence of [`Chunk`] values.
+/// An element in the buffer - either data or a FIN marker.
+#[derive(Debug)]
+pub(crate) enum ChunkOrFin {
+    Chunk(Chunk),
+    Fin,
+}
+
+/// A sequence of [`ChunkOrFin`] values.
 ///
 /// [`Chunks::len`] considers all [`Chunk`] elements and computes the total
 /// result, i.e. the length of all bytes, by summing up the lengths of all
-/// [`Chunk`] elements.
+/// [`Chunk`] elements. FIN markers don't contribute to length.
 #[derive(Debug)]
 pub(crate) struct Chunks {
-    seq: VecDeque<Chunk>,
+    seq: VecDeque<ChunkOrFin>,
     len: usize,
 }
 
@@ -34,29 +41,61 @@ impl Chunks {
 
     /// The total length of bytes yet-to-be-read in all `Chunk`s.
     pub(crate) fn len(&self) -> usize {
-        self.len - self.seq.front().map(|c| c.offset()).unwrap_or(0)
+        let front_offset = self
+            .seq
+            .front()
+            .and_then(|e| match e {
+                ChunkOrFin::Chunk(c) => Some(c.offset()),
+                ChunkOrFin::Fin => None,
+            })
+            .unwrap_or(0);
+        self.len - front_offset
+    }
+
+    /// Returns true if there is no data in the buffer.
+    ///
+    /// Note: A buffer with only FIN markers is considered empty.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Add another chunk of bytes to the end.
     pub(crate) fn push(&mut self, x: Vec<u8>) {
         self.len += x.len();
         if !x.is_empty() {
-            self.seq.push_back(Chunk {
+            self.seq.push_back(ChunkOrFin::Chunk(Chunk {
                 cursor: io::Cursor::new(x),
-            })
+            }))
         }
     }
 
-    /// Remove and return the first chunk.
-    pub(crate) fn pop(&mut self) -> Option<Chunk> {
-        let chunk = self.seq.pop_front();
-        self.len -= chunk.as_ref().map(|c| c.len() + c.offset()).unwrap_or(0);
-        chunk
+    /// Add a FIN marker to the end.
+    pub(crate) fn push_fin(&mut self) {
+        self.seq.push_back(ChunkOrFin::Fin);
     }
 
-    /// Get a mutable reference to the first chunk.
-    pub(crate) fn front_mut(&mut self) -> Option<&mut Chunk> {
-        self.seq.front_mut()
+    /// Remove and return the first element.
+    pub(crate) fn pop(&mut self) -> Option<ChunkOrFin> {
+        let elem = self.seq.pop_front();
+        if let Some(ChunkOrFin::Chunk(ref c)) = elem {
+            self.len -= c.len() + c.offset();
+        }
+        elem
+    }
+
+    /// Get a reference to the first element.
+    pub(crate) fn front(&self) -> Option<&ChunkOrFin> {
+        self.seq.front()
+    }
+
+    /// Get a mutable reference to the first chunk, if it is a chunk.
+    ///
+    /// Returns None if buffer is empty or front is a FIN marker.
+    pub(crate) fn front_chunk_mut(&mut self) -> Option<&mut Chunk> {
+        match self.seq.front_mut() {
+            Some(ChunkOrFin::Chunk(c)) => Some(c),
+            _ => None,
+        }
     }
 }
 
