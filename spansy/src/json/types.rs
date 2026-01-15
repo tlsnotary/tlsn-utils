@@ -664,7 +664,9 @@ macro_rules! impl_ref_range_iter {
     )*};
 }
 
-impl_ref_range_iter!(JsonValue, KeyValue, JsonKey, Array, Object, Null, Bool, Number, String);
+impl_ref_range_iter!(
+    JsonValue, KeyValue, JsonKey, Array, Object, Null, Bool, Number, String
+);
 
 #[cfg(test)]
 mod tests {
