@@ -4,7 +4,7 @@ use bytes::Bytes;
 use rangeset::{
     iter::{IntoRangeIterator, RangeIterator},
     ops::Set,
-    set::RangeSet,
+    set::{RangeIter, RangeSet},
 };
 
 use crate::{Span, Store, View};
@@ -651,6 +651,22 @@ impl_span_type!(Null);
 impl_span_type!(Bool);
 impl_span_type!(Number);
 impl_span_type!(String);
+
+macro_rules! impl_ref_range_iter {
+    ($($ty:ident),*) => {$(
+        impl<'a, S: Store> IntoRangeIterator<usize> for &'a $ty<S> {
+            type IntoIter = RangeIter<'a, usize>;
+
+            fn into_range_iter(self) -> Self::IntoIter {
+                self.view().indices().into_range_iter()
+            }
+        }
+    )*};
+}
+
+impl_ref_range_iter!(
+    JsonValue, KeyValue, JsonKey, Array, Object, Null, Bool, Number, String
+);
 
 #[cfg(test)]
 mod tests {
