@@ -3,7 +3,7 @@ use std::ops::Range;
 use pest::{Parser, iterators::Pair as PestPair};
 
 use super::types::{self, JsonValue, KeyValue};
-use crate::{ParseError, Store, View};
+use crate::{ParseError, Store, View, json::Document};
 
 #[derive(pest_derive::Parser)]
 #[grammar = "json/json.pest"]
@@ -20,7 +20,7 @@ struct JsonParser;
 /// let value = parse(b"{\"foo\": 42}").unwrap();
 /// assert_eq!(value.get("foo").unwrap(), "42");
 /// ```
-pub fn parse<S: Store>(src: impl Into<View<S>>) -> Result<JsonValue<S>, ParseError> {
+pub fn parse<S: Store>(src: impl Into<View<S>>) -> Result<Document<S>, ParseError> {
     let view: View<S, str> = src.into().try_into()?;
     let data = view.as_str();
 
@@ -29,13 +29,9 @@ pub fn parse<S: Store>(src: impl Into<View<S>>) -> Result<JsonValue<S>, ParseErr
         .next()
         .ok_or_else(|| ParseError("no json value is present in source".to_string()))?;
 
-    if value.as_str().len() != data.len() {
-        return Err(ParseError(
-            "trailing characters are present in source".to_string(),
-        ));
-    }
+    let root = JsonValue::from_pair(&view, &data, value);
 
-    Ok(JsonValue::from_pair(&view, &data, value))
+    Ok(Document { view, root })
 }
 
 /// Helper to get the range of a string within the data.
@@ -187,18 +183,15 @@ mod tests {
     }
 
     #[test]
-    fn test_err_leading_characters() {
+    fn test_ok_leading_characters() {
         let src = b" {\"foo\": \"bar\"}";
-        assert!(parse(src).is_err());
+        assert!(parse(src).is_ok());
     }
 
     #[test]
-    fn test_err_trailing_characters() {
+    fn test_ok_trailing_characters() {
         let src = b"{\"foo\": \"bar\"} ";
-        assert_eq!(
-            parse(src).err().unwrap().to_string(),
-            "parsing error: trailing characters are present in source"
-        );
+        assert!(parse(src).is_ok());
     }
 
     #[test]

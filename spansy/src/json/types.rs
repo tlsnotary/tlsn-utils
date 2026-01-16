@@ -9,6 +9,100 @@ use rangeset::{
 
 use crate::{Span, Store, View};
 
+/// A JSON document.
+#[derive(Debug, Clone)]
+pub struct Document<S: Store = Bytes> {
+    pub(crate) view: View<S, str>,
+    /// The root value of the document.
+    pub root: JsonValue<S>,
+}
+
+impl<S: Store> Document<S> {
+    /// Returns the underlying view.
+    pub fn view(&self) -> &View<S, str> {
+        &self.view
+    }
+
+    /// Get a reference to the value using the given path.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use spansy::json::parse;
+    ///
+    /// let src = b"{\"foo\": {\"bar\": [42, 14]}}";
+    ///
+    /// let doc = parse(src).unwrap();
+    ///
+    /// assert_eq!(doc.get("foo.bar.1").unwrap(), "14");
+    /// ```
+    pub fn get(&self, path: &str) -> Option<&JsonValue<S>> {
+        self.root.get(path)
+    }
+}
+
+impl<S: Store> IntoRangeIterator<usize> for Document<S> {
+    type IntoIter = <RangeSet<usize> as IntoRangeIterator<usize>>::IntoIter;
+
+    fn into_range_iter(self) -> Self::IntoIter {
+        self.view().indices().clone().into_range_iter()
+    }
+}
+
+impl<S: Store> Span<str> for Document<S> {
+    fn data(&self) -> Cow<'_, str> {
+        self.view().as_str()
+    }
+
+    fn len(&self) -> usize {
+        self.view().len()
+    }
+
+    fn offset(&self) -> usize {
+        self.view().offset()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.view().indices().is_empty()
+    }
+
+    fn is_contiguous(&self) -> bool {
+        self.view().indices().len_ranges() <= 1
+    }
+}
+
+impl<S: Store> PartialEq for Document<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.view().as_str() == other.view().as_str()
+    }
+}
+
+impl<S: Store> Eq for Document<S> {}
+
+impl<S: Store> std::hash::Hash for Document<S> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.view().as_str().hash(state);
+    }
+}
+
+impl<S: Store> PartialEq<str> for Document<S> {
+    fn eq(&self, other: &str) -> bool {
+        self.view().as_str() == other
+    }
+}
+
+impl<S: Store> PartialEq<&str> for Document<S> {
+    fn eq(&self, other: &&str) -> bool {
+        self == *other
+    }
+}
+
+impl<S: Store> AsRef<View<S, str>> for Document<S> {
+    fn as_ref(&self) -> &View<S, str> {
+        self.view()
+    }
+}
+
 /// A JSON value with span tracking.
 ///
 /// # Example
@@ -16,17 +110,20 @@ use crate::{Span, Store, View};
 /// ```
 /// use spansy::json::{parse, JsonValue};
 ///
-/// let value = parse(b"{\"count\": 42}").unwrap();
+/// let doc = parse(b"{\"count\": 42}").unwrap();
 ///
 /// // Pattern match on the value type
-/// if let JsonValue::Object(obj) = &value {
-///     if let Some(JsonValue::Number(n)) = obj.get("count") {
-///         assert_eq!(n, "42");
-///     }
-/// }
+/// let JsonValue::Object(obj) = &doc.root else {
+///     panic!("value should be object");
+/// };
+///
+/// let Some(JsonValue::Number(n)) = obj.get("count") else {
+///     panic!("count number should exist");
+/// };
+/// assert_eq!(n, "42");
 ///
 /// // Or use path-based access
-/// assert_eq!(value.get("count").unwrap(), "42");
+/// assert_eq!(doc.get("count").unwrap(), "42");
 /// ```
 #[derive(Debug, Clone)]
 pub enum JsonValue<S: Store = Bytes> {
@@ -62,13 +159,13 @@ impl<S: Store> JsonValue<S> {
     /// # Example
     ///
     /// ```
-    /// use spansy::json::parse;
+    /// use spansy::json::{parse, JsonValue};
     ///
     /// let src = b"{\"foo\": {\"bar\": [42, 14]}}";
     ///
-    /// let value = parse(src).unwrap();
+    /// let doc = parse(src).unwrap();
     ///
-    /// assert_eq!(value.get("foo.bar.1").unwrap(), "14");
+    /// assert_eq!(doc.root.get("foo.bar.1").unwrap(), "14");
     /// ```
     pub fn get(&self, path: &str) -> Option<&JsonValue<S>> {
         match self {
@@ -335,9 +432,9 @@ pub struct String<S: Store = Bytes> {
 /// ```
 /// use spansy::json::{parse, JsonValue};
 ///
-/// let value = parse(b"[1, 2, 3]").unwrap();
+/// let doc = parse(b"[1, 2, 3]").unwrap();
 ///
-/// if let JsonValue::Array(arr) = value {
+/// if let JsonValue::Array(arr) = doc.root {
 ///     for elem in &arr.elems {
 ///         println!("{}", elem.view().as_str());
 ///     }
@@ -461,9 +558,9 @@ impl<S: Store> AsRef<View<S, str>> for Array<S> {
 /// ```
 /// use spansy::json::{parse, JsonValue};
 ///
-/// let value = parse(b"{\"a\": 1, \"b\": 2}").unwrap();
+/// let doc = parse(b"{\"a\": 1, \"b\": 2}").unwrap();
 ///
-/// if let JsonValue::Object(obj) = value {
+/// if let JsonValue::Object(obj) = doc.root {
 ///     // Iterate over key-value pairs
 ///     for kv in &obj.elems {
 ///         println!("{}: {}", kv.key.view().as_str(), kv.value.view().as_str());
@@ -665,7 +762,7 @@ macro_rules! impl_ref_range_iter {
 }
 
 impl_ref_range_iter!(
-    JsonValue, KeyValue, JsonKey, Array, Object, Null, Bool, Number, String
+    Document, JsonValue, KeyValue, JsonKey, Array, Object, Null, Bool, Number, String
 );
 
 #[cfg(test)]
@@ -705,7 +802,7 @@ mod tests {
     fn test_key_value_without_value() {
         let src = b"{\"foo\": \"bar\"\n}";
 
-        let JsonValue::Object(value) = parse(src).unwrap() else {
+        let JsonValue::Object(value) = parse(src).unwrap().root else {
             panic!("expected object");
         };
 
@@ -717,7 +814,7 @@ mod tests {
     fn test_key_value_without_separator() {
         let src = b"{\"foo\": \"bar\", \"baz\": \"buzz\"\n}";
 
-        let JsonValue::Object(value) = parse(src).unwrap() else {
+        let JsonValue::Object(value) = parse(src).unwrap().root else {
             panic!("expected object");
         };
 
@@ -729,7 +826,7 @@ mod tests {
     fn test_array_without_values() {
         let src = b"[42, 14]";
 
-        let JsonValue::Array(value) = parse(src).unwrap() else {
+        let JsonValue::Array(value) = parse(src).unwrap().root else {
             panic!("expected array");
         };
 
@@ -741,7 +838,7 @@ mod tests {
     fn test_object_without_pairs() {
         let src = b"{\"foo\": \"bar\"\n}";
 
-        let JsonValue::Object(value) = parse(src).unwrap() else {
+        let JsonValue::Object(value) = parse(src).unwrap().root else {
             panic!("expected object");
         };
 
