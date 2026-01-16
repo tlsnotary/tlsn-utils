@@ -202,7 +202,7 @@ mod tests {
         let src = b"{\"foo\": \"bar\"} ";
         assert_eq!(
             parse(src).err().unwrap().to_string(),
-            "parsing error: trailing characters are present in source"
+            "parsing error: trailing characters are present in source: \" \""
         );
     }
 
