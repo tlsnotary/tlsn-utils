@@ -112,7 +112,7 @@ impl<S: Store> KeyValue<S> {
     fn from_pair(view: &View<S, str>, data: &str, pair: PestPair<'_, Rule>) -> Self {
         assert!(matches!(pair.as_rule(), Rule::pair));
 
-        let range = get_range(data, pair.as_str().trim_end());
+        let range = get_range(data, pair.as_str());
 
         let mut pairs = pair.into_inner();
 
@@ -199,6 +199,28 @@ mod tests {
             parse(src).err().unwrap().to_string(),
             "parsing error: trailing characters are present in source"
         );
+    }
+
+    #[test]
+    fn test_err_missing_comma() {
+        // Missing comma between object pairs
+        let src = b"{\"foo\": \"bar\" \"baz\": \"buzz\"}";
+        assert!(parse(src).is_err());
+
+        // Missing comma between array elements
+        let src = b"[1 2 3]";
+        assert!(parse(src).is_err());
+    }
+
+    #[test]
+    fn test_err_trailing_comma_not_allowed() {
+        // Trailing comma in object is invalid JSON
+        let src = b"{\"foo\": \"bar\",}";
+        assert!(parse(src).is_err());
+
+        // Trailing comma in array is invalid JSON
+        let src = b"[1, 2, 3,]";
+        assert!(parse(src).is_err());
     }
 
     #[test]

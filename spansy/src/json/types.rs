@@ -165,16 +165,6 @@ impl<S: Store> KeyValue<S> {
         let indices = self.view.indices().difference(self.value.view().indices());
         self.view.subview(indices.into_set())
     }
-
-    /// Returns a view of the key value pair, excluding the trailing separator.
-    pub fn without_separator(&self) -> View<S, str> {
-        let len = self.view.len();
-        if self.view.as_str().ends_with(',') {
-            self.view.select(0..len - 1).expect("range should be valid")
-        } else {
-            self.view.clone()
-        }
-    }
 }
 
 impl<S: Store> IntoRangeIterator<usize> for KeyValue<S> {
@@ -714,15 +704,30 @@ mod tests {
     }
 
     #[test]
-    fn test_key_value_without_separator() {
+    fn test_key_value() {
         let src = b"{\"foo\": \"bar\", \"baz\": \"buzz\"\n}";
 
         let JsonValue::Object(value) = parse(src).unwrap() else {
             panic!("expected object");
         };
 
-        let view = value.elems[0].without_separator();
-        assert_eq!(view.as_str().as_ref(), "\"foo\": \"bar\"");
+        // KeyValue should not include the trailing comma
+        assert_eq!(value.elems[0].view().as_str().as_ref(), "\"foo\": \"bar\"");
+        assert_eq!(value.elems[1].view().as_str().as_ref(), "\"baz\": \"buzz\"");
+    }
+
+    #[test]
+    fn test_array_elements() {
+        let src = b"[1, 2, 3]";
+
+        let JsonValue::Array(value) = parse(src).unwrap() else {
+            panic!("expected array");
+        };
+
+        // Array elements should not include commas
+        assert_eq!(value.elems[0].view().as_str().as_ref(), "1");
+        assert_eq!(value.elems[1].view().as_str().as_ref(), "2");
+        assert_eq!(value.elems[2].view().as_str().as_ref(), "3");
     }
 
     #[test]
