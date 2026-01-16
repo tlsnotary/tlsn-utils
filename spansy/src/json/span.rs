@@ -24,7 +24,7 @@ pub fn parse<S: Store>(src: impl Into<View<S>>) -> Result<Document<S>, ParseErro
     let view: View<S, str> = src.into().try_into()?;
     let data = view.as_str();
 
-    let value = JsonParser::parse(Rule::value, &data)
+    let value = JsonParser::parse(Rule::json, &data)
         .map_err(ParseError::from_pest)?
         .next()
         .ok_or_else(|| ParseError("no json value is present in source".to_string()))?;
