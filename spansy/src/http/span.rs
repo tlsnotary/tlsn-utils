@@ -773,6 +773,26 @@ mod tests {
     }
 
     #[test]
+    fn test_chunked_response_json_split_inside_tokens() {
+        let src = b"HTTP/1.1 200 OK\r\n\
+            Transfer-Encoding: chunked\r\n\
+            Content-Type: application/json\r\n\r\n\
+            c\r\n{\"foo\": \"abc\r\n\
+            12\r\ndef\", \"baz\": 12345\r\n\
+            5\r\n6789}\r\n\
+            0\r\n\r\n";
+
+        let res = parse_response(src).unwrap();
+        let body = res.body.unwrap();
+
+        let BodyContent::Json(value) = body.content else {
+            panic!("body should be json");
+        };
+
+        assert_eq!(value, "{\"foo\": \"abcdef\", \"baz\": 123456789}");
+    }
+
+    #[test]
     fn test_chunked_with_trailers() {
         let src = b"HTTP/1.1 200 OK\r\n\
             Transfer-Encoding: chunked\r\n\r\n\
