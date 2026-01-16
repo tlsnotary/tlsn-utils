@@ -29,10 +29,15 @@ pub fn parse<S: Store>(src: impl Into<View<S>>) -> Result<JsonValue<S>, ParseErr
         .next()
         .ok_or_else(|| ParseError("no json value is present in source".to_string()))?;
 
-    if value.as_str().len() != data.len() {
-        return Err(ParseError(
-            "trailing characters are present in source".to_string(),
-        ));
+    let consumed = value.as_str().len();
+    if consumed != data.len() {
+        let (_, trailing) = data.split_at(consumed);
+        let mut chars = trailing.chars();
+        let preview: String = chars.by_ref().take(50).collect();
+        let suffix = if chars.next().is_some() { "..." } else { "" };
+        return Err(ParseError(format!(
+            "trailing characters are present in source: \"{preview}{suffix}\""
+        )));
     }
 
     Ok(JsonValue::from_pair(&view, &data, value))
