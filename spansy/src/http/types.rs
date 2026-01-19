@@ -7,7 +7,7 @@ use rangeset::{
     set::{RangeIter, RangeSet},
 };
 
-use crate::{Span, Store, View, json::JsonValue};
+use crate::{Span, Store, View, json::Document};
 
 /// An HTTP header name.
 #[derive(Debug, Clone)]
@@ -573,7 +573,7 @@ impl<S: Store> Eq for Body<S> {}
 #[non_exhaustive]
 pub enum BodyContent<S: Store = Bytes> {
     /// Body with an `application/json` content type.
-    Json(JsonValue<S>),
+    Json(Document<S>),
     /// Body with an unknown content type.
     Unknown,
 }
