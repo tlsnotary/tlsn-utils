@@ -198,8 +198,8 @@ mod tests {
         let src = b"{}{\"foo\": \"bar\"}";
         assert!(parse(src).is_err());
     }
-    
-        #[test]
+
+    #[test]
     fn test_err_trailing_characters() {
         let src = b"{\"foo\": \"bar\"}_";
         assert!(parse(src).is_err());
