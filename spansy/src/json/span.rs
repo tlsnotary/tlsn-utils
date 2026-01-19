@@ -183,17 +183,27 @@ mod tests {
     }
 
     #[test]
-    fn test_ok_leading_characters() {
+    fn test_ok_leading_whitespace() {
         let src = b" {\"foo\": \"bar\"}";
         assert!(parse(src).is_ok());
     }
 
     #[test]
-    fn test_ok_trailing_characters() {
+    fn test_ok_trailing_whitespace() {
         let src = b"{\"foo\": \"bar\"} ";
         assert!(parse(src).is_ok());
     }
-
+    #[test]
+    fn test_err_leading_characters() {
+        let src = b"{}{\"foo\": \"bar\"}";
+        assert!(parse(src).is_err());
+    }
+    
+        #[test]
+    fn test_err_trailing_characters() {
+        let src = b"{\"foo\": \"bar\"}_";
+        assert!(parse(src).is_err());
+    }
     #[test]
     fn test_unicode_strings() {
         let src = r#"{"key": "日本語", "emoji": "🎉"}"#.as_bytes();
