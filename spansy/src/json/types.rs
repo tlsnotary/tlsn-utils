@@ -817,7 +817,7 @@ mod tests {
     fn test_array_elements() {
         let src = b"[1, 2, 3]";
 
-        let JsonValue::Array(value) = parse(src).unwrap() else {
+        let JsonValue::Array(value) = parse(src).unwrap().root else {
             panic!("expected array");
         };
 
