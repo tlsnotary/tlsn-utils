@@ -846,4 +846,30 @@ mod tests {
         // content_data() returns assembled chunk content
         assert_eq!(body.content_data().as_ref(), b"hello world".as_slice());
     }
+
+    #[test]
+    fn test_invalid_chunked_response() {
+        // Missing CRLF after chunk data
+        let src = b"HTTP/1.1 200 OK\r\n\
+            Transfer-Encoding: chunked\r\n\r\n\
+            5\r\nhelloX\r\n\
+            0\r\n\r\n";
+        let err = parse_response(src).unwrap_err();
+        assert!(err.0.contains("missing CRLF after chunk data"), "{}", err.0);
+
+        // Invalid hex in chunk size
+        let src = b"HTTP/1.1 200 OK\r\n\
+            Transfer-Encoding: chunked\r\n\r\n\
+            zz\r\nhello\r\n\
+            0\r\n\r\n";
+        let err = parse_response(src).unwrap_err();
+        assert!(err.0.contains("invalid chunk size"), "{}", err.0);
+
+        // Missing terminating chunk
+        let src = b"HTTP/1.1 200 OK\r\n\
+            Transfer-Encoding: chunked\r\n\r\n\
+            5\r\nhello\r\n";
+        let err = parse_response(src).unwrap_err();
+        assert!(err.0.contains("missing CRLF after chunk size"), "{}", err.0);
+    }
 }
