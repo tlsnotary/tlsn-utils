@@ -148,6 +148,7 @@ async fn handle_ws(id: ConnectionId, ws: WebSocketStream<TcpStream>) -> Result<(
 #[instrument(level = "debug", skip(ws), err)]
 async fn handle_tcp(addr: String, ws: WebSocketStream<TcpStream>) -> Result<()> {
     let mut tcp = TcpStream::connect(addr).await?;
+    tcp.set_nodelay(true)?;
 
     let (mut sink, mut stream) = ws.split();
     let (mut rx, mut tx) = tcp.split();
