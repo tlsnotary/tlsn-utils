@@ -8,15 +8,12 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
 };
-use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream,
-    connect_async,
-    tungstenite::Message,
-};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 use websocket_relay::Relay;
 
 /// Connect to a WebSocket server with retries.
-/// Retries on connection refused errors, useful for waiting until server is ready.
+/// Retries on connection refused errors, useful for waiting until server is
+/// ready.
 async fn connect_with_retry(url: &str) -> WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>> {
     for _ in 0..50 {
         match connect_async(url).await {
