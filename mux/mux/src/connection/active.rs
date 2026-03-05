@@ -393,7 +393,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
     pub(super) fn new_stream(&mut self, user_id: &[u8]) -> Result<Stream> {
         let stream = self.registry.lock().new_stream(user_id)?;
         // Drain new receivers immediately so they're available before poll
-        while let Ok(Some(receiver)) = self.new_receiver_rx.try_next() {
+        while let Ok(receiver) = self.new_receiver_rx.try_recv() {
             self.stream_receivers.push(receiver);
         }
         Ok(stream)
