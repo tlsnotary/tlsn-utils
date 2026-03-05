@@ -4,7 +4,6 @@ members = [
     "spansy",
     "mux/mux",
     "mux/test-harness",
-    "utils",
     "websocket-relay",
     "futures-limit",
     "futures-plex",
@@ -19,8 +18,6 @@ resolver = "3"
 futures-plex = { path = "futures-plex" }
 serio = { path = "serio" }
 spansy = { path = "spansy" }
-tlsn-utils = { path = "utils" }
-tlsn-utils-aio = { path = "utils-aio" }
 tlsn-mux = { path = "mux/mux" }
 rangeset = { path = "rangeset" }
 
