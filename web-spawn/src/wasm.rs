@@ -9,7 +9,7 @@ mod worker;
 pub use spawner::Spawner;
 pub use thread::Builder;
 
-use std::{any::Any, sync::OnceLock};
+use std::{any::Any, io, num::NonZero, sync::OnceLock};
 
 use crossbeam_channel::Receiver;
 use futures::channel::mpsc::UnboundedSender;
@@ -29,6 +29,30 @@ pub(crate) static SENDER: OnceLock<UnboundedSender<(Builder, Box<Closure>)>> = O
 extern "C" {
     #[wasm_bindgen(js_name = startSpawnerWorker)]
     fn start_spawner_worker(module: JsValue, memory: JsValue, spawner: Spawner) -> Promise;
+}
+
+/// Returns an estimate of the default amount of parallelism a program should
+/// use.
+///
+/// Reads `navigator.hardwareConcurrency` from the current global scope.
+pub fn available_parallelism() -> io::Result<NonZero<usize>> {
+    let global = js_sys::global();
+    let concurrency = if let Some(scope) = global.dyn_ref::<web_sys::WorkerGlobalScope>() {
+        scope.navigator().hardware_concurrency()
+    } else if let Some(window) = global.dyn_ref::<web_sys::Window>() {
+        window.navigator().hardware_concurrency()
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "`navigator` is not available in the current global scope",
+        ));
+    };
+    NonZero::new(concurrency as usize).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "`navigator.hardwareConcurrency` is zero",
+        )
+    })
 }
 
 /// Starts the thread spawner on a dedicated worker thread.

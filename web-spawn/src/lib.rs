@@ -7,4 +7,4 @@ mod wasm;
 pub use wasm::*;
 
 #[cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))]
-pub use std::thread::{Builder, JoinHandle, spawn};
+pub use std::thread::{Builder, JoinHandle, available_parallelism, spawn};
