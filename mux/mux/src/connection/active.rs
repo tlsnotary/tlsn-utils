@@ -11,6 +11,7 @@ use futures::{
     channel::mpsc,
     prelude::*,
     stream::{Fuse, SelectAll},
+    task::AtomicWaker,
 };
 use nohash_hasher::IntMap;
 use parking_lot::Mutex;
@@ -39,7 +40,10 @@ pub(crate) struct StreamRegistry {
     id: Id,
     streams: IntMap<StreamId, Arc<Mutex<stream::Shared>>>,
     new_receiver_tx: mpsc::UnboundedSender<TaggedStream<StreamId, mpsc::Receiver<StreamCommand>>>,
-    waker: Option<Waker>,
+    /// Waker for the task driving `Active::poll`. Fired by streams when
+    /// they push a command, and by the registry when a new stream is
+    /// created.
+    driver_waker: Arc<AtomicWaker>,
     config: Arc<Config>,
     rtt: rtt::Rtt,
     accumulated_max_stream_windows: Arc<Mutex<usize>>,
@@ -54,12 +58,13 @@ impl StreamRegistry {
         new_receiver_tx: mpsc::UnboundedSender<
             TaggedStream<StreamId, mpsc::Receiver<StreamCommand>>,
         >,
+        driver_waker: Arc<AtomicWaker>,
     ) -> Self {
         Self {
             id,
             streams: IntMap::default(),
             new_receiver_tx,
-            waker: None,
+            driver_waker,
             config,
             rtt,
             accumulated_max_stream_windows,
@@ -79,6 +84,7 @@ impl StreamRegistry {
         if let Some(existing) = self.streams.get(&stream_id) {
             log::trace!("{}/{}: merging with existing stream", self.id, stream_id);
             let stream = self.make_stream_with_shared(stream_id, user_id, existing.clone());
+            self.driver_waker.wake();
             return Ok(stream);
         }
 
@@ -87,9 +93,7 @@ impl StreamRegistry {
 
         log::debug!("{}: new stream {}", self.id, stream);
 
-        if let Some(waker) = self.waker.take() {
-            waker.wake();
-        }
+        self.driver_waker.wake();
 
         Ok(stream)
     }
@@ -107,11 +111,15 @@ impl StreamRegistry {
             .new_receiver_tx
             .unbounded_send(TaggedStream::new(id, receiver));
 
-        if let Some(waker) = self.waker.take() {
-            waker.wake();
-        }
-
-        Stream::with_shared(id, user_id, self.id, self.config.clone(), sender, shared)
+        Stream::with_shared(
+            id,
+            user_id,
+            self.id,
+            self.config.clone(),
+            sender,
+            shared,
+            self.driver_waker.clone(),
+        )
     }
 
     fn make_stream(&mut self, id: StreamId, user_id: UserId) -> Stream {
@@ -128,6 +136,7 @@ impl StreamRegistry {
             sender,
             self.rtt.clone(),
             self.accumulated_max_stream_windows.clone(),
+            self.driver_waker.clone(),
         )
     }
 
@@ -192,6 +201,8 @@ pub(crate) struct Active<T> {
     new_receiver_rx: mpsc::UnboundedReceiver<TaggedStream<StreamId, mpsc::Receiver<StreamCommand>>>,
     no_streams_waker: Option<Waker>,
 
+    driver_waker: Arc<AtomicWaker>,
+
     pending_read_frame: Option<Frame<()>>,
     pending_write_frame: Option<Frame<()>>,
 }
@@ -226,12 +237,14 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         let rtt = rtt::Rtt::new();
         let accumulated_max_stream_windows = Arc::new(Mutex::new(0));
         let (new_receiver_tx, new_receiver_rx) = mpsc::unbounded();
+        let driver_waker = Arc::new(AtomicWaker::new());
         let registry = Arc::new(Mutex::new(StreamRegistry::new(
             id,
             config.clone(),
             rtt,
             accumulated_max_stream_windows,
             new_receiver_tx,
+            driver_waker.clone(),
         )));
         Active {
             id,
@@ -241,6 +254,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             stream_receivers: SelectAll::default(),
             new_receiver_rx,
             no_streams_waker: None,
+            driver_waker,
             pending_read_frame: None,
             pending_write_frame: None,
         }
@@ -304,8 +318,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                 }
             }
 
-            // Store waker in registry for Handle to wake us
-            self.registry.lock().waker = Some(cx.waker().clone());
+            self.driver_waker.register(cx.waker());
 
             if self.socket.poll_ready_unpin(cx).is_ready() {
                 if let Some(frame) = self.registry.lock().rtt.next_ping() {
