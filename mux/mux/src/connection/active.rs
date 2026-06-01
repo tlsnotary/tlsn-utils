@@ -184,8 +184,8 @@ pub(crate) enum StreamCommand {
 pub(crate) enum Action {
     /// Nothing to be done.
     None,
-    /// A ping should be answered.
-    Ping(Frame<Ping>),
+    /// A ping with this nonce should be answered with a pong.
+    Pong(u32),
     /// The connection should be terminated.
     Terminate(Frame<GoAway>),
 }
@@ -203,7 +203,20 @@ pub(crate) struct Active<T> {
 
     driver_waker: Arc<AtomicWaker>,
 
-    pending_read_frame: Option<Frame<()>>,
+    /// Nonce of an inbound ping awaiting a reply, if any. Stored as a bare
+    /// nonce (not a built frame) and coalesced — only the most recent ping
+    /// is remembered — so a peer flooding pings costs O(1) memory. The pong
+    /// is constructed lazily once the socket accepts writes.
+    pending_pong: Option<u32>,
+    /// A termination frame produced on a protocol error, awaiting send.
+    pending_terminate: Option<Frame<()>>,
+    /// The current outbound stream frame awaiting the socket.
+    ///
+    /// The driver keeps reading the socket even while these are set. Coupling
+    /// reads to a pending write deadlocks: when both peers' socket send
+    /// buffers fill and each holds a control reply, each stops reading, so
+    /// neither drains the other's buffer. Always draining the read side
+    /// breaks that cycle.
     pending_write_frame: Option<Frame<()>>,
 }
 
@@ -255,7 +268,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             new_receiver_rx,
             no_streams_waker: None,
             driver_waker,
-            pending_read_frame: None,
+            pending_pong: None,
+            pending_terminate: None,
             pending_write_frame: None,
         }
     }
@@ -270,11 +284,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
     /// Gracefully close the connection to the remote.
     pub(super) fn close(self) -> Closing<T> {
         let wait_for_reply = self.config.close_sync;
-        let pending_frames = self
-            .pending_read_frame
-            .into_iter()
-            .chain(self.pending_write_frame)
-            .collect::<PendingFrames>();
+        let pending_frames = self.take_pending_frames();
         Closing::new(
             self.id,
             self.stream_receivers,
@@ -285,13 +295,25 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         )
     }
 
+    /// Collect any control/data frames not yet flushed to the socket, in
+    /// send-priority order, so a closing connection can drain them.
+    fn take_pending_frames(&self) -> PendingFrames {
+        let pong = self.pending_pong.map(|nonce| {
+            let mut hdr = Header::ping(nonce);
+            hdr.ack();
+            Frame::new(hdr).into()
+        });
+        self.pending_terminate
+            .clone()
+            .into_iter()
+            .chain(pong)
+            .chain(self.pending_write_frame.clone())
+            .collect::<PendingFrames>()
+    }
+
     /// Close the connection without waiting for a reply.
     pub(super) fn close_no_wait(self) -> Closing<T> {
-        let pending_frames = self
-            .pending_read_frame
-            .into_iter()
-            .chain(self.pending_write_frame)
-            .collect::<PendingFrames>();
+        let pending_frames = self.take_pending_frames();
         Closing::new(
             self.id,
             self.stream_receivers,
@@ -326,11 +348,20 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                     continue;
                 }
 
-                if let Some(frame) = self
-                    .pending_read_frame
-                    .take()
-                    .or_else(|| self.pending_write_frame.take())
-                {
+                // Control frames take priority over stream data: termination
+                // first (we are tearing down), then the opportunistic pong,
+                // built lazily from the stored nonce.
+                if let Some(frame) = self.pending_terminate.take() {
+                    self.socket.start_send_unpin(frame)?;
+                    continue;
+                }
+                if let Some(nonce) = self.pending_pong.take() {
+                    let mut hdr = Header::ping(nonce);
+                    hdr.ack();
+                    self.socket.start_send_unpin(Frame::new(hdr).into())?;
+                    continue;
+                }
+                if let Some(frame) = self.pending_write_frame.take() {
                     self.socket.start_send_unpin(frame)?;
                     continue;
                 }
@@ -373,27 +404,29 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                 }
             }
 
-            if self.pending_read_frame.is_none() {
-                match self.socket.poll_next_unpin(cx) {
-                    Poll::Ready(Some(frame)) => {
-                        match self.on_frame(frame?)? {
-                            Action::None => {}
-                            Action::Ping(f) => {
-                                log::trace!("{}/{}: pong", self.id, f.header().stream_id());
-                                self.pending_read_frame.replace(f.into());
-                            }
-                            Action::Terminate(f) => {
-                                log::trace!("{}: sending term", self.id);
-                                self.pending_read_frame.replace(f.into());
-                            }
+            // Always drain the read side, even with frames pending for write.
+            // Gating reads on a pending control reply deadlocks two peers whose
+            // socket send buffers are both full.
+            match self.socket.poll_next_unpin(cx) {
+                Poll::Ready(Some(frame)) => {
+                    match self.on_frame(frame?)? {
+                        Action::None => {}
+                        Action::Pong(nonce) => {
+                            log::trace!("{}: pong {}", self.id, nonce);
+                            // Coalesce: only the most recent ping is answered.
+                            self.pending_pong = Some(nonce);
                         }
-                        continue;
+                        Action::Terminate(f) => {
+                            log::trace!("{}: sending term", self.id);
+                            self.pending_terminate = Some(f.into());
+                        }
                     }
-                    Poll::Ready(None) => {
-                        return Poll::Ready(Err(ConnectionError::Closed));
-                    }
-                    Poll::Pending => {}
+                    continue;
                 }
+                Poll::Ready(None) => {
+                    return Poll::Ready(Err(ConnectionError::Closed));
+                }
+                Poll::Pending => {}
             }
 
             return Poll::Pending;
@@ -599,9 +632,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             return registry.rtt.handle_pong(frame.nonce());
         }
         if stream_id == CONNECTION_ID || registry.streams.contains_key(&stream_id) {
-            let mut hdr = Header::ping(frame.header().nonce());
-            hdr.ack();
-            return Action::Ping(Frame::new(hdr));
+            return Action::Pong(frame.header().nonce());
         }
         log::debug!(
             "{}/{}: ping for unknown stream, possibly dropped earlier",
