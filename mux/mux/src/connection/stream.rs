@@ -22,6 +22,7 @@ use futures::{
     channel::mpsc,
     io::{AsyncRead, AsyncWrite},
     ready,
+    task::AtomicWaker,
 };
 use parking_lot::{Mutex, MutexGuard};
 use std::{
@@ -70,6 +71,9 @@ pub struct Stream {
     config: Arc<Config>,
     sender: mpsc::Sender<StreamCommand>,
     shared: Arc<Mutex<Shared>>,
+    /// Waker for the connection's poll driver. Fired after every push
+    /// into `sender`.
+    driver_waker: Arc<AtomicWaker>,
 }
 
 impl fmt::Debug for Stream {
@@ -90,6 +94,7 @@ impl fmt::Display for Stream {
 
 impl Stream {
     /// Create a new stream.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         stream_id: StreamId,
         user_id: UserId,
@@ -98,6 +103,7 @@ impl Stream {
         sender: mpsc::Sender<StreamCommand>,
         rtt: rtt::Rtt,
         accumulated_max_stream_windows: Arc<Mutex<usize>>,
+        driver_waker: Arc<AtomicWaker>,
     ) -> Self {
         Self {
             stream_id,
@@ -113,6 +119,7 @@ impl Stream {
                 rtt,
                 config,
             ))),
+            driver_waker,
         }
     }
 
@@ -125,6 +132,7 @@ impl Stream {
         config: Arc<Config>,
         sender: mpsc::Sender<StreamCommand>,
         shared: Arc<Mutex<Shared>>,
+        driver_waker: Arc<AtomicWaker>,
     ) -> Self {
         Self {
             stream_id,
@@ -133,6 +141,7 @@ impl Stream {
             config,
             sender,
             shared,
+            driver_waker,
         }
     }
 
@@ -191,6 +200,7 @@ impl Stream {
         self.sender
             .start_send(cmd)
             .map_err(|_| self.write_zero_err())?;
+        self.driver_waker.wake();
 
         Poll::Ready(Ok(()))
     }
@@ -293,6 +303,7 @@ impl AsyncWrite for Stream {
         self.sender
             .start_send(cmd)
             .map_err(|_| self.write_zero_err())?;
+        self.driver_waker.wake();
         Poll::Ready(Ok(n))
     }
 
@@ -320,9 +331,16 @@ impl AsyncWrite for Stream {
         self.sender
             .start_send(cmd)
             .map_err(|_| self.write_zero_err())?;
+        self.driver_waker.wake();
         self.shared()
             .update_state(self.conn, self.stream_id, State::SendClosed);
         Poll::Ready(Ok(()))
+    }
+}
+
+impl Drop for Stream {
+    fn drop(&mut self) {
+        self.driver_waker.wake();
     }
 }
 
