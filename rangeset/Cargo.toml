@@ -18,7 +18,7 @@ serde = ["dep:serde"]
 serde = { workspace = true, optional = true, features = ["derive"] }
 
 [dev-dependencies]
-criterion = { version = "0.5" }
+criterion = { workspace = true }
 
 [[bench]]
 name = "range"

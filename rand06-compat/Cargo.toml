@@ -5,17 +5,17 @@ edition = "2024"
 authors = ["TLSNotary Contributors"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tlsnotary/tlsn-utils"
-description = "Compatibility wrapper between `rand_core` 0.6 and 0.9"
+description = "Compatibility wrapper between `rand_core` 0.6 and 0.10"
 keywords = ["rand_core", "rand", "compat", "compatibility"]
 
 [features]
 default = ["std"]
-std = ["rand_core_06/std", "rand_core/std"]
+std = ["rand_core_06/std"]
 
 [dependencies]
-rand_core = { version = "0.9", default-features = false }
-rand_core_06 = { package = "rand_core", version = "0.6", default-features = false }
+rand_core = { workspace = true }
+rand_core_06 = { workspace = true }
 
 [dev-dependencies]
-rand_core = { version = "0.9", default-features = true }
-rand = { version = "0.9" }
+rand_core = { workspace = true }
+rand = { workspace = true }
