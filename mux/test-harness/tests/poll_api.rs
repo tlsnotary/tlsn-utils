@@ -241,16 +241,25 @@ fn prop_max_streams() {
         // But we need a fresh connection to test this
         let (mut _server2, mut client2) = connected_peers(cfg.clone(), cfg, None).await?;
 
-        // Open max_streams on client2
+        // Open max_streams on client2. The streams must be kept alive: dropping
+        // a stream frees its slot immediately (see issue #108), so the limit is
+        // only reached while the streams are held.
+        let mut client2_streams = Vec::with_capacity(max_streams);
         for i in 0..max_streams {
             let id = format!("stream-{}", i);
-            client2.new_stream(id.as_bytes())?;
+            client2_streams.push(client2.new_stream(id.as_bytes())?);
         }
 
         // Try to open one more stream - should fail
         let extra_id = format!("stream-{}", max_streams);
         let open_result = client2.new_stream(extra_id.as_bytes());
-        Ok(matches!(open_result, Err(ConnectionError::TooManyStreams)))
+        let too_many = matches!(open_result, Err(ConnectionError::TooManyStreams));
+
+        // Dropping a held stream must free a slot so a new one can be opened.
+        drop(client2_streams.pop());
+        let after_drop_ok = client2.new_stream(extra_id.as_bytes()).is_ok();
+
+        Ok(too_many && after_drop_ok)
     }
 
     fn prop(n: usize) -> Result<bool, ConnectionError> {
@@ -464,6 +473,36 @@ fn write_deadlock() {
             )
             .unwrap(),
     );
+}
+
+#[test]
+fn dropping_stream_frees_slot_immediately() {
+    // Regression test for https://github.com/tlsnotary/tlsn-utils/issues/108:
+    // dropping a stream must decrement the stream count immediately, without
+    // waiting for the connection driver's poll loop to observe the closed
+    // channel. Otherwise rapidly opening/closing streams can spuriously hit the
+    // configured limit.
+    let _ = env_logger::try_init();
+
+    let (endpoint, _remote) = futures_ringbuf::Endpoint::pair(256, 256);
+    let mut cfg = Config::default();
+    cfg.set_max_num_streams(1);
+    let mut conn = Connection::new(endpoint, cfg);
+
+    let stream = conn.new_stream(b"one").unwrap();
+
+    // The single slot is taken.
+    assert!(matches!(
+        conn.new_stream(b"two"),
+        Err(ConnectionError::TooManyStreams)
+    ));
+
+    // Drop the stream. Crucially, the connection driver is never polled here.
+    drop(stream);
+
+    // The slot must be available again immediately.
+    conn.new_stream(b"two")
+        .expect("dropping a stream should free its slot immediately");
 }
 
 #[test]

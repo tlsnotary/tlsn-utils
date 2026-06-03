@@ -18,7 +18,7 @@ use parking_lot::Mutex;
 use std::{
     collections::VecDeque,
     fmt,
-    sync::Arc,
+    sync::{Arc, Weak},
     task::{Context, Poll, Waker},
 };
 
@@ -47,6 +47,13 @@ pub(crate) struct StreamRegistry {
     config: Arc<Config>,
     rtt: rtt::Rtt,
     accumulated_max_stream_windows: Arc<Mutex<usize>>,
+    /// Close frames stashed by [`Stream::drop`], keyed by stream ID. The driver
+    /// sends each one once the stream's already-queued frames have drained,
+    /// preserving ordering.
+    dropped_frames: IntMap<StreamId, Frame<()>>,
+    /// Weak self-reference handed to each [`Stream`] so it can free its slot
+    /// immediately on drop.
+    self_weak: Weak<Mutex<StreamRegistry>>,
 }
 
 impl StreamRegistry {
@@ -68,6 +75,8 @@ impl StreamRegistry {
             config,
             rtt,
             accumulated_max_stream_windows,
+            dropped_frames: IntMap::default(),
+            self_weak: Weak::new(),
         }
     }
 
@@ -119,6 +128,7 @@ impl StreamRegistry {
             sender,
             shared,
             self.driver_waker.clone(),
+            self.self_weak.clone(),
         )
     }
 
@@ -137,6 +147,7 @@ impl StreamRegistry {
             self.rtt.clone(),
             self.accumulated_max_stream_windows.clone(),
             self.driver_waker.clone(),
+            self.self_weak.clone(),
         )
     }
 
@@ -149,6 +160,53 @@ impl StreamRegistry {
             self.rtt.clone(),
             self.config.clone(),
         )))
+    }
+
+    /// Called from [`Stream::drop`] to release a stream's slot.
+    ///
+    /// The slot is freed immediately so it can be reused without waiting for
+    /// the connection driver to observe the closed channel. The appropriate
+    /// close frame (if any) is stashed in `dropped_frames` and sent by the
+    /// driver once the stream's already-queued frames have been drained,
+    /// preserving ordering with respect to the stream's data.
+    pub(super) fn on_stream_dropped(&mut self, stream_id: StreamId) {
+        let Some(s) = self.streams.remove(&stream_id) else {
+            // Already removed (e.g. connection teardown or a merged duplicate).
+            return;
+        };
+
+        log::trace!("{}: removing dropped stream {}", self.id, stream_id);
+        let frame: Option<Frame<()>> = {
+            let mut shared = s.lock();
+            let frame = match shared.update_state(self.id, stream_id, State::Closed) {
+                State::Open => {
+                    let mut header = Header::data(stream_id, 0);
+                    header.rst();
+                    Some(Frame::new(header))
+                }
+                State::RecvClosed => {
+                    let mut header = Header::data(stream_id, 0);
+                    header.fin();
+                    Some(Frame::new(header))
+                }
+                State::SendClosed => None,
+                State::Closed => None,
+            };
+            if let Some(w) = shared.reader.take() {
+                w.wake()
+            }
+            if let Some(w) = shared.writer.take() {
+                w.wake()
+            }
+            frame.map(Into::into)
+        };
+
+        if let Some(frame) = frame {
+            // The frame is *not* sent now: it is emitted by the driver only
+            // after the stream's channel has drained (the `None` signal),
+            // which the dropped `Sender` schedules a wake-up for.
+            self.dropped_frames.insert(stream_id, frame);
+        }
     }
 }
 
@@ -259,6 +317,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             new_receiver_tx,
             driver_waker.clone(),
         )));
+        // Hand each stream a weak self-reference so it can free its slot on drop.
+        registry.lock().self_weak = Arc::downgrade(&registry);
         Active {
             id,
             config,
@@ -391,10 +451,13 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                         continue;
                     }
                     Poll::Ready(Some((id, None))) => {
-                        if let Some(frame) = self.on_drop_stream(id) {
+                        // The stream was dropped. Its slot was already freed
+                        // eagerly in `Stream::drop`; now that its queued frames
+                        // have drained, emit the stashed close frame (if any).
+                        if let Some(frame) = self.registry.lock().dropped_frames.remove(&id) {
                             log::trace!("{}/{}: sending: {}", self.id, id, frame.header());
                             self.pending_write_frame.replace(frame);
-                        };
+                        }
                         continue;
                     }
                     Poll::Ready(None) => {
@@ -443,40 +506,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             self.stream_receivers.push(receiver);
         }
         Ok(stream)
-    }
-
-    fn on_drop_stream(&mut self, stream_id: StreamId) -> Option<Frame<()>> {
-        let Some(s) = self.registry.lock().streams.remove(&stream_id) else {
-            log::warn!("{}: stream {} not found on drop", self.id, stream_id);
-            return None;
-        };
-
-        log::trace!("{}: removing dropped stream {}", self.id, stream_id);
-        let frame = {
-            let mut shared = s.lock();
-            let frame = match shared.update_state(self.id, stream_id, State::Closed) {
-                State::Open => {
-                    let mut header = Header::data(stream_id, 0);
-                    header.rst();
-                    Some(Frame::new(header))
-                }
-                State::RecvClosed => {
-                    let mut header = Header::data(stream_id, 0);
-                    header.fin();
-                    Some(Frame::new(header))
-                }
-                State::SendClosed => None,
-                State::Closed => None,
-            };
-            if let Some(w) = shared.reader.take() {
-                w.wake()
-            }
-            if let Some(w) = shared.writer.take() {
-                w.wake()
-            }
-            frame
-        };
-        frame.map(Into::into)
     }
 
     fn on_frame(&mut self, frame: Frame<()>) -> Result<Action> {

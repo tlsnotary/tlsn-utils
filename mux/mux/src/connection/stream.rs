@@ -13,7 +13,7 @@
 use crate::{
     Config, DEFAULT_CREDIT,
     chunks::Chunks,
-    connection::{self, StreamCommand, UserId, rtt, rtt::Rtt},
+    connection::{self, StreamCommand, UserId, active::StreamRegistry, rtt, rtt::Rtt},
     frame::{Frame, header::StreamId},
 };
 use flow_control::FlowController;
@@ -28,7 +28,7 @@ use parking_lot::{Mutex, MutexGuard};
 use std::{
     fmt, io,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Weak},
     task::{Context, Poll, Waker},
 };
 
@@ -74,6 +74,9 @@ pub struct Stream {
     /// Waker for the connection's poll driver. Fired after every push
     /// into `sender`.
     driver_waker: Arc<AtomicWaker>,
+    /// Weak reference to the owning registry, used to free this stream's slot
+    /// immediately when the stream is dropped.
+    registry: Weak<Mutex<StreamRegistry>>,
 }
 
 impl fmt::Debug for Stream {
@@ -104,6 +107,7 @@ impl Stream {
         rtt: rtt::Rtt,
         accumulated_max_stream_windows: Arc<Mutex<usize>>,
         driver_waker: Arc<AtomicWaker>,
+        registry: Weak<Mutex<StreamRegistry>>,
     ) -> Self {
         Self {
             stream_id,
@@ -120,11 +124,13 @@ impl Stream {
                 config,
             ))),
             driver_waker,
+            registry,
         }
     }
 
     /// Create a stream with existing shared state (for merging with implicit
     /// stream).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn with_shared(
         stream_id: StreamId,
         user_id: UserId,
@@ -133,6 +139,7 @@ impl Stream {
         sender: mpsc::Sender<StreamCommand>,
         shared: Arc<Mutex<Shared>>,
         driver_waker: Arc<AtomicWaker>,
+        registry: Weak<Mutex<StreamRegistry>>,
     ) -> Self {
         Self {
             stream_id,
@@ -142,6 +149,7 @@ impl Stream {
             sender,
             shared,
             driver_waker,
+            registry,
         }
     }
 
@@ -203,6 +211,21 @@ impl Stream {
         self.driver_waker.wake();
 
         Poll::Ready(Ok(()))
+    }
+}
+
+impl Drop for Stream {
+    fn drop(&mut self) {
+        // Free this stream's slot immediately so a new stream can be opened
+        // without waiting for the connection driver to observe the closed
+        // channel. The driver still emits the close frame once this stream's
+        // queued frames have drained (see `StreamRegistry::on_stream_dropped`).
+        if let Some(registry) = self.registry.upgrade() {
+            registry.lock().on_stream_dropped(self.stream_id);
+        }
+        // Wake the driver so it promptly observes the closed channel and sends
+        // the stashed close frame.
+        self.driver_waker.wake();
     }
 }
 
@@ -335,12 +358,6 @@ impl AsyncWrite for Stream {
         self.shared()
             .update_state(self.conn, self.stream_id, State::SendClosed);
         Poll::Ready(Ok(()))
-    }
-}
-
-impl Drop for Stream {
-    fn drop(&mut self) {
-        self.driver_waker.wake();
     }
 }
 
