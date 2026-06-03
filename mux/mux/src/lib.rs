@@ -142,8 +142,12 @@ impl Config {
     }
 
     /// Set the max. number of streams per connection.
+    ///
+    /// Clamped to at least 1: a stream becomes active on the wire only after
+    /// claiming one of these slots, so a limit of 0 would make every write
+    /// block forever.
     pub fn set_max_num_streams(&mut self, n: usize) -> &mut Self {
-        self.max_num_streams = n;
+        self.max_num_streams = n.max(1);
 
         assert!(
             self.max_connection_receive_window.unwrap_or(usize::MAX)

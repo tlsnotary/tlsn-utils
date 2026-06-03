@@ -38,7 +38,20 @@ use super::{
 /// poll loop and Handle for concurrent stream creation.
 pub(crate) struct StreamRegistry {
     id: Id,
+    /// Streams that are active on the wire and therefore eligible to buffer
+    /// peer data. This is the bounded, peer-relevant resource: its size plus
+    /// the number of owed-but-unflushed close frames must stay at or below
+    /// `config.max_num_streams`.
     streams: IntMap<StreamId, Arc<Mutex<stream::Shared>>>,
+    /// Local handles that have not yet become active on the wire. These never
+    /// buffer peer data and consume no slot until promoted into `streams`.
+    inactive: IntMap<StreamId, Arc<Mutex<stream::Shared>>>,
+    /// Close frames (RST/FIN) owed to the peer by streams that were dropped
+    /// after activation, staged until flushed to the socket. These are never
+    /// dropped and count toward the slot limit.
+    owed_close: IntMap<StreamId, Frame<()>>,
+    /// Wakers of writers blocked waiting for a slot to free.
+    slot_wakers: Vec<Waker>,
     new_receiver_tx: mpsc::UnboundedSender<TaggedStream<StreamId, mpsc::Receiver<StreamCommand>>>,
     /// Waker for the task driving `Active::poll`. Fired by streams when
     /// they push a command, and by the registry when a new stream is
@@ -63,6 +76,9 @@ impl StreamRegistry {
         Self {
             id,
             streams: IntMap::default(),
+            inactive: IntMap::default(),
+            owed_close: IntMap::default(),
+            slot_wakers: Vec::new(),
             new_receiver_tx,
             driver_waker,
             config,
@@ -71,37 +87,115 @@ impl StreamRegistry {
         }
     }
 
-    fn new_stream(&mut self, user_id: &[u8]) -> Result<Stream> {
+    /// The number of slots currently occupied: streams active on the wire
+    /// plus close frames owed to the peer but not yet flushed.
+    fn active_slots(&self) -> usize {
+        self.streams.len() + self.owed_close.len()
+    }
+
+    /// Register a waker to be notified when a slot becomes available.
+    pub(crate) fn register_slot_waker(&mut self, waker: &Waker) {
+        if !self.slot_wakers.iter().any(|w| w.will_wake(waker)) {
+            self.slot_wakers.push(waker.clone());
+        }
+    }
+
+    /// Wake all writers blocked waiting for a slot to free.
+    fn wake_slot_waiters(&mut self) {
+        for waker in self.slot_wakers.drain(..) {
+            waker.wake();
+        }
+    }
+
+    /// Handle a peer reset of `stream_id`: transition it to closed and wake its
+    /// wakers. If no local handle still references the stream (only the map
+    /// holds its `Shared`), remove it, freeing the slot and waking any blocked
+    /// writer so peer churn cannot starve local activations.
+    fn handle_peer_reset(&mut self, id: Id, stream_id: StreamId) {
+        let Some(s) = self.streams.get(&stream_id) else {
+            return;
+        };
+        {
+            let mut shared = s.lock();
+            shared.update_state(id, stream_id, State::Closed);
+            if let Some(w) = shared.reader.take() {
+                w.wake()
+            }
+            if let Some(w) = shared.writer.take() {
+                w.wake()
+            }
+        }
+        if Arc::strong_count(s) == 1 {
+            self.streams.remove(&stream_id);
+            self.wake_slot_waiters();
+        }
+    }
+
+    /// If the peer has already created an active entry for `stream_id`, return
+    /// the canonical [`Shared`] so a local handle can adopt it instead of
+    /// claiming a new slot. Removes any duplicate inactive entry.
+    pub(crate) fn adopt_active(
+        &mut self,
+        stream_id: StreamId,
+    ) -> Option<Arc<Mutex<stream::Shared>>> {
+        let shared = self.streams.get(&stream_id)?.clone();
+        self.inactive.remove(&stream_id);
+        Some(shared)
+    }
+
+    /// Attempt to claim a slot for `shared`, promoting it from the inactive
+    /// set into the active `streams` map. Returns `false` (claiming nothing)
+    /// when no slot is available.
+    pub(crate) fn try_claim_slot(
+        &mut self,
+        stream_id: StreamId,
+        shared: &Arc<Mutex<stream::Shared>>,
+    ) -> bool {
+        if self.active_slots() >= self.config.max_num_streams {
+            return false;
+        }
+        self.inactive.remove(&stream_id);
+        self.streams.insert(stream_id, shared.clone());
+        true
+    }
+
+    fn new_stream(registry: &Arc<Mutex<StreamRegistry>>, user_id: &[u8]) -> Result<Stream> {
+        let mut this = registry.lock();
         let user_id = UserId::new(user_id)?;
         let stream_id = StreamId::new(user_id.as_bytes());
 
-        if self.streams.len() >= self.config.max_num_streams {
-            log::error!("{}: maximum number of streams reached", self.id);
-            return Err(ConnectionError::TooManyStreams);
-        }
+        // Adopt the canonical `Shared` if one already exists, otherwise create
+        // a fresh inactive one. The handle never inserts into `streams`: a
+        // stream becomes slot-eligible only when it first writes.
+        let shared = if let Some(existing) = this.streams.get(&stream_id) {
+            log::trace!("{}/{}: merging with existing stream", this.id, stream_id);
+            existing.clone()
+        } else if let Some(existing) = this.inactive.get(&stream_id) {
+            log::trace!(
+                "{}/{}: merging with existing inactive stream",
+                this.id,
+                stream_id
+            );
+            existing.clone()
+        } else {
+            let shared = this.make_shared();
+            this.inactive.insert(stream_id, shared.clone());
+            shared
+        };
 
-        // Check if stream already exists (created implicitly by remote)
-        if let Some(existing) = self.streams.get(&stream_id) {
-            log::trace!("{}/{}: merging with existing stream", self.id, stream_id);
-            let stream = self.make_stream_with_shared(stream_id, user_id, existing.clone());
-            self.driver_waker.wake();
-            return Ok(stream);
-        }
+        let stream = this.make_stream_with_shared(registry, stream_id, user_id, shared);
 
-        let stream = self.make_stream(stream_id, user_id);
-        self.streams.insert(stream_id, stream.clone_shared());
+        log::debug!("{}: new stream {}", this.id, stream);
 
-        log::debug!("{}: new stream {}", self.id, stream);
-
-        self.driver_waker.wake();
+        this.driver_waker.wake();
 
         Ok(stream)
     }
 
-    /// Create a Stream using existing Shared state (for merging with implicit
-    /// stream).
+    /// Create a Stream using existing Shared state.
     fn make_stream_with_shared(
         &mut self,
+        registry: &Arc<Mutex<StreamRegistry>>,
         id: StreamId,
         user_id: UserId,
         shared: Arc<Mutex<stream::Shared>>,
@@ -118,29 +212,13 @@ impl StreamRegistry {
             self.config.clone(),
             sender,
             shared,
+            registry.clone(),
             self.driver_waker.clone(),
         )
     }
 
-    fn make_stream(&mut self, id: StreamId, user_id: UserId) -> Stream {
-        let (sender, receiver) = mpsc::channel(10);
-        let _ = self
-            .new_receiver_tx
-            .unbounded_send(TaggedStream::new(id, receiver));
-
-        Stream::new(
-            id,
-            user_id,
-            self.id,
-            self.config.clone(),
-            sender,
-            self.rtt.clone(),
-            self.accumulated_max_stream_windows.clone(),
-            self.driver_waker.clone(),
-        )
-    }
-
-    fn make_implicit_stream_shared(&mut self) -> Arc<Mutex<stream::Shared>> {
+    /// Create a fresh inactive `Shared` (not yet active on the wire).
+    fn make_shared(&self) -> Arc<Mutex<stream::Shared>> {
         Arc::new(Mutex::new(stream::Shared::new(
             State::Open,
             crate::DEFAULT_CREDIT,
@@ -149,6 +227,14 @@ impl StreamRegistry {
             self.rtt.clone(),
             self.config.clone(),
         )))
+    }
+
+    /// Create a `Shared` for a stream implicitly created by the peer, marked
+    /// active because inserting it into `streams` claims a slot.
+    fn make_implicit_stream_shared(&mut self) -> Arc<Mutex<stream::Shared>> {
+        let shared = self.make_shared();
+        shared.lock().set_activated();
+        shared
     }
 }
 
@@ -166,7 +252,7 @@ impl Handle {
     ///
     /// The stream ID is computed from the user ID using BLAKE3.
     pub fn new_stream(&self, user_id: &[u8]) -> Result<Stream> {
-        self.registry.lock().new_stream(user_id)
+        StreamRegistry::new_stream(&self.registry, user_id)
     }
 }
 
@@ -282,7 +368,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
     }
 
     /// Gracefully close the connection to the remote.
-    pub(super) fn close(self) -> Closing<T> {
+    pub(super) fn close(mut self) -> Closing<T> {
+        self.prepare_close();
         let wait_for_reply = self.config.close_sync;
         let pending_frames = self.take_pending_frames();
         Closing::new(
@@ -295,6 +382,17 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         )
     }
 
+    /// Prepare to leave the active state: close the stream command receivers so
+    /// any blocked writer observes a closed channel, and wake all writers
+    /// parked on slot availability. Once we leave the active state the driver
+    /// no longer frees slots, so a parked writer would otherwise hang forever.
+    fn prepare_close(&mut self) {
+        for stream in self.stream_receivers.iter_mut() {
+            stream.inner_mut().close();
+        }
+        self.registry.lock().wake_slot_waiters();
+    }
+
     /// Collect any control/data frames not yet flushed to the socket, in
     /// send-priority order, so a closing connection can drain them.
     fn take_pending_frames(&self) -> PendingFrames {
@@ -303,16 +401,26 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             hdr.ack();
             Frame::new(hdr).into()
         });
+        // Owed close frames are never dropped; flush any still staged.
+        let owed_close = self
+            .registry
+            .lock()
+            .owed_close
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
         self.pending_terminate
             .clone()
             .into_iter()
             .chain(pong)
             .chain(self.pending_write_frame.clone())
+            .chain(owed_close)
             .collect::<PendingFrames>()
     }
 
     /// Close the connection without waiting for a reply.
-    pub(super) fn close_no_wait(self) -> Closing<T> {
+    pub(super) fn close_no_wait(mut self) -> Closing<T> {
+        self.prepare_close();
         let pending_frames = self.take_pending_frames();
         Closing::new(
             self.id,
@@ -372,6 +480,24 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                 Poll::Pending => {}
             }
 
+            // Flush an owed close frame if one is staged. Moving it out of
+            // `owed_close` into the outbound queue commits it to being sent and
+            // frees the slot it was holding, so any blocked writer is woken.
+            if self.pending_write_frame.is_none() {
+                let mut registry = self.registry.lock();
+                if let Some(stream_id) = registry.owed_close.keys().next().copied() {
+                    let frame = registry
+                        .owed_close
+                        .remove(&stream_id)
+                        .expect("owed close frame should be present");
+                    registry.wake_slot_waiters();
+                    drop(registry);
+                    log::trace!("{}/{}: sending owed close: {}", self.id, stream_id, frame.header());
+                    self.pending_write_frame.replace(frame);
+                    continue;
+                }
+            }
+
             if self.pending_write_frame.is_none() {
                 match self.stream_receivers.poll_next_unpin(cx) {
                     Poll::Ready(Some((_, Some(StreamCommand::SendFrame(frame))))) => {
@@ -391,10 +517,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                         continue;
                     }
                     Poll::Ready(Some((id, None))) => {
-                        if let Some(frame) = self.on_drop_stream(id) {
-                            log::trace!("{}/{}: sending: {}", self.id, id, frame.header());
-                            self.pending_write_frame.replace(frame);
-                        };
+                        self.on_drop_stream(id);
                         continue;
                     }
                     Poll::Ready(None) => {
@@ -437,7 +560,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
     ///
     /// The stream ID is computed from the user ID using BLAKE3.
     pub(super) fn new_stream(&mut self, user_id: &[u8]) -> Result<Stream> {
-        let stream = self.registry.lock().new_stream(user_id)?;
+        let stream = StreamRegistry::new_stream(&self.registry, user_id)?;
         // Drain new receivers immediately so they're available before poll
         while let Ok(receiver) = self.new_receiver_rx.try_recv() {
             self.stream_receivers.push(receiver);
@@ -445,10 +568,35 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         Ok(stream)
     }
 
-    fn on_drop_stream(&mut self, stream_id: StreamId) -> Option<Frame<()>> {
-        let Some(s) = self.registry.lock().streams.remove(&stream_id) else {
-            log::warn!("{}: stream {} not found on drop", self.id, stream_id);
-            return None;
+    fn on_drop_stream(&mut self, stream_id: StreamId) {
+        let mut registry = self.registry.lock();
+
+        // Multiple handles may share one `Shared` (a merged user id). Only the
+        // last handle drop reaps the stream; while a sibling handle is alive
+        // (`strong_count > 1`, i.e. more than just the map's reference) the
+        // stream stays active and owes nothing yet.
+        if registry
+            .streams
+            .get(&stream_id)
+            .is_some_and(|s| Arc::strong_count(s) > 1)
+        {
+            return;
+        }
+        if registry
+            .inactive
+            .get(&stream_id)
+            .is_some_and(|s| Arc::strong_count(s) > 1)
+        {
+            return;
+        }
+
+        let Some(s) = registry.streams.remove(&stream_id) else {
+            // A never-activated stream lives only in the inactive set; dropping
+            // it owes the peer nothing and frees no slot.
+            if registry.inactive.remove(&stream_id).is_none() {
+                log::warn!("{}: stream {} not found on drop", self.id, stream_id);
+            }
+            return;
         };
 
         log::trace!("{}: removing dropped stream {}", self.id, stream_id);
@@ -476,7 +624,18 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             }
             frame
         };
-        frame.map(Into::into)
+
+        // The per-stream buffer/window is freed now (the map's `Arc` is gone).
+        // The slot, however, is held until the owed close frame is flushed: it
+        // is staged in `owed_close` (counting toward the limit) and released
+        // once the driver moves it into the outbound queue. A stream with no
+        // owed frame frees its slot immediately.
+        match frame {
+            Some(frame) => {
+                registry.owed_close.insert(stream_id, frame.into());
+            }
+            None => registry.wake_slot_waiters(),
+        }
     }
 
     fn on_frame(&mut self, frame: Frame<()>) -> Result<Action> {
@@ -496,16 +655,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         let mut registry = self.registry.lock();
 
         if frame.header().flags().contains(header::RST) {
-            if let Some(s) = registry.streams.get_mut(&stream_id) {
-                let mut shared = s.lock();
-                shared.update_state(self.id, stream_id, State::Closed);
-                if let Some(w) = shared.reader.take() {
-                    w.wake()
-                }
-                if let Some(w) = shared.writer.take() {
-                    w.wake()
-                }
-            }
+            registry.handle_peer_reset(self.id, stream_id);
             return Action::None;
         }
 
@@ -518,24 +668,34 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         }
 
         // Implicit stream creation: if we receive data for an unknown stream,
-        // create it automatically (the remote opened this stream)
+        // promote a local inactive handle or create it automatically (the
+        // remote opened this stream). Either way it now claims a slot.
         if !registry.streams.contains_key(&stream_id) {
             if stream_id.is_session() {
                 log::error!("{}: data frame for session stream ID 0", self.id);
                 return Action::Terminate(Frame::protocol_error());
             }
 
+            // Only streams active on the wire buffer peer data, so the peer's
+            // buffering demand is bounded by `streams.len()`, not by close
+            // frames we still owe (those hold no receive buffer).
             if registry.streams.len() >= self.config.max_num_streams {
                 log::error!("{}: maximum number of streams reached", self.id);
                 return Action::Terminate(Frame::internal_error());
             }
 
-            log::trace!(
-                "{}/{}: creating implicit stream from remote",
-                self.id,
-                stream_id
-            );
-            let shared = registry.make_implicit_stream_shared();
+            let shared = if let Some(shared) = registry.inactive.remove(&stream_id) {
+                log::trace!("{}/{}: promoting local inactive stream", self.id, stream_id);
+                shared.lock().set_activated();
+                shared
+            } else {
+                log::trace!(
+                    "{}/{}: creating implicit stream from remote",
+                    self.id,
+                    stream_id
+                );
+                registry.make_implicit_stream_shared()
+            };
             registry.streams.insert(stream_id, shared);
         }
 
@@ -567,16 +727,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         let mut registry = self.registry.lock();
 
         if frame.header().flags().contains(header::RST) {
-            if let Some(s) = registry.streams.get_mut(&stream_id) {
-                let mut shared = s.lock();
-                shared.update_state(self.id, stream_id, State::Closed);
-                if let Some(w) = shared.reader.take() {
-                    w.wake()
-                }
-                if let Some(w) = shared.writer.take() {
-                    w.wake()
-                }
-            }
+            registry.handle_peer_reset(self.id, stream_id);
             return Action::None;
         }
 
@@ -594,17 +745,25 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                 return Action::None; // Ignore window updates for session
             }
 
+            // Only `streams` entries buffer/grow windows, so gate the peer on
+            // `streams.len()`, not on owed close frames.
             if registry.streams.len() >= self.config.max_num_streams {
                 log::error!("{}: maximum number of streams reached", self.id);
                 return Action::Terminate(Frame::internal_error());
             }
 
-            log::trace!(
-                "{}/{}: creating implicit stream from remote window update",
-                self.id,
-                stream_id
-            );
-            let shared = registry.make_implicit_stream_shared();
+            let shared = if let Some(shared) = registry.inactive.remove(&stream_id) {
+                log::trace!("{}/{}: promoting local inactive stream", self.id, stream_id);
+                shared.lock().set_activated();
+                shared
+            } else {
+                log::trace!(
+                    "{}/{}: creating implicit stream from remote window update",
+                    self.id,
+                    stream_id
+                );
+                registry.make_implicit_stream_shared()
+            };
             registry.streams.insert(stream_id, shared);
         }
 
@@ -647,7 +806,8 @@ impl<T> Active<T> {
     /// Close and drop all `Stream`s and wake any pending `Waker`s.
     pub(super) fn drop_all_streams(&mut self) {
         let mut registry = self.registry.lock();
-        for (id, s) in registry.streams.drain() {
+        let drained: Vec<_> = registry.streams.drain().collect();
+        for (id, s) in drained {
             let mut shared = s.lock();
             shared.update_state(self.id, id, State::Closed);
             if let Some(w) = shared.reader.take() {
@@ -657,5 +817,6 @@ impl<T> Active<T> {
                 w.wake()
             }
         }
+        registry.wake_slot_waiters();
     }
 }
