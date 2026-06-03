@@ -1,7 +1,8 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(feature = "std"), no_std)]
 
-/// Compatibility extension trait for RNGs implementing `rand_core` `0.10` `TryRng` trait.
+/// Compatibility extension trait for RNGs implementing `rand_core` `0.10`
+/// `TryRng` trait.
 pub trait Rand0_6CompatExt {
     /// Wraps `self` in a compatibility wrapper that implements `0.6` traits.
     fn compat(self) -> Rand0_6CompatWrapper<Self>
@@ -89,11 +90,8 @@ where
     }
 }
 
-impl<R> rand_core_06::CryptoRng for Rand0_6CompatWrapper<R>
-where
-    R: rand_core::TryCryptoRng + ?Sized,
-{
-}
+impl<R> rand_core_06::CryptoRng for Rand0_6CompatWrapper<R> where R: rand_core::TryCryptoRng + ?Sized
+{}
 
 #[cfg(test)]
 mod tests {
