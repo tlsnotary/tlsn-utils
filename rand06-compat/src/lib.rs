@@ -89,8 +89,11 @@ where
     }
 }
 
-impl<R> rand_core_06::CryptoRng for Rand0_6CompatWrapper<R> where R: rand_core::TryCryptoRng + ?Sized
-{}
+impl<R> rand_core_06::CryptoRng for Rand0_6CompatWrapper<R>
+where
+    R: rand_core::TryCryptoRng + ?Sized,
+{
+}
 
 #[cfg(test)]
 mod tests {
