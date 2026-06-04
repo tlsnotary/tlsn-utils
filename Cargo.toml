@@ -35,8 +35,6 @@ futures-util = "0.3"
 pin-project-lite = "0.2"
 pollster = "0.4"
 rand = "0.10"
-rand_core = { version = "0.10", default-features = false }
-rand_core_06 = { package = "rand_core", version = "0.6", default-features = false }
 rayon = "1"
 serde = "1"
 thiserror = "2"
