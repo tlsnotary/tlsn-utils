@@ -146,6 +146,19 @@ impl Config {
     /// Clamped to at least 1: a stream becomes active on the wire only after
     /// claiming one of these slots, so a limit of 0 would make every write
     /// block forever.
+    ///
+    /// The limit is enforced as write backpressure: a write to a stream that
+    /// is not yet active on the wire blocks until a slot frees. An application
+    /// that holds more than this many streams active concurrently — and needs
+    /// progress on all of them to make progress at all — will therefore
+    /// deadlock; size the limit above the application's maximum number of
+    /// mutually-dependent concurrent streams.
+    ///
+    /// Streams the peer opens implicitly — including ones the peer has already
+    /// closed — hold a slot until a local handle claims them and is dropped;
+    /// their data is never discarded. It is the application's responsibility
+    /// to open streams deterministically on both sides so every peer-opened
+    /// stream is eventually claimed.
     pub fn set_max_num_streams(&mut self, n: usize) -> &mut Self {
         self.max_num_streams = n.max(1);
 

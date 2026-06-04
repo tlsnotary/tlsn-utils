@@ -39,9 +39,21 @@ use super::{
 pub(crate) struct StreamRegistry {
     id: Id,
     /// Streams that are active on the wire and therefore eligible to buffer
-    /// peer data. This is the bounded, peer-relevant resource: its size plus
-    /// the number of owed-but-unflushed close frames must stay at or below
-    /// `config.max_num_streams`.
+    /// peer data. This is the bounded, peer-relevant resource: it never holds
+    /// more than `config.max_num_streams` entries, which bounds the peer's
+    /// buffering demand.
+    ///
+    /// Entries the peer has closed (RST/FIN) before any local handle adopted
+    /// them are retained here — together with their buffered data and EOF —
+    /// and keep holding their slot until a local handle claims the id and is
+    /// dropped. Peer data is never discarded: it is the application's
+    /// responsibility to open streams deterministically on both sides so
+    /// every implicitly-created stream is eventually claimed.
+    ///
+    /// Local activation additionally gates on `active_slots()` (this map plus
+    /// `owed_close`), while peer-driven implicit creation gates on the map
+    /// size alone (owed closes hold no receive buffer), so the combined count
+    /// can transiently exceed `max_num_streams` by the number of owed closes.
     streams: IntMap<StreamId, Arc<Mutex<stream::Shared>>>,
     /// Local handles that have not yet become active on the wire. These never
     /// buffer peer data and consume no slot until promoted into `streams`.
@@ -108,26 +120,24 @@ impl StreamRegistry {
     }
 
     /// Handle a peer reset of `stream_id`: transition it to closed and wake its
-    /// wakers. If no local handle still references the stream (only the map
-    /// holds its `Shared`), remove it, freeing the slot and waking any blocked
-    /// writer so peer churn cannot starve local activations.
+    /// wakers.
+    ///
+    /// The entry is retained in `streams` even when no local handle references
+    /// it yet: its buffered data and EOF must survive until a local handle
+    /// opens (adopts) the id, otherwise a late opener would wait forever for
+    /// data the peer already delivered. The entry keeps holding its slot until
+    /// it is claimed and the last handle is dropped.
     fn handle_peer_reset(&mut self, id: Id, stream_id: StreamId) {
         let Some(s) = self.streams.get(&stream_id) else {
             return;
         };
-        {
-            let mut shared = s.lock();
-            shared.update_state(id, stream_id, State::Closed);
-            if let Some(w) = shared.reader.take() {
-                w.wake()
-            }
-            if let Some(w) = shared.writer.take() {
-                w.wake()
-            }
+        let mut shared = s.lock();
+        shared.update_state(id, stream_id, State::Closed);
+        if let Some(w) = shared.reader.take() {
+            w.wake()
         }
-        if Arc::strong_count(s) == 1 {
-            self.streams.remove(&stream_id);
-            self.wake_slot_waiters();
+        if let Some(w) = shared.writer.take() {
+            w.wake()
         }
     }
 
@@ -386,11 +396,28 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
     /// any blocked writer observes a closed channel, and wake all writers
     /// parked on slot availability. Once we leave the active state the driver
     /// no longer frees slots, so a parked writer would otherwise hang forever.
+    ///
+    /// Nothing is delivered to streams once we leave the active state, so every
+    /// stream — active or not — is marked receive-closed and its parked
+    /// readers/writers are woken: a reader drains its buffer and then observes
+    /// EOF, and a writer observes the closed channel, instead of hanging.
     fn prepare_close(&mut self) {
         for stream in self.stream_receivers.iter_mut() {
             stream.inner_mut().close();
         }
-        self.registry.lock().wake_slot_waiters();
+        let mut registry = self.registry.lock();
+        let registry = &mut *registry;
+        for (id, s) in registry.streams.iter().chain(registry.inactive.iter()) {
+            let mut shared = s.lock();
+            shared.update_state(self.id, *id, State::RecvClosed);
+            if let Some(w) = shared.reader.take() {
+                w.wake()
+            }
+            if let Some(w) = shared.writer.take() {
+                w.wake()
+            }
+        }
+        registry.wake_slot_waiters();
     }
 
     /// Collect any control/data frames not yet flushed to the socket, in
@@ -810,8 +837,20 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
 impl<T> Active<T> {
     /// Close and drop all `Stream`s and wake any pending `Waker`s.
     pub(super) fn drop_all_streams(&mut self) {
+        // Close the stream command receivers before waking anyone: a woken
+        // writer re-polls immediately and must observe a closed channel,
+        // otherwise it could re-register on a slot that will never free now
+        // that the driver is gone.
+        for stream in self.stream_receivers.iter_mut() {
+            stream.inner_mut().close();
+        }
         let mut registry = self.registry.lock();
-        let drained: Vec<_> = registry.streams.drain().collect();
+        let registry = &mut *registry;
+        let drained: Vec<_> = registry
+            .streams
+            .drain()
+            .chain(registry.inactive.drain())
+            .collect();
         for (id, s) in drained {
             let mut shared = s.lock();
             shared.update_state(self.id, id, State::Closed);

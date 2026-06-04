@@ -1031,6 +1031,475 @@ fn owed_close_does_not_block_peer_stream_creation() {
     });
 }
 
+/// Data and EOF from a peer that writes to a stream and drops it (RST) before
+/// the local side opens the matching id must be retained: the late local
+/// opener reads the data and observes EOF instead of hanging forever.
+#[test]
+fn peer_writes_and_closes_before_local_open() {
+    let _ = env_logger::try_init();
+
+    fn spawn_driver<T>(mut conn: Connection<T>)
+    where
+        T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
+        task::spawn(async move {
+            loop {
+                if future::poll_fn(|cx| conn.poll(cx)).await.is_ok() {
+                    break;
+                }
+            }
+        });
+    }
+
+    async fn run_test() {
+        let (a, b) = futures_ringbuf::Endpoint::pair(1 << 20, 1 << 20);
+        let conn_a = Connection::new(a, Config::default());
+        let conn_b = Connection::new(b, Config::default());
+        let (ha, hb) = (conn_a.handle().unwrap(), conn_b.handle().unwrap());
+        spawn_driver(conn_a);
+        spawn_driver(conn_b);
+
+        // Peer B writes to "x" and drops it — fully, before A ever opens "x".
+        {
+            let mut s = hb.new_stream(b"x").unwrap();
+            s.write_all(b"hello").await.unwrap();
+            drop(s); // sends DATA("x") then RST("x")
+        }
+
+        // Let B's frames be processed on A before A opens the id.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // A opens "x" and reads: the data and EOF must have been retained.
+        let mut s = ha.new_stream(b"x").unwrap();
+        let mut buf = Vec::new();
+        s.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"hello");
+    }
+
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(10), run_test())
+                .await
+                .expect("read hung: peer's data/close was lost before local open");
+        });
+}
+
+/// Same as above but with a graceful close (FIN) instead of a reset: the late
+/// local opener reads the data and observes EOF.
+#[test]
+fn peer_writes_and_closes_gracefully_before_local_open() {
+    let _ = env_logger::try_init();
+
+    fn spawn_driver<T>(mut conn: Connection<T>)
+    where
+        T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
+        task::spawn(async move {
+            loop {
+                if future::poll_fn(|cx| conn.poll(cx)).await.is_ok() {
+                    break;
+                }
+            }
+        });
+    }
+
+    async fn run_test() {
+        let (a, b) = futures_ringbuf::Endpoint::pair(1 << 20, 1 << 20);
+        let conn_a = Connection::new(a, Config::default());
+        let conn_b = Connection::new(b, Config::default());
+        let (ha, hb) = (conn_a.handle().unwrap(), conn_b.handle().unwrap());
+        spawn_driver(conn_a);
+        spawn_driver(conn_b);
+
+        {
+            let mut s = hb.new_stream(b"x").unwrap();
+            s.write_all(b"hello").await.unwrap();
+            s.close().await.unwrap(); // sends DATA("x") then FIN("x")
+            drop(s);
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let mut s = ha.new_stream(b"x").unwrap();
+        let mut buf = Vec::new();
+        s.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"hello");
+    }
+
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(10), run_test())
+                .await
+                .expect("read hung: peer's data/close was lost before local open");
+        });
+}
+
+/// Peer-leads stream churn: the peer completes (writes + drops) many streams
+/// before the local side opens any of them. Every completed stream waits in
+/// its slot until claimed, so every id the local side later opens must
+/// deliver the peer's data and EOF (200 ids stay under the default
+/// `max_num_streams` budget).
+#[test]
+fn peer_leads_stream_churn_data_delivered() {
+    let _ = env_logger::try_init();
+
+    const N: usize = 200;
+
+    fn spawn_driver<T>(mut conn: Connection<T>)
+    where
+        T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
+        task::spawn(async move {
+            loop {
+                if future::poll_fn(|cx| conn.poll(cx)).await.is_ok() {
+                    break;
+                }
+            }
+        });
+    }
+
+    async fn run_test() {
+        let (a, b) = futures_ringbuf::Endpoint::pair(1 << 20, 1 << 20);
+        let conn_a = Connection::new(a, Config::default());
+        let conn_b = Connection::new(b, Config::default());
+        let (ha, hb) = (conn_a.handle().unwrap(), conn_b.handle().unwrap());
+        spawn_driver(conn_a);
+        spawn_driver(conn_b);
+
+        // B completes every stream before A opens a single one.
+        for k in 0..N {
+            let id = format!("churn-{k}");
+            let mut s = hb.new_stream(id.as_bytes()).unwrap();
+            s.write_all(id.as_bytes()).await.unwrap();
+            drop(s);
+        }
+
+        // A opens each id late and must observe the data and EOF.
+        for k in 0..N {
+            let id = format!("churn-{k}");
+            let mut s = ha.new_stream(id.as_bytes()).unwrap();
+            let mut buf = Vec::new();
+            s.read_to_end(&mut buf).await.unwrap();
+            assert_eq!(buf, id.as_bytes(), "stream {id} lost its data");
+        }
+    }
+
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(15), run_test())
+                .await
+                .expect("peer-leads churn deadlocked: completed streams were not retained");
+        });
+}
+
+/// Peer-completed streams that no local handle has claimed sit in their slots
+/// — data intact — until they are claimed; claiming and dropping one frees its
+/// slot, and a peer exceeding the unclaimed budget terminates the connection
+/// loudly rather than having data discarded silently.
+#[test]
+fn unclaimed_peer_streams_hold_slots_until_claimed() {
+    use std::{pin::pin, task::Poll};
+
+    let _ = env_logger::try_init();
+
+    let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
+    let mut server_cfg = Config::default();
+    server_cfg.set_max_num_streams(2);
+    let mut server = Connection::new(server_endpoint, server_cfg);
+    let mut client = Connection::new(client_endpoint, Config::default());
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    /// Open a stream on `client`, write its id and drop it (RST), then drive
+    /// both connections so the frames are fully processed.
+    fn complete_stream<T: AsyncRead + AsyncWrite + Unpin>(
+        id: &[u8],
+        client: &mut Connection<T>,
+        server: &mut Connection<T>,
+        cx: &mut std::task::Context<'_>,
+    ) {
+        let mut s = client.new_stream(id).unwrap();
+        assert!(pin!(&mut s).poll_write(cx, id).is_ready());
+        drop(s);
+        for _ in 0..50 {
+            let _ = client.poll(cx);
+            let _ = server.poll(cx);
+        }
+    }
+
+    // The client completes two streams the server has not claimed yet; they
+    // fill the server's entire slot budget and wait there.
+    complete_stream(b"a", &mut client, &mut server, &mut cx);
+    complete_stream(b"b", &mut client, &mut server, &mut cx);
+    assert!(server.poll(&mut cx).is_pending());
+
+    // Claiming one and dropping it frees its slot; the data was retained.
+    {
+        let mut s = server.new_stream(b"a").unwrap();
+        let mut buf = [0u8; 16];
+        match pin!(&mut s).poll_read(&mut cx, &mut buf) {
+            Poll::Ready(Ok(n)) => assert_eq!(&buf[..n], b"a"),
+            other => panic!("expected retained data, got {other:?}"),
+        }
+        match pin!(&mut s).poll_read(&mut cx, &mut buf) {
+            Poll::Ready(Ok(0)) => {}
+            other => panic!("expected EOF, got {other:?}"),
+        }
+    }
+    for _ in 0..50 {
+        let _ = server.poll(&mut cx);
+        let _ = client.poll(&mut cx);
+    }
+
+    // The freed slot admits another peer stream...
+    complete_stream(b"c", &mut client, &mut server, &mut cx);
+    assert!(server.poll(&mut cx).is_pending());
+
+    // ...but exceeding the unclaimed budget terminates the connection: data
+    // is never silently discarded to make room.
+    complete_stream(b"d", &mut client, &mut server, &mut cx);
+    assert!(matches!(server.poll(&mut cx), Poll::Ready(_)));
+}
+
+/// A reader parked on a never-activated stream must be woken with EOF when the
+/// connection is dropped, instead of hanging forever.
+#[test]
+fn parked_reader_on_inactive_stream_woken_on_drop() {
+    use std::{
+        pin::pin,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+        task::Poll,
+    };
+
+    let _ = env_logger::try_init();
+
+    struct CountingWake(AtomicUsize);
+    impl futures::task::ArcWake for CountingWake {
+        fn wake_by_ref(arc_self: &Arc<Self>) {
+            arc_self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let (_server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
+    let client = Connection::new(client_endpoint, Config::default());
+
+    let counter = Arc::new(CountingWake(AtomicUsize::new(0)));
+    let waker = futures::task::waker(counter.clone());
+    let mut cx = std::task::Context::from_waker(&waker);
+
+    // Read a stream that was never written: it is inactive and the peer never
+    // sends to it, so the read parks.
+    let mut stream = client
+        .handle()
+        .unwrap()
+        .new_stream(b"never-written")
+        .unwrap();
+    let mut buf = [0u8; 8];
+    assert!(pin!(&mut stream).poll_read(&mut cx, &mut buf).is_pending());
+    assert_eq!(counter.0.load(Ordering::SeqCst), 0);
+
+    // Dropping the connection must wake the parked reader with EOF.
+    drop(client);
+    assert!(
+        counter.0.load(Ordering::SeqCst) > 0,
+        "parked reader was not woken on connection drop"
+    );
+    assert!(matches!(
+        pin!(&mut stream).poll_read(&mut cx, &mut buf),
+        Poll::Ready(Ok(0))
+    ));
+}
+
+/// A reader parked on a never-activated stream must be woken with EOF when the
+/// connection is gracefully closed, instead of hanging forever.
+#[test]
+fn parked_reader_on_inactive_stream_woken_on_close() {
+    use std::{
+        pin::pin,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+        task::Poll,
+    };
+
+    let _ = env_logger::try_init();
+
+    struct CountingWake(AtomicUsize);
+    impl futures::task::ArcWake for CountingWake {
+        fn wake_by_ref(arc_self: &Arc<Self>) {
+            arc_self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let (_server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
+    let mut client = Connection::new(client_endpoint, Config::default());
+
+    let counter = Arc::new(CountingWake(AtomicUsize::new(0)));
+    let waker = futures::task::waker(counter.clone());
+    let mut cx = std::task::Context::from_waker(&waker);
+
+    let mut stream = client.new_stream(b"never-written").unwrap();
+    let mut buf = [0u8; 8];
+    assert!(pin!(&mut stream).poll_read(&mut cx, &mut buf).is_pending());
+    assert_eq!(counter.0.load(Ordering::SeqCst), 0);
+
+    // Initiating a graceful close must wake the parked reader with EOF.
+    client.close();
+    assert!(
+        counter.0.load(Ordering::SeqCst) > 0,
+        "parked reader was not woken on connection close"
+    );
+    assert!(matches!(
+        pin!(&mut stream).poll_read(&mut cx, &mut buf),
+        Poll::Ready(Ok(0))
+    ));
+}
+
+/// A reader parked on an active stream must also be woken with EOF on a
+/// graceful close: once the connection leaves the active state nothing is
+/// delivered to streams anymore.
+#[test]
+fn parked_reader_on_active_stream_woken_on_close() {
+    use std::{
+        pin::pin,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+        task::Poll,
+    };
+
+    let _ = env_logger::try_init();
+
+    struct CountingWake(AtomicUsize);
+    impl futures::task::ArcWake for CountingWake {
+        fn wake_by_ref(arc_self: &Arc<Self>) {
+            arc_self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let (_server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
+    let mut client = Connection::new(client_endpoint, Config::default());
+
+    let noop = std::task::Waker::noop();
+    let mut noop_cx = std::task::Context::from_waker(noop);
+
+    let counter = Arc::new(CountingWake(AtomicUsize::new(0)));
+    let waker = futures::task::waker(counter.clone());
+    let mut cx = std::task::Context::from_waker(&waker);
+
+    // Activate the stream with a write, then park a read on it.
+    let mut stream = client.new_stream(b"active").unwrap();
+    assert!(pin!(&mut stream).poll_write(&mut noop_cx, b"x").is_ready());
+    let _ = client.poll(&mut noop_cx);
+
+    let mut buf = [0u8; 8];
+    assert!(pin!(&mut stream).poll_read(&mut cx, &mut buf).is_pending());
+    assert_eq!(counter.0.load(Ordering::SeqCst), 0);
+
+    client.close();
+    assert!(
+        counter.0.load(Ordering::SeqCst) > 0,
+        "parked reader was not woken on connection close"
+    );
+    assert!(matches!(
+        pin!(&mut stream).poll_read(&mut cx, &mut buf),
+        Poll::Ready(Ok(0))
+    ));
+}
+
+/// A writer parked on the slot limit when the connection errors out must be
+/// woken and surface an error on its next poll — not re-park on a slot that
+/// will never free.
+///
+/// Note: the precise multi-threaded race this guards (a woken writer
+/// re-polling between `drop_all_streams`'s slot wake and the receivers being
+/// closed, then re-parking forever) cannot be reproduced deterministically
+/// through the public API; it is prevented structurally by `drop_all_streams`
+/// closing the receivers before waking slot waiters. This test pins the
+/// observable contract: the parked writer is woken and errors out.
+#[test]
+fn blocked_writer_is_woken_on_connection_error() {
+    use std::{
+        pin::pin,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
+
+    let _ = env_logger::try_init();
+
+    struct CountingWake(AtomicUsize);
+    impl futures::task::ArcWake for CountingWake {
+        fn wake_by_ref(arc_self: &Arc<Self>) {
+            arc_self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let (mut server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
+    let mut cfg = Config::default();
+    cfg.set_max_num_streams(1);
+    let mut client = Connection::new(client_endpoint, cfg);
+
+    let noop = std::task::Waker::noop();
+    let mut noop_cx = std::task::Context::from_waker(noop);
+
+    let counter = Arc::new(CountingWake(AtomicUsize::new(0)));
+    let waker = futures::task::waker(counter.clone());
+    let mut counted_cx = std::task::Context::from_waker(&waker);
+
+    // A claims the only slot; B parks on the limit.
+    let mut stream_a = client.new_stream(b"a").unwrap();
+    let mut stream_b = client.new_stream(b"b").unwrap();
+    assert!(pin!(&mut stream_a)
+        .poll_write(&mut noop_cx, b"x")
+        .is_ready());
+    let _ = client.poll(&mut noop_cx);
+    assert!(pin!(&mut stream_b)
+        .poll_write(&mut counted_cx, b"y")
+        .is_pending());
+    assert_eq!(counter.0.load(Ordering::SeqCst), 0);
+
+    // Feed garbage into the socket so the connection errors into cleanup.
+    assert!(pin!(&mut server_endpoint)
+        .poll_write(&mut noop_cx, &[0xFF; 64])
+        .is_ready());
+    assert!(matches!(
+        client.poll(&mut noop_cx),
+        std::task::Poll::Ready(Err(_))
+    ));
+
+    // The parked writer must have been woken, and must observe the closed
+    // channel (an error) instead of re-parking forever or writing into the
+    // void.
+    assert!(
+        counter.0.load(Ordering::SeqCst) > 0,
+        "blocked writer was not woken on connection error"
+    );
+    assert!(matches!(
+        pin!(&mut stream_b).poll_write(&mut counted_cx, b"y"),
+        std::task::Poll::Ready(Err(_))
+    ));
+}
+
 /// High-load stress test for the write-gated stream limit.
 ///
 /// Drives far more concurrent streams than the client's slot limit through a
@@ -1138,10 +1607,8 @@ fn high_load_write_gating_no_lost_wakers_or_deadlock() {
 /// contending for far fewer slots than there are workers. Every drop must
 /// reclaim its slot (flushing the owed RST) and wake a blocked writer; if a
 /// single reclamation is lost the limited slots are permanently leaked and the
-/// workers wedge. The server holds no stream handles: it creates each stream
-/// implicitly on the first byte and reaps it on the RST, so a lost RST also
-/// surfaces here as a stall. Tens of thousands of drops make a reap/wakeup
-/// regression overwhelmingly likely to be caught within the timeout.
+/// workers wedge. Tens of thousands of drops make a reap/wakeup regression
+/// overwhelmingly likely to be caught within the timeout.
 #[test]
 fn high_load_stream_churn_no_slot_leak_or_deadlock() {
     let _ = env_logger::try_init();
@@ -1156,10 +1623,13 @@ fn high_load_stream_churn_no_slot_leak_or_deadlock() {
     async fn run_test() {
         let mut client_cfg = Config::default();
         client_cfg.set_max_num_streams(CLIENT_MAX_STREAMS);
-        // The server reaps each implicit stream on its RST, so it never holds
-        // more than the client's in-flight streams; a small margin suffices.
+        // The server never claims the peer-completed streams, so every one of
+        // them sits in a slot — data retained — until the connection ends.
+        // Its budget must therefore cover the full churn volume (and the
+        // window limit, which is asserted against the slot count, is lifted).
         let mut server_cfg = Config::default();
-        server_cfg.set_max_num_streams(8);
+        server_cfg.set_max_connection_receive_window(None);
+        server_cfg.set_max_num_streams(WORKERS * PER_WORKER + 8);
 
         let (mut server, mut client) = connected_peers(server_cfg, client_cfg, None)
             .await
