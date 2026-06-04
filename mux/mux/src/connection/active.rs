@@ -492,7 +492,12 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                         .expect("owed close frame should be present");
                     registry.wake_slot_waiters();
                     drop(registry);
-                    log::trace!("{}/{}: sending owed close: {}", self.id, stream_id, frame.header());
+                    log::trace!(
+                        "{}/{}: sending owed close: {}",
+                        self.id,
+                        stream_id,
+                        frame.header()
+                    );
                     self.pending_write_frame.replace(frame);
                     continue;
                 }

@@ -762,7 +762,9 @@ fn blocked_writer_is_woken_on_slot_free() {
     let mut stream_b = client.new_stream(b"b").unwrap();
 
     // A claims the only slot.
-    assert!(pin!(&mut stream_a).poll_write(&mut noop_cx, b"x").is_ready());
+    assert!(pin!(&mut stream_a)
+        .poll_write(&mut noop_cx, b"x")
+        .is_ready());
     let _ = client.poll(&mut noop_cx);
 
     // B blocks, registering its counting waker.
@@ -825,7 +827,9 @@ fn blocked_writer_is_woken_on_close() {
     let mut stream_b = client.new_stream(b"b").unwrap();
 
     // A claims the only slot; B blocks registering its counting waker.
-    assert!(pin!(&mut stream_a).poll_write(&mut noop_cx, b"x").is_ready());
+    assert!(pin!(&mut stream_a)
+        .poll_write(&mut noop_cx, b"x")
+        .is_ready());
     let _ = client.poll(&mut noop_cx);
     assert!(pin!(&mut stream_b)
         .poll_write(&mut counted_cx, b"y")
@@ -1200,6 +1204,8 @@ fn high_load_stream_churn_no_slot_leak_or_deadlock() {
         .block_on(async {
             tokio::time::timeout(std::time::Duration::from_secs(15), run_test())
                 .await
-                .expect("stream churn timed out: a slot was leaked (reap race) or the mux deadlocked");
+                .expect(
+                    "stream churn timed out: a slot was leaked (reap race) or the mux deadlocked",
+                );
         });
 }
