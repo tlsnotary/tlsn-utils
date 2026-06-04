@@ -1,6 +1,6 @@
 # rand06-compat
 
-This crate provides a compatibility wrapper between versions `0.6` and `0.9` of [`rand_core`](https://docs.rs/rand_core/0.9).
+This crate provides a compatibility wrapper between versions `0.6` and `0.10` of [`rand_core`](https://docs.rs/rand_core/0.10).
 
 # Warning about `no_std` ⚠️
 
@@ -12,7 +12,7 @@ PRs welcome for a better solution.
 
 ```rust
 use rand_core_06::RngCore as RngCore06;
-use rand_core::OsRng;
+use rand::rngs::SysRng;
 use rand06_compat::Rand0_6CompatExt;
 
 // This function requires an RNG implementing the `0.6` trait.
@@ -21,6 +21,6 @@ fn foo<R>(rng: &mut R) where R: RngCore06 {
     println!("random number: {}", num);
 }
 
-// Pass in the RNG from `0.9` using compat trait.
-foo(&mut OsRng.compat())
+// Pass in the RNG from `0.10` using compat trait.
+foo(&mut SysRng.compat())
 ```

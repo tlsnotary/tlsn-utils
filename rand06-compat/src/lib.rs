@@ -1,7 +1,8 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(feature = "std"), no_std)]
 
-/// Compatibility extension trait for RNGs implementing `0.9` `RngCore` trait.
+/// Compatibility extension trait for RNGs implementing `rand_core` `0.10`
+/// `TryRng` trait.
 pub trait Rand0_6CompatExt {
     /// Wraps `self` in a compatibility wrapper that implements `0.6` traits.
     fn compat(self) -> Rand0_6CompatWrapper<Self>
@@ -23,7 +24,7 @@ pub trait Rand0_6CompatExt {
     }
 }
 
-impl<T> Rand0_6CompatExt for T where T: rand_core::TryRngCore + ?Sized {}
+impl<T> Rand0_6CompatExt for T where T: rand_core::TryRng + ?Sized {}
 
 /// Rand 0.6 compatibility wrapper.
 pub struct Rand0_6CompatWrapper<R: ?Sized>(R);
@@ -43,7 +44,7 @@ impl<R> Rand0_6CompatWrapper<R> {
 #[cfg(not(feature = "std"))]
 impl<R> rand_core_06::RngCore for Rand0_6CompatWrapper<R>
 where
-    R: rand_core::TryRngCore + ?Sized,
+    R: rand_core::TryRng + ?Sized,
 {
     fn next_u32(&mut self) -> u32 {
         self.0.try_next_u32().unwrap()
@@ -67,7 +68,7 @@ where
 #[cfg(feature = "std")]
 impl<R> rand_core_06::RngCore for Rand0_6CompatWrapper<R>
 where
-    R: rand_core::TryRngCore + ?Sized,
+    R: rand_core::TryRng + ?Sized,
     R::Error: Into<Box<dyn std::error::Error + Send + Sync + 'static>>,
 {
     fn next_u32(&mut self) -> u32 {
@@ -89,13 +90,14 @@ where
     }
 }
 
-impl<R> rand_core_06::CryptoRng for Rand0_6CompatWrapper<R> where R: rand_core::CryptoRng + ?Sized {}
+impl<R> rand_core_06::CryptoRng for Rand0_6CompatWrapper<R> where R: rand_core::TryCryptoRng + ?Sized
+{}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use rand_core::OsRng;
+    use rand::rngs::SysRng;
     use rand_core_06::RngCore as RngCore06;
 
     fn foo<R>(rng: &mut R)
@@ -107,7 +109,7 @@ mod tests {
 
     #[test]
     fn test_compat_os_rng() {
-        foo(&mut OsRng.compat());
+        foo(&mut SysRng.compat());
     }
 
     #[test]
