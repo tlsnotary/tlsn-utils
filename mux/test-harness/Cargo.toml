@@ -27,6 +27,7 @@ tokio = { version = "1.0", features = [
     "rt-multi-thread",
     "macros",
     "time",
+    "io-util",
 ] }
 tokio-util = { version = "0.7", features = ["compat"] }
 constrained-connection = "0.1"

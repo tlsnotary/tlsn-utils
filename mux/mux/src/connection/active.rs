@@ -108,14 +108,23 @@ impl StreamRegistry {
     }
 
     /// Handle a peer reset of `stream_id`: transition it to closed and wake its
-    /// wakers. If no local handle still references the stream (only the map
-    /// holds its `Shared`), remove it, freeing the slot and waking any blocked
-    /// writer so peer churn cannot starve local activations.
+    /// wakers.
+    ///
+    /// If no local handle references the stream yet (only the map holds its
+    /// `Shared`) we either reap it (nothing to deliver) or, when it still has
+    /// unread buffered data, keep it as a closed-but-undelivered entry. The
+    /// peer can write to and close a stream before the local side opens that
+    /// id; discarding it here would lose the data and the EOF, so a later
+    /// `new_stream` for the same id would hang on a fresh `Open` stream.
+    /// Keeping it lets that `new_stream` adopt it, drain the data, and observe
+    /// EOF. Such entries are reclaimed by [`Self::evict_one_closed`] under slot
+    /// pressure, so they stay bounded. Either way a slot effectively becomes
+    /// claimable, so wake blocked writers (which may now evict to proceed).
     fn handle_peer_reset(&mut self, id: Id, stream_id: StreamId) {
         let Some(s) = self.streams.get(&stream_id) else {
             return;
         };
-        {
+        let has_unread_data = {
             let mut shared = s.lock();
             shared.update_state(id, stream_id, State::Closed);
             if let Some(w) = shared.reader.take() {
@@ -124,10 +133,32 @@ impl StreamRegistry {
             if let Some(w) = shared.writer.take() {
                 w.wake()
             }
-        }
+            shared.buffer.len() != 0
+        };
         if Arc::strong_count(s) == 1 {
-            self.streams.remove(&stream_id);
+            if !has_unread_data {
+                self.streams.remove(&stream_id);
+            }
             self.wake_slot_waiters();
+        }
+    }
+
+    /// Reclaim one terminally-closed, unreferenced stream to free a slot for a
+    /// new activation. These hold data the peer delivered for an id the local
+    /// side never opened; under slot pressure we drop one such entry to keep
+    /// peer-driven memory bounded. Returns `true` if a slot was freed.
+    fn evict_one_closed(&mut self) -> bool {
+        let victim = self
+            .streams
+            .iter()
+            .find(|(_, s)| Arc::strong_count(s) == 1 && s.lock().state() == State::Closed)
+            .map(|(id, _)| *id);
+        match victim {
+            Some(id) => {
+                self.streams.remove(&id);
+                true
+            }
+            None => false,
         }
     }
 
@@ -151,7 +182,7 @@ impl StreamRegistry {
         stream_id: StreamId,
         shared: &Arc<Mutex<stream::Shared>>,
     ) -> bool {
-        if self.active_slots() >= self.config.max_num_streams {
+        if self.active_slots() >= self.config.max_num_streams && !self.evict_one_closed() {
             return false;
         }
         self.inactive.remove(&stream_id);
@@ -683,8 +714,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
 
             // Only streams active on the wire buffer peer data, so the peer's
             // buffering demand is bounded by `streams.len()`, not by close
-            // frames we still owe (those hold no receive buffer).
-            if registry.streams.len() >= self.config.max_num_streams {
+            // frames we still owe (those hold no receive buffer). At the limit,
+            // first try to reclaim a closed-but-undelivered entry before giving
+            // up and terminating.
+            if registry.streams.len() >= self.config.max_num_streams && !registry.evict_one_closed()
+            {
                 log::error!("{}: maximum number of streams reached", self.id);
                 return Action::Terminate(Frame::internal_error());
             }
@@ -751,8 +785,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             }
 
             // Only `streams` entries buffer/grow windows, so gate the peer on
-            // `streams.len()`, not on owed close frames.
-            if registry.streams.len() >= self.config.max_num_streams {
+            // `streams.len()`, not on owed close frames. At the limit, first try
+            // to reclaim a closed-but-undelivered entry before terminating.
+            if registry.streams.len() >= self.config.max_num_streams && !registry.evict_one_closed()
+            {
                 log::error!("{}: maximum number of streams reached", self.id);
                 return Action::Terminate(Frame::internal_error());
             }
