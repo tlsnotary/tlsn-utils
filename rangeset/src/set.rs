@@ -287,8 +287,8 @@ impl<T: Copy + Ord> RangeSet<T> {
         // Keep the parts of the end ranges that fall outside `range`.
         let first_start = self.ranges[lo].start;
         let last_end = self.ranges[hi - 1].end;
-        let head = (first_start < range.start).then(|| first_start..range.start);
-        let tail = (last_end > range.end).then(|| range.end..last_end);
+        let head = (first_start < range.start).then_some(first_start..range.start);
+        let tail = (last_end > range.end).then_some(range.end..last_end);
         self.ranges.splice(lo..hi, head.into_iter().chain(tail));
     }
 
