@@ -232,14 +232,65 @@ impl<T: Copy + Ord> RangeSet<T> {
 
     /// Unions in-place with the given ranges.
     pub fn union_mut(&mut self, other: impl IntoRangeIterator<T>) {
-        self.ranges.extend(other.into_range_iter());
-        sort_merge(&mut self.ranges);
+        // Each range is appended in O(1); re-sort only if one arrives out of order.
+        let mut need_sort = false;
+        for range in other.into_range_iter() {
+            need_sort |= self.push_range(range);
+        }
+        if need_sort {
+            sort_merge(&mut self.ranges);
+        }
+    }
+
+    /// Appends `range`, coalescing into the tail when adjacent. Returns `true`
+    /// if it landed out of order, meaning the set needs a `sort_merge`.
+    fn push_range(&mut self, range: Range<T>) -> bool {
+        if range.start >= range.end {
+            return false;
+        }
+        match self.ranges.last_mut() {
+            Some(last) if range.start == last.end => last.end = range.end,
+            Some(last) if range.start < last.end => {
+                self.ranges.push(range);
+                return true;
+            }
+            _ => self.ranges.push(range),
+        }
+        false
     }
 
     /// Differences in-place with the given ranges.
     pub fn difference_mut(&mut self, other: impl IntoRangeIterator<T>) {
-        // TODO: optimize this.
-        *self = self.iter().difference(other).into_set();
+        for range in other.into_range_iter() {
+            self.remove_range(range);
+        }
+    }
+
+    /// Removes `range` from the set. Each removal touches one contiguous window
+    /// of the (sorted) ranges, found by binary search and spliced in place.
+    fn remove_range(&mut self, range: Range<T>) {
+        if range.start >= range.end {
+            return;
+        }
+        let lo = self.ranges.partition_point(|r| r.end <= range.start);
+        if lo == self.ranges.len() || self.ranges[lo].start >= range.end {
+            return;
+        }
+        let mut hi = lo;
+        while hi < self.ranges.len() && self.ranges[hi].start < range.end {
+            hi += 1;
+        }
+        // Keep the parts of the end ranges that fall outside `range`.
+        let first_start = self.ranges[lo].start;
+        let last_end = self.ranges[hi - 1].end;
+        let mut repl: Vec<Range<T>> = Vec::with_capacity(2);
+        if first_start < range.start {
+            repl.push(first_start..range.start);
+        }
+        if last_end > range.end {
+            repl.push(range.end..last_end);
+        }
+        self.ranges.splice(lo..hi, repl);
     }
 
     /// Intersects in-place with the given ranges.
@@ -1093,5 +1144,75 @@ mod tests {
         let index = RangeSet::from([(0..3), (5..8), (10..12)]);
 
         data.index(index).for_each(drop);
+    }
+
+    type Case = (&'static [Range<usize>], &'static [Range<usize>], &'static [Range<usize>]);
+
+    /// `push_range`: O(1) tail append/coalesce in order, `true` (needs sort)
+    /// out of order, empty ranges ignored.
+    #[test]
+    fn test_push_range() {
+        let mut s = RangeSet::from(Vec::<Range<usize>>::new());
+        assert!(!s.push_range(2..4)); // into empty
+        assert!(!s.push_range(4..6)); // adjacent -> coalesced into tail
+        assert!(!s.push_range(8..9)); // disjoint after tail
+        assert!(!s.push_range(20..20)); // empty range ignored
+        assert_eq!(s.ranges, vec![2..6, 8..9]);
+        assert!(s.push_range(0..1)); // before tail -> needs sort
+        assert_eq!(s.ranges, vec![2..6, 8..9, 0..1]); // pushed, not yet sorted
+    }
+
+    /// `remove_range`: in-place single-range removal; no-op when empty or
+    /// disjoint.
+    #[test]
+    fn test_remove_range() {
+        let mut s = RangeSet::from(vec![0..10]);
+        s.remove_range(3..5); // split
+        assert_eq!(s, RangeSet::from(vec![0..3, 5..10]));
+        s.remove_range(20..20); // empty -> no-op
+        s.remove_range(11..15); // disjoint after -> no-op
+        assert_eq!(s, RangeSet::from(vec![0..3, 5..10]));
+        s.remove_range(2..8); // trims both ranges across the gap
+        assert_eq!(s, RangeSet::from(vec![0..2, 8..10]));
+    }
+
+    /// `union_mut` branches: tail append, coalesce, out-of-order fallback.
+    #[test]
+    fn test_union_mut_cases() {
+        let cases: &[Case] = &[
+            (&[], &[0..2], &[0..2]),           // into empty
+            (&[0..2], &[5..7], &[0..2, 5..7]), // disjoint, after tail
+            (&[0..2], &[2..4], &[0..4]),       // adjacent to tail
+            (&[0..2], &[1..3], &[0..3]),       // overlaps tail (fallback)
+            (&[5..7], &[0..2], &[0..2, 5..7]), // before tail (fallback)
+            (&[0..2, 6..8], &[3..5], &[0..2, 3..5, 6..8]), // middle (fallback)
+            (&[0..2, 6..8], &[1..7], &[0..8]), // bridges a gap (fallback)
+            (&[0..2], &[2..4, 6..8], &[0..4, 6..8]), // multi range arg
+        ];
+        for (a, b, want) in cases {
+            let mut got = RangeSet::from(a.to_vec());
+            got |= RangeSet::from(b.to_vec());
+            assert_eq!(got, RangeSet::from(want.to_vec()), "{a:?} |= {b:?}");
+        }
+    }
+
+    /// `difference_mut` branches: split, trim, full cover, multi-span, no-op.
+    #[test]
+    fn test_difference_mut_cases() {
+        let cases: &[Case] = &[
+            (&[0..10], &[3..5], &[0..3, 5..10]), // split
+            (&[0..10], &[0..3], &[3..10]),       // trim front
+            (&[0..10], &[7..10], &[0..7]),       // trim back
+            (&[0..10], &[0..10], &[]),           // full cover
+            (&[0..10], &[5..7, 8..9], &[0..5, 7..8, 9..10]), // two removals
+            (&[0..2, 4..6, 8..10], &[1..9], &[0..1, 9..10]), // spans ranges
+            (&[0..2], &[5..7], &[0..2]),         // disjoint, after (lo == len)
+            (&[0..2, 6..8], &[3..5], &[0..2, 6..8]), // disjoint, in a gap
+        ];
+        for (a, b, want) in cases {
+            let mut got = RangeSet::from(a.to_vec());
+            got -= RangeSet::from(b.to_vec());
+            assert_eq!(got, RangeSet::from(want.to_vec()), "{a:?} -= {b:?}");
+        }
     }
 }
