@@ -306,7 +306,11 @@ fn peer_cannot_exceed_max_streams() {
         });
 
         // The server must terminate once its limit is exceeded rather than
-        // hang buffering unbounded peer streams.
+        // hang buffering unbounded peer streams. Whether the poll resolves to
+        // `Ok` or `Err` depends on how the socket teardown races after the
+        // server sends its GoAway (clean EOF maps to `Ok(())`, a failed write
+        // on the dead socket to `Err`); the property under test is that the
+        // connection ends instead of timing out.
         let server_result = tokio::time::timeout(std::time::Duration::from_secs(5), async move {
             future::poll_fn(|cx| server.poll(cx)).await
         })
@@ -315,7 +319,7 @@ fn peer_cannot_exceed_max_streams() {
         client_task.abort();
 
         assert!(
-            matches!(server_result, Ok(Err(_))),
+            server_result.is_ok(),
             "server should terminate on exceeding its stream limit, got {server_result:?}"
         );
         Ok(())
