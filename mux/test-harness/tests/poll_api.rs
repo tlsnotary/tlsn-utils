@@ -1204,6 +1204,92 @@ fn peer_leads_stream_churn_data_delivered() {
         });
 }
 
+/// Paced concurrent churn: many short request/response round-trips on fresh ids
+/// with bounded concurrency, both peers opening the same ids (so they merge).
+/// Each request awaits its response, so the load is self-paced (no unbounded
+/// flooding). Exercises implicit-create + merge + close delivery under churn —
+/// the load shape of tlsn's MPC-TLS usage.
+#[test]
+fn concurrent_churn_request_response() {
+    use tlsn_mux::Handle;
+
+    let _ = env_logger::try_init();
+
+    const N: usize = 6000;
+    const CONC: usize = 64;
+
+    fn spawn_driver<T>(mut conn: Connection<T>)
+    where
+        T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
+        task::spawn(async move {
+            loop {
+                if future::poll_fn(|cx| conn.poll(cx)).await.is_ok() {
+                    break;
+                }
+            }
+        });
+    }
+
+    // Requester: open id, send a byte, read the echo, close.
+    async fn requester(handle: Handle, n: usize, conc: usize) {
+        futures::stream::iter(0..n)
+            .for_each_concurrent(conc, |i| {
+                let handle = handle.clone();
+                async move {
+                    let id = (i as u64).to_le_bytes();
+                    let mut s = handle.new_stream(&id).unwrap();
+                    s.write_all(&[0xAB]).await.unwrap();
+                    let mut buf = [0u8; 1];
+                    s.read_exact(&mut buf).await.unwrap();
+                    assert_eq!(buf[0], 0xAB);
+                    drop(s);
+                }
+            })
+            .await;
+    }
+
+    // Responder: open the same id, read the byte, echo it, close.
+    async fn responder(handle: Handle, n: usize, conc: usize) {
+        futures::stream::iter(0..n)
+            .for_each_concurrent(conc, |i| {
+                let handle = handle.clone();
+                async move {
+                    let id = (i as u64).to_le_bytes();
+                    let mut s = handle.new_stream(&id).unwrap();
+                    let mut buf = [0u8; 1];
+                    if s.read_exact(&mut buf).await.is_ok() {
+                        let _ = s.write_all(&buf).await;
+                    }
+                    drop(s);
+                }
+            })
+            .await;
+    }
+
+    async fn run_test() {
+        let (a, b) = futures_ringbuf::Endpoint::pair(1 << 22, 1 << 22);
+        let conn_a = Connection::new(a, Config::default());
+        let conn_b = Connection::new(b, Config::default());
+        let (ha, hb) = (conn_a.handle().unwrap(), conn_b.handle().unwrap());
+        spawn_driver(conn_a);
+        spawn_driver(conn_b);
+
+        future::join(requester(ha, N, CONC), responder(hb, N, CONC)).await;
+    }
+
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(30), run_test())
+                .await
+                .expect("churn did not complete within 30s (deadlock/regression)");
+        });
+}
+
 /// Peer-completed streams that no local handle has claimed sit in their slots
 /// — data intact — until they are claimed; claiming and dropping one frees its
 /// slot, and a peer exceeding the unclaimed budget terminates the connection
