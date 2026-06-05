@@ -24,5 +24,11 @@ fuzz_target!(|r: (SmallSet, SmallSet)| {
 
     assert_eq!(expected_values, actual_values);
 
+    let mut diff_mut = s1.clone();
+    diff_mut.difference_mut(&s2);
+
+    assert_eq!(diff, diff_mut);
+
     assert_invariants(diff);
+    assert_invariants(diff_mut);
 });

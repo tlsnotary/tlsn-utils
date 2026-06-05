@@ -261,6 +261,10 @@ impl<T: Copy + Ord> RangeSet<T> {
 
     /// Differences in-place with the given ranges.
     pub fn difference_mut(&mut self, other: impl IntoRangeIterator<T>) {
+        // Note: each removal that changes the number of ranges shifts the
+        // vector tail, so removing many scattered ranges at once can degrade
+        // to O(n * m). If that pattern shows up, fall back to a single-pass
+        // rebuild when `other` is large.
         for range in other.into_range_iter() {
             self.remove_range(range);
         }
@@ -283,14 +287,9 @@ impl<T: Copy + Ord> RangeSet<T> {
         // Keep the parts of the end ranges that fall outside `range`.
         let first_start = self.ranges[lo].start;
         let last_end = self.ranges[hi - 1].end;
-        let mut repl: Vec<Range<T>> = Vec::with_capacity(2);
-        if first_start < range.start {
-            repl.push(first_start..range.start);
-        }
-        if last_end > range.end {
-            repl.push(range.end..last_end);
-        }
-        self.ranges.splice(lo..hi, repl);
+        let head = (first_start < range.start).then_some(first_start..range.start);
+        let tail = (last_end > range.end).then_some(range.end..last_end);
+        self.ranges.splice(lo..hi, head.into_iter().chain(tail));
     }
 
     /// Intersects in-place with the given ranges.
@@ -1146,7 +1145,11 @@ mod tests {
         data.index(index).for_each(drop);
     }
 
-    type Case = (&'static [Range<usize>], &'static [Range<usize>], &'static [Range<usize>]);
+    type Case = (
+        &'static [Range<usize>],
+        &'static [Range<usize>],
+        &'static [Range<usize>],
+    );
 
     /// `push_range`: O(1) tail append/coalesce in order, `true` (needs sort)
     /// out of order, empty ranges ignored.
@@ -1180,14 +1183,14 @@ mod tests {
     #[test]
     fn test_union_mut_cases() {
         let cases: &[Case] = &[
-            (&[], &[0..2], &[0..2]),           // into empty
-            (&[0..2], &[5..7], &[0..2, 5..7]), // disjoint, after tail
-            (&[0..2], &[2..4], &[0..4]),       // adjacent to tail
-            (&[0..2], &[1..3], &[0..3]),       // overlaps tail (fallback)
-            (&[5..7], &[0..2], &[0..2, 5..7]), // before tail (fallback)
+            (&[], &[0..2], &[0..2]),                       // into empty
+            (&[0..2], &[5..7], &[0..2, 5..7]),             // disjoint, after tail
+            (&[0..2], &[2..4], &[0..4]),                   // adjacent to tail
+            (&[0..2], &[1..3], &[0..3]),                   // overlaps tail (fallback)
+            (&[5..7], &[0..2], &[0..2, 5..7]),             // before tail (fallback)
             (&[0..2, 6..8], &[3..5], &[0..2, 3..5, 6..8]), // middle (fallback)
-            (&[0..2, 6..8], &[1..7], &[0..8]), // bridges a gap (fallback)
-            (&[0..2], &[2..4, 6..8], &[0..4, 6..8]), // multi range arg
+            (&[0..2, 6..8], &[1..7], &[0..8]),             // bridges a gap (fallback)
+            (&[0..2], &[2..4, 6..8], &[0..4, 6..8]),       // multi range arg
         ];
         for (a, b, want) in cases {
             let mut got = RangeSet::from(a.to_vec());
@@ -1200,14 +1203,14 @@ mod tests {
     #[test]
     fn test_difference_mut_cases() {
         let cases: &[Case] = &[
-            (&[0..10], &[3..5], &[0..3, 5..10]), // split
-            (&[0..10], &[0..3], &[3..10]),       // trim front
-            (&[0..10], &[7..10], &[0..7]),       // trim back
-            (&[0..10], &[0..10], &[]),           // full cover
+            (&[0..10], &[3..5], &[0..3, 5..10]),             // split
+            (&[0..10], &[0..3], &[3..10]),                   // trim front
+            (&[0..10], &[7..10], &[0..7]),                   // trim back
+            (&[0..10], &[0..10], &[]),                       // full cover
             (&[0..10], &[5..7, 8..9], &[0..5, 7..8, 9..10]), // two removals
             (&[0..2, 4..6, 8..10], &[1..9], &[0..1, 9..10]), // spans ranges
-            (&[0..2], &[5..7], &[0..2]),         // disjoint, after (lo == len)
-            (&[0..2, 6..8], &[3..5], &[0..2, 6..8]), // disjoint, in a gap
+            (&[0..2], &[5..7], &[0..2]),                     // disjoint, after (lo == len)
+            (&[0..2, 6..8], &[3..5], &[0..2, 6..8]),         // disjoint, in a gap
         ];
         for (a, b, want) in cases {
             let mut got = RangeSet::from(a.to_vec());

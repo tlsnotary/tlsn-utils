@@ -27,5 +27,11 @@ fuzz_target!(|r: (SmallSet, SmallSet)| {
 
     assert_eq!(expected_values, actual_values);
 
+    let mut union_mut = r2.clone();
+    union_mut.union_mut(&r1);
+
+    assert_eq!(union, union_mut);
+
     assert_invariants(union);
+    assert_invariants(union_mut);
 });
