@@ -23,23 +23,41 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use transcript_verify::{parse_transcript, validate};
 //!
+//! // One HTTP/1.1 request in `sent`, one response in `recv` — exact wire
+//! // bytes (CRLF line endings, Content-Length framing).
+//! let sent: &[u8] = b"GET /pets/132 HTTP/1.1\r\n\
+//!     Host: api.example\r\n\
+//!     \r\n";
+//! let recv: &[u8] = b"HTTP/1.1 200 OK\r\n\
+//!     Content-Type: application/json\r\n\
+//!     Content-Length: 25\r\n\
+//!     \r\n\
+//!     {\"name\":\"ditto\",\"id\":132}";
+//!
 //! // Host (untrusted): produce the span table once.
-//! let table = parse_transcript(&sent, &recv)?;
+//! let table = parse_transcript(sent, recv)?;
 //!
 //! // Guest (inside the zkVM): verify the table against the raw bytes.
-//! let transcript = validate(&sent, &recv, &table)?;
+//! let transcript = validate(sent, recv, &table)?;
 //!
 //! assert_eq!(transcript.request().method(), "GET");
-//! let status = transcript.response().status();
-//! let name = transcript
-//!     .response()
-//!     .body()
-//!     .and_then(|body| body.json())
-//!     .and_then(|json| json.get("name"))
-//!     .and_then(|value| value.as_str());
+//! assert_eq!(transcript.request().target(), "/pets/132");
+//! assert_eq!(transcript.response().status(), 200);
+//!
+//! // Header lookup is ASCII case-insensitive.
+//! let content_type = transcript.response().header("content-type").unwrap();
+//! assert_eq!(content_type.value(), b"application/json");
+//!
+//! // The body carries a verified JSON view (the host claimed JSON and the
+//! // guest verified the node tree against the bytes).
+//! let body = transcript.response().body().expect("response has a body");
+//! let json = body.json().expect("body is claimed and verified as JSON");
+//! assert_eq!(json.get("name").and_then(|v| v.as_str()), Some("ditto"));
+//! assert_eq!(json.get("id").and_then(|v| v.as_number_str()), Some("132"));
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! # Features
