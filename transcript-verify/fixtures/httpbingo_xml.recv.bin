@@ -1,0 +1,35 @@
+HTTP/1.1 200 OK
+access-control-allow-credentials: true
+access-control-allow-origin: *
+content-type: application/xml
+date: Wed, 10 Jun 2026 13:08:46 GMT
+content-length: 522
+connection: close
+server: Fly/1ce1a02c8 (2026-06-10)
+via: 1.1 fly.io, 1.1 fly.io
+fly-request-id: 01KTRTCKCCR2YXZ7B3Y2GC8ERN-fra
+
+<?xml version='1.0' encoding='us-ascii'?>
+
+<!--  A SAMPLE set of slides  -->
+
+<slideshow
+    title="Sample Slide Show"
+    date="Date of publication"
+    author="Yours Truly"
+    >
+
+    <!-- TITLE SLIDE -->
+    <slide type="all">
+      <title>Wake up to WonderWidgets!</title>
+    </slide>
+
+    <!-- OVERVIEW -->
+    <slide type="all">
+        <title>Overview</title>
+        <item>Why <em>WonderWidgets</em> are great</item>
+        <item/>
+        <item>Who <em>buys</em> WonderWidgets</item>
+    </slide>
+
+</slideshow>

@@ -1,0 +1,9 @@
+HTTP/1.1 200 OK
+Date: Wed, 10 Jun 2026 00:00:00 GMT
+Server: synthetic/0.1
+Content-Type: text/plain
+Content-Length: 49
+X-Obs: café
+Connection: close
+
+the X-Obs header value carries raw obs-text bytes

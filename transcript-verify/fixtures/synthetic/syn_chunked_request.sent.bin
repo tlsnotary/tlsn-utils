@@ -1,0 +1,14 @@
+POST /api/items HTTP/1.1
+Host: synthetic.test
+User-Agent: transcript-verify-fixtures/0.1
+Accept: application/json
+Content-Type: application/json
+Transfer-Encoding: chunked
+Connection: close
+
+3
+{"a
+a
+":[1,2,3]}
+0
+

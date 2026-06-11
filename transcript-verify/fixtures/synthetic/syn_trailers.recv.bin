@@ -1,0 +1,15 @@
+HTTP/1.1 200 OK
+Date: Wed, 10 Jun 2026 00:00:00 GMT
+Server: synthetic/0.1
+Content-Type: application/json
+Transfer-Encoding: chunked
+Trailer: X-Checksum
+Connection: close
+
+e
+{"data":"chunk
+a
+ed","n":7}
+0
+X-Checksum: abc123
+
