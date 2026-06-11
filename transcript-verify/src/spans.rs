@@ -125,8 +125,9 @@ pub struct ResponseSpans {
     pub code: Span,
     /// The reason phrase.
     ///
-    /// Possibly empty; untrimmed; charset-checked (printable ASCII plus SP
-    /// and HTAB) but otherwise opaque.
+    /// Possibly empty; untrimmed; charset-checked (printable ASCII
+    /// (0x21..=0x7E) plus obs-text (0x80..=0xFF), SP, and HTAB) but otherwise
+    /// opaque.
     pub reason: Span,
     /// Offset one past the CRLFCRLF terminating the head — equivalently, the
     /// offset of the first body byte (or the buffer length if there is no
