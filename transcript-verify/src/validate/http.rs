@@ -14,7 +14,7 @@ use crate::{
 };
 
 /// Maximum number of header (or trailer) lines per section (rule A).
-const MAX_HEADER_LINES: usize = 128;
+pub(crate) const MAX_HEADER_LINES: usize = 128;
 
 /// Maximum decoded body length: 2^30 bytes (rule A).
 const MAX_BODY_LEN: u64 = 1 << 30;
@@ -56,14 +56,14 @@ fn is_target_byte(b: u8) -> bool {
 }
 
 /// Optional whitespace: SP or HTAB.
-fn is_ows(b: u8) -> bool {
+pub(crate) fn is_ows(b: u8) -> bool {
     b == b' ' || b == b'\t'
 }
 
 /// Header-value (and reason / chunk-extension) byte:
 /// {0x21..=0x7E, 0x80..=0xFF, SP, HTAB} — no CR/LF/NUL/DEL injection
 /// (rule B5).
-fn is_value_byte(b: u8) -> bool {
+pub(crate) fn is_value_byte(b: u8) -> bool {
     b == b'\t' || (b >= 0x20 && b != 0x7F)
 }
 
@@ -72,7 +72,12 @@ fn is_value_byte(b: u8) -> bool {
 /// Requires the literal `lit` at `buf[p..]` and returns the cursor one past
 /// it. Truncation and mismatch both yield [`Error::Http`] at `p` with
 /// `reason`.
-fn expect_lit(buf: &[u8], p: usize, lit: &[u8], reason: &'static str) -> Result<usize, Error> {
+pub(crate) fn expect_lit(
+    buf: &[u8],
+    p: usize,
+    lit: &[u8],
+    reason: &'static str,
+) -> Result<usize, Error> {
     let end = p.checked_add(lit.len()).ok_or(http_err(p, reason))?;
     if end > buf.len() || &buf[p..end] != lit {
         return Err(http_err(p, reason));
@@ -81,7 +86,7 @@ fn expect_lit(buf: &[u8], p: usize, lit: &[u8], reason: &'static str) -> Result<
 }
 
 /// Advances the cursor over any run of OWS (SP/HTAB) bytes.
-fn skip_ows(buf: &[u8], mut p: usize) -> usize {
+pub(crate) fn skip_ows(buf: &[u8], mut p: usize) -> usize {
     while p < buf.len() && is_ows(buf[p]) {
         p += 1;
     }
@@ -103,7 +108,7 @@ fn scan_token(buf: &[u8], mut p: usize) -> usize {
 /// byte (so `+5`, `0x5`, `5,5`, and OWS are all rejected; leading zeros are
 /// valid digit-grammar and accepted). 19 digits cannot overflow a `u64`, but
 /// the arithmetic is checked anyway.
-fn parse_dec_u64(s: &[u8]) -> Option<u64> {
+pub(crate) fn parse_dec_u64(s: &[u8]) -> Option<u64> {
     if s.is_empty() || s.len() > 19 {
         return None;
     }
@@ -156,17 +161,17 @@ pub(crate) fn check_span(span: Span, len: usize, what: &'static str) -> Result<(
 // === header-line scanning (shared by heads and trailers) ===
 
 /// Byte facts of one scanned header line.
-struct ScannedHeader {
+pub(crate) struct ScannedHeader {
     /// Name token start (the line start).
-    name_start: usize,
+    pub(crate) name_start: usize,
     /// One past the name token (the `:` position).
-    name_end: usize,
+    pub(crate) name_end: usize,
     /// OWS-trimmed value start (== the CR position for an empty value).
-    value_start: usize,
+    pub(crate) value_start: usize,
     /// OWS-trimmed value end (== `value_start` for an empty value).
-    value_end: usize,
+    pub(crate) value_end: usize,
     /// One past the terminating LF.
-    line_end: usize,
+    pub(crate) line_end: usize,
 }
 
 /// Scans one header (or trailer) line at `p` (rules B4/B5/B6).
@@ -176,7 +181,7 @@ struct ScannedHeader {
 /// name immediately followed by `:`, value bytes in the value charset, and a
 /// strict CRLF terminator. Derives the canonical OWS-trimmed value span,
 /// pinned at the CR when empty.
-fn scan_header_line(buf: &[u8], p: usize) -> Result<ScannedHeader, Error> {
+pub(crate) fn scan_header_line(buf: &[u8], p: usize) -> Result<ScannedHeader, Error> {
     if is_ows(buf[p]) {
         return Err(http_err(p, "obs-fold or whitespace before header name"));
     }
