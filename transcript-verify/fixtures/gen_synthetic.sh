@@ -7,7 +7,7 @@
 # Content-Length: 0, empty/missing reason phrases, empty header values,
 # duplicate Set-Cookie, obs-text header bytes, chunk boundaries splitting
 # JSON tokens, JSON scalar roots, empty containers, unicode escapes with a
-# lone surrogate, and 127/128-deep JSON nesting.
+# lone surrogate, and 127-deep JSON nesting (the maximum accepted depth).
 #
 # Every pair is a VALID HTTP/1.1 transcript (the must-accept corpus —
 # invalid/adversarial cases belong in test code, not here). All sizes
@@ -289,17 +289,14 @@ assert_contains "$OUT/syn_unicode.recv.bin" $'\xc3\xa9'          # é  (2-byte U
 assert_contains "$OUT/syn_unicode.recv.bin" $'\xe4\xb8\xad'      # 中 (3-byte UTF-8)
 assert_contains "$OUT/syn_unicode.recv.bin" $'\xf0\x9f\x98\x80'  # 😀 (4-byte UTF-8)
 
-# --- syn_deep_127 / syn_deep_128: nesting exactly at/above the depth limit ----
+# --- syn_deep_127: nesting exactly at the maximum accepted depth -------------
+# 127 matches serde_json's default recursion limit (the validator's cap); a
+# 128-deep body is a REJECT case and is covered by the unit/adversarial tests.
 DEEP_127="$(deep_body 127)"
-DEEP_128="$(deep_body 128)"
 [[ "$(slen "$DEEP_127")" == 255 ]] || { echo "ASSERT FAILED: deep_127 body length" >&2; exit 1; }
-[[ "$(slen "$DEEP_128")" == 257 ]] || { echo "ASSERT FAILED: deep_128 body length" >&2; exit 1; }
 
 request_get '/api/deep/127' 'application/json' > "$OUT/syn_deep_127.sent.bin"
 cl_response 'application/json' 'HTTP/1.1 200 OK' "$DEEP_127" > "$OUT/syn_deep_127.recv.bin"
-
-request_get '/api/deep/128' 'application/json' > "$OUT/syn_deep_128.sent.bin"
-cl_response 'application/json' 'HTTP/1.1 200 OK' "$DEEP_128" > "$OUT/syn_deep_128.recv.bin"
 
 # ==============================================================================
 # Verification: every pair must be a well-formed HTTP/1.1 transcript

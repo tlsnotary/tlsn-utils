@@ -21,11 +21,11 @@
 //!   parse the lexeme as an integer. Lexemes like `1e999` are valid for us but
 //!   unrepresentable for serde — serde rejects the whole document, so they
 //!   cannot appear inside an accepted `Value`.
-//! - serde_json rejects two corpus documents outright: `syn_unicode` (a
+//! - serde_json rejects one corpus document outright: `syn_unicode` (a
 //!   lone-surrogate `\uD800` escape, valid RFC 8259 *grammar* which we accept
-//!   raw) and `syn_deep_128` (serde's stock recursion limit admits at most 127
-//!   nested containers; our documented cap is 128). For those the rejection
-//!   itself is asserted and our tree is kind-walked instead.
+//!   raw). For it the rejection itself is asserted and our tree is kind-walked
+//!   instead. (Our nesting-depth cap now matches serde's stock recursion limit
+//!   of 127, so deep nesting no longer diverges.)
 
 use std::{collections::BTreeSet, fs, path::PathBuf};
 
@@ -114,15 +114,6 @@ const FIXTURES: &[Fixture] = &[
         },
     ),
     fixture("syn_deep_127", OPAQUE, JSON),
-    fixture(
-        "syn_deep_128",
-        OPAQUE,
-        Claim::Json {
-            serde_rejects: Some(
-                "serde_json's recursion limit admits at most 127 nested containers",
-            ),
-        },
-    ),
 ];
 
 // === fixture loading (self-contained) ===
@@ -482,5 +473,4 @@ differential_tests! {
     syn_empty_containers,
     syn_unicode,
     syn_deep_127,
-    syn_deep_128,
 }

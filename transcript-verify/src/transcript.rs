@@ -40,9 +40,6 @@ fn str_span(buf: &[u8], span: Span) -> &str {
 // === pub(crate) construction seam (FROZEN: the validator builds these) ===
 
 /// The decoded payload of a validated body.
-// TODO(P1/B1): drop this allow once the validator's body walk constructs
-// the variants; until then only in-crate tests build them.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) enum BodyData<'a> {
     /// Body bytes borrowed directly from the source buffer
@@ -112,9 +109,6 @@ impl<'a> Transcript<'a> {
     /// `resp_body` must be `Some` exactly when the corresponding
     /// `table` body record is `Some`, and must hold the decoded bytes and
     /// derived chunk map produced by the body walk.
-    // TODO(P1/B1): drop this allow once `validate()` constructs the
-    // transcript; until then only in-crate tests call it.
-    #[allow(dead_code)]
     pub(crate) fn new(
         sent: &'a [u8],
         recv: &'a [u8],
@@ -256,9 +250,20 @@ impl<'t> Response<'t> {
     /// Possibly empty; untrimmed; charset-checked during validation (rule
     /// D1). The reason-phrase charset may admit obs-text bytes
     /// (0x80..=0xFF), which need not form valid UTF-8 — if the verified
-    /// span is not valid UTF-8 this returns `""` rather than panicking.
+    /// span is not valid UTF-8 this returns `""` rather than panicking. For
+    /// a possibly-non-UTF-8 reason, use [`reason_bytes`](Self::reason_bytes).
     pub fn reason(&self) -> &'t str {
         str_span(self.buf, self.spans.reason)
+    }
+
+    /// Returns the raw reason-phrase bytes.
+    ///
+    /// The verified span exactly (rule D1), returned as bytes because the
+    /// reason-phrase charset may contain obs-text (0x80..=0xFF) that need
+    /// not form valid UTF-8 — analogous to [`Header::value`]. Possibly
+    /// empty; untrimmed. Lossless companion to [`reason`](Self::reason).
+    pub fn reason_bytes(&self) -> &'t [u8] {
+        slice_span(self.buf, self.spans.reason)
     }
 
     /// Returns an iterator over all headers, in order of appearance (same
@@ -1301,6 +1306,21 @@ mod tests {
         let f = reason_fixture("200", b"\x80K", 200);
         let t = f.transcript();
         assert_eq!(t.response().reason(), "");
+        // ...but the raw verified span is recoverable losslessly.
+        assert_eq!(t.response().reason_bytes(), b"\x80K");
+    }
+
+    #[test]
+    fn reason_bytes_matches_reason_for_valid_utf8() {
+        // For a UTF-8 reason the bytes equal the string's bytes; an empty
+        // reason yields an empty slice.
+        let f = plain_fixture();
+        let t = f.transcript();
+        assert_eq!(t.response().reason(), "OK");
+        assert_eq!(t.response().reason_bytes(), b"OK");
+        let f = reason_fixture("204", b"", 204);
+        let t = f.transcript();
+        assert_eq!(t.response().reason_bytes(), b"");
     }
 
     // === headers ===

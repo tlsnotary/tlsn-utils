@@ -14,18 +14,21 @@ use crate::{
 /// Maximum container nesting depth (rule F5).
 ///
 /// Cap semantics: the depth of a position is the number of `Object`/`Array`
-/// frames open at once. A document whose deepest position has exactly 128
-/// open containers validates; opening a 129th is an error. (Matches
-/// `serde_json`'s default recursion limit — anything deeper is toxic for
-/// downstream consumers.)
-const MAX_JSON_DEPTH: usize = 128;
+/// frames open at once. A document whose deepest position has exactly 127
+/// open containers validates; opening a 128th is an error. (Matches
+/// `serde_json`'s default recursion limit, so any document we accept stays
+/// re-parseable downstream — anything deeper is toxic for those consumers.)
+///
+/// Shared with the host span emitter (`host/json.rs`) so the two agree on
+/// the cap by construction.
+pub(crate) const MAX_JSON_DEPTH: usize = 127;
 
 /// Shorthand for an [`Error::Json`] at a decoded-body position.
 ///
 /// Positions are always `<= content.len() <= 2^30` when called from
 /// [`validate_json`]; the saturation only guards host-side misuse on
-/// gigantic buffers.
-fn json_err(at: usize, reason: &'static str) -> Error {
+/// gigantic buffers. Shared with the host span emitter (`host/json.rs`).
+pub(crate) fn json_err(at: usize, reason: &'static str) -> Error {
     Error::Json {
         at: u32::try_from(at).unwrap_or(u32::MAX),
         reason,
@@ -37,8 +40,9 @@ fn is_jws(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | b'\r')
 }
 
-/// Advances the cursor over any run of JSON whitespace.
-fn skip_jws(src: &[u8], mut p: usize) -> usize {
+/// Advances the cursor over any run of JSON whitespace. Shared with the
+/// host span emitter (`host/json.rs`).
+pub(crate) fn skip_jws(src: &[u8], mut p: usize) -> usize {
     while let Some(&b) = src.get(p) {
         if !is_jws(b) {
             break;
@@ -63,7 +67,7 @@ struct Frame {
 /// group F).
 ///
 /// `content` is a decoded body; all node spans are in decoded-body
-/// coordinates. Single forward pass with an explicit stack (depth ≤ 128,
+/// coordinates. Single forward pass with an explicit stack (depth ≤ 127,
 /// see [`MAX_JSON_DEPTH`]) and a lockstep node cursor:
 ///
 /// - one linear UTF-8 check of the whole body (F0);
@@ -132,11 +136,11 @@ pub(crate) fn validate_json(content: &[u8], nodes: &[JsonNode]) -> Result<(), Er
         k += 1;
 
         if kind == JsonKind::Object || kind == JsonKind::Array {
-            // F5: depth cap. With 128 frames already open, a 129th
-            // container is rejected; depth 128 itself validates.
+            // F5: depth cap. With 127 frames already open, a 128th
+            // container is rejected; depth 127 itself validates.
             if stack.len() >= MAX_JSON_DEPTH {
                 return Err(Error::Table {
-                    reason: "JSON nesting depth exceeds 128",
+                    reason: "JSON nesting depth exceeds 127",
                 });
             }
             let is_object = kind == JsonKind::Object;
@@ -1361,17 +1365,21 @@ mod tests {
 
     #[test]
     fn depth_cap_boundary() {
-        // Pinned cap semantics (MAX_JSON_DEPTH = 128): a document whose
-        // deepest position has up to 128 simultaneously open containers
-        // validates; opening a 129th is an error.
+        // Pinned cap semantics (MAX_JSON_DEPTH = 127): a document whose
+        // deepest position has up to 127 simultaneously open containers
+        // validates; opening a 128th is an error. (Matches serde_json's
+        // default recursion limit.)
         let (content, nodes) = nested_arrays(127);
         validate_json(&content, &nodes).unwrap();
         let (content, nodes) = nested_arrays(128);
-        validate_json(&content, &nodes).unwrap();
+        assert_table_err(
+            validate_json(&content, &nodes),
+            "JSON nesting depth exceeds 127",
+        );
         let (content, nodes) = nested_arrays(129);
         assert_table_err(
             validate_json(&content, &nodes),
-            "JSON nesting depth exceeds 128",
+            "JSON nesting depth exceeds 127",
         );
     }
 

@@ -52,6 +52,67 @@ for de-chunking.
   and `Body::content_to_source` maps decoded-body ranges back to wire-byte
   ranges for selective disclosure.
 
+## How validation works
+
+The whole design rests on one mechanism: a **single deterministic cursor
+walks the real bytes left-to-right**, and the table is only ever checked for
+*equality* against what the cursor independently derives. The table never
+says where something is or what type it has — the bytes decide, and the table
+must match. A lie in the table therefore fails a concrete `==`, never slips
+through.
+
+**Is the transcript well-formed?** `validate` makes one forward pass per
+buffer. For the request: scan a method token from byte 0 → require a single
+`SP` → scan the target → require the exact literal `` HTTP/1.1\r\n`` → walk
+header lines until the blank line → derive framing → walk the body. Each step
+starts exactly where the previous ended. Three things are enforced at once:
+*charset gates* (method is `tchar`, target is `0x21..=0x7E`, header values
+exclude CR/LF/NUL/DEL), *literal anchors* (`expect_lit` requires exact bytes —
+this is where a bad version or a bare `LF` dies), and *total coverage* (the
+body must end exactly at `buf.len()`, which is what stops a second message
+smuggled after the first). Framing (Content-Length vs chunked vs close) is
+**derived from the verified headers**, not read from the table, so a body
+cannot be relabelled to grab different bytes.
+
+**HTTP/1.1 only.** The version is a byte-exact literal match against
+`HTTP/1.1` — not a parse of major/minor numbers — so `HTTP/1.0`, `http/1.1`,
+and `HTTP/2.0` all fail at that anchor. This is deliberate: HTTP/2 and /3 are
+*binary* protocols (no `GET /path HTTP/1.1\r\n` exists on their wire), so they
+could never reach a text parser; and HTTP/1.0 frames bodies differently
+(close-delimited by default, no chunked), so accepting it and applying 1.1
+framing rules would be subtly unsound. Rejecting the exact literal is safer
+than mis-handling it. (`spansy`/`httparse` accept 1.0; the host's self-check
+turns that into an upfront error so no doomed table reaches the guest.)
+
+**Does a header value belong to its name?** The binding is *positional, by
+construction*. For each line the scanner reads: a run of `tchar` name bytes →
+the `:` that must immediately follow (no space before it) → optional
+whitespace → the value run up to `CR` → trailing-whitespace trim → the
+required `CRLF`. The value is literally "the bytes after this name's colon, up
+to this line's CRLF" — it is never matched to a name by searching, so a value
+cannot drift to a different header. The table's claimed name/value spans must
+then *equal* what the scan derived, and records are consumed in **lockstep**
+with the lines (line *i* ↔ record *i*, with the counts required equal). So an
+inserted, dropped, reordered, or one-byte-shifted header span all fail.
+
+**Does a JSON value belong to its key?** Same principle over the JSON grammar.
+The byte cursor walks the document while the pre-order node array is consumed
+in lockstep. Inside an object the loop is rigid: require `"` (the node must be
+kind `Key`, span equal to the scanned string) → require `:` → the *next* node
+is this key's value and must start exactly at the cursor sitting just past the
+colon. So a key and value are bound because the value is whatever
+grammatically follows *this* key's colon. Three further checks lock it in: the
+**kind is byte-forced** (the first byte — `{`, `[`, `"`, `t`/`f`, `n`, digit —
+determines the only admissible `kind`); **scalar extents are equality-checked**
+against a scanner's derived end (so `"12"` can't be claimed inside the bytes
+`123` — the scanner returns the maximal lexeme and a short claim fails the
+`==`); and **containers verify on close** (`node.end == cursor` and
+`node.size == nodes consumed in the subtree`), which prevents re-parenting a
+child or smuggling extra nodes. Per-object duplicate keys are rejected by
+*decoded* comparison, so a key and its escaped alias — the same character
+written literally in one and as a `\uXXXX` escape in the other — still
+collide.
+
 ## Usage
 
 Host side (default features; add `serde` to ship the table across the VM
@@ -149,7 +210,7 @@ Non-goals (v1):
   span)
 - JSON escape decoding (accessors return raw string bytes; decoding may come
   later)
-- JSON nesting depth > 128
+- JSON nesting depth > 127 (matches `serde_json`'s default recursion limit)
 
 ## Performance
 

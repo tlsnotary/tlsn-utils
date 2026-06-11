@@ -106,8 +106,7 @@ re-runs are byte-identical; verified via md5 across runs). Host is always
 | `syn_root_null` | GET /api/root/null | application/json | Content-Length: 4 | `null` | 142 / 153 | null as JSON root |
 | `syn_empty_containers` | GET /api/empty | application/json | Content-Length: 45 | `{"obj":{},"arr":[],"str":"","nested":[{},[]]}` | 138 / 195 | empty object/array/string, nested empties |
 | `syn_unicode` | GET /api/unicode | application/json | Content-Length: 52 | `{"u":"Aé中😀 via 😀", "lone":"\uD800"}` — real 2/3/4-byte UTF-8 chars **plus the 6-char `\uXXXX` sequences as raw backslash-u text**, including a **lone surrogate `\uD800`** | 140 / 202 | unicode escapes, lone surrogate (accepted per RFC 8259 grammar), multi-byte UTF-8 |
-| `syn_deep_127` | GET /api/deep/127 | application/json | Content-Length: 255 | `[`×127 `1` `]`×127 | 141 / 406 | nesting exactly at the 127 depth boundary |
-| `syn_deep_128` | GET /api/deep/128 | application/json | Content-Length: 257 | `[`×128 `1` `]`×128 | 141 / 408 | nesting at the 128 depth limit |
+| `syn_deep_127` | GET /api/deep/127 | application/json | Content-Length: 255 | `[`×127 `1` `]`×127 | 141 / 406 | nesting at the maximum accepted depth (127) |
 
 In the `syn_unicode` row above the `😀 via …` body is rendered by Markdown;
 the actual file bytes after `via ` are the twelve ASCII characters

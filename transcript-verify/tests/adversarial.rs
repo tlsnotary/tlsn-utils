@@ -1428,7 +1428,7 @@ fn attack_json_array_elements_reordered() {
 
 #[test]
 fn attack_json_depth_129_rejected() {
-    // Rule A/F (depth cap 128): a 129-deep nested array exceeds the documented
+    // Rule A/F (depth cap 127): a 129-deep nested array exceeds the documented
     // nesting cap and must be rejected. Built by loop: `[`*129 + `1` + `]`*129.
     let depth = 129usize;
     let mut content = Vec::new();
@@ -1449,6 +1449,6 @@ fn attack_json_depth_129_rejected() {
     let (recv, table) = cl_json(&content, nodes);
     assert!(
         validate(GET_SENT, &recv, &table).is_err(),
-        "FORGERY: depth-129 document accepted (cap is 128)"
+        "FORGERY: depth-129 document accepted (cap is 127)"
     );
 }

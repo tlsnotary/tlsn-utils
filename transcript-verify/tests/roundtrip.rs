@@ -139,7 +139,7 @@ const fn row(
     }
 }
 
-/// All 33 corpus pairs. The sweep fails on any fixture missing from this
+/// All 32 corpus pairs. The sweep fails on any fixture missing from this
 /// table and on any row missing from disk, so corpus and expectations can
 /// only drift loudly.
 const EXPECTATIONS: &[Expect] = &[
@@ -291,15 +291,6 @@ const EXPECTATIONS: &[Expect] = &[
         "OK",
         None,
         cl(true, 255),
-    ),
-    row(
-        "synthetic/syn_deep_128",
-        "GET",
-        "/api/deep/128",
-        200,
-        "OK",
-        None,
-        cl(true, 257),
     ),
     row(
         "synthetic/syn_dup_set_cookie",
@@ -472,8 +463,8 @@ fn check_side(
 fn corpus_sweep_roundtrips_every_pair() {
     let names = discover_corpus();
     assert!(
-        names.len() >= 33,
-        "silent corpus loss: only {} fixture pairs found (expected >= 33): {names:?}",
+        names.len() >= 32,
+        "silent corpus loss: only {} fixture pairs found (expected >= 32): {names:?}",
         names.len()
     );
     for exp in EXPECTATIONS {

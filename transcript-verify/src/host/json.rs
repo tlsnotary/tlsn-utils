@@ -5,39 +5,13 @@ use alloc::vec::Vec;
 use crate::{
     error::Error,
     spans::{JsonKind, JsonNode},
-    validate::json::{scan_number, scan_string, validate_json},
+    validate::json::{MAX_JSON_DEPTH, json_err, scan_number, scan_string, skip_jws, validate_json},
 };
-
-/// Maximum container nesting depth, mirroring the validator's cap (rule F5)
-/// so the emitter never builds a large node table the checker is guaranteed
-/// to reject.
-const MAX_JSON_DEPTH: usize = 128;
 
 /// Maximum content length, mirroring the validator driver's 2^30-byte
 /// coordinate limit. Inputs under this limit make every `usize`-to-`u32`
 /// position cast below lossless.
 const MAX_CONTENT_LEN: usize = 1 << 30;
-
-/// Shorthand for an [`Error::Json`] at a decoded-body position — the same
-/// shape the checker reports.
-fn json_err(at: usize, reason: &'static str) -> Error {
-    Error::Json {
-        at: u32::try_from(at).unwrap_or(u32::MAX),
-        reason,
-    }
-}
-
-/// Advances the cursor over any run of JSON whitespace (RFC 8259 `ws`:
-/// space, HTAB, LF, CR).
-fn skip_jws(src: &[u8], mut p: usize) -> usize {
-    while let Some(&b) = src.get(p) {
-        if !matches!(b, b' ' | b'\t' | b'\n' | b'\r') {
-            break;
-        }
-        p += 1;
-    }
-    p
-}
 
 /// One open container during the emit walk.
 struct Frame {
@@ -51,8 +25,7 @@ struct Frame {
 /// decoded-body coordinates.
 ///
 /// Explicit-stack recursive descent sharing the validator's
-/// [`scan_string`](crate::validate::json::scan_string) /
-/// [`scan_number`](crate::validate::json::scan_number) scanners — so host
+/// [`scan_string`] / [`scan_number`] scanners — so host
 /// and guest agree on the grammar by construction. Nodes are pushed
 /// pre-order; container `end` and `size` are patched at container close.
 /// The walk mirrors the checker's, so the two visit nodes in the same
@@ -60,7 +33,7 @@ struct Frame {
 ///
 /// Guarantee by construction: before returning, the emitted table is run
 /// through the validator's own
-/// [`validate_json`](crate::validate::json::validate_json); a rejection is
+/// [`validate_json`]; a rejection is
 /// returned as that error instead of `Ok`. Emit-accepted is therefore a
 /// subset of validate-accepted unconditionally — in particular duplicate
 /// object keys, non-UTF-8 bodies, and every other checker policy are
@@ -87,11 +60,11 @@ pub(crate) fn emit(content: &[u8]) -> Result<Vec<JsonNode>, Error> {
         };
         match b {
             b'{' | b'[' => {
-                // Same cap semantics as the checker (rule F5): with 128
-                // frames already open, a 129th container is rejected.
+                // Same cap semantics as the checker (rule F5): with 127
+                // frames already open, a 128th container is rejected.
                 if stack.len() >= MAX_JSON_DEPTH {
                     return Err(Error::Table {
-                        reason: "JSON nesting depth exceeds 128",
+                        reason: "JSON nesting depth exceeds 127",
                     });
                 }
                 let is_object = b == b'{';
@@ -508,8 +481,6 @@ mod tests {
             // Lone surrogate escapes: grammar-level check, never decoded.
             quoted_uesc("D800"),
             quoted_uesc("DFFF"),
-            // Depth 128: at the checker's cap, past serde's default.
-            nested_arrays(128),
         ]
     }
 
@@ -547,14 +518,19 @@ mod tests {
 
     #[test]
     fn depth_cap_boundary() {
-        // 127 and 128 open containers validate; a 129th is rejected with
-        // the checker's exact error.
+        // 127 open containers validate; a 128th (and a 129th) is rejected
+        // with the checker's exact error.
         assert!(emit(&nested_arrays(127)).is_ok());
-        assert!(emit(&nested_arrays(128)).is_ok());
+        assert_eq!(
+            emit(&nested_arrays(128)),
+            Err(Error::Table {
+                reason: "JSON nesting depth exceeds 127",
+            })
+        );
         assert_eq!(
             emit(&nested_arrays(129)),
             Err(Error::Table {
-                reason: "JSON nesting depth exceeds 128",
+                reason: "JSON nesting depth exceeds 127",
             })
         );
     }
@@ -706,14 +682,13 @@ mod tests {
             assert!(emit(&doc).is_ok(), "emit rejected lone {hex}");
         }
 
-        // 3. Depth exactly 128: inside the checker's cap, past serde's default
-        //    recursion limit.
-        let d128 = nested_arrays(128);
-        assert!(!serde_accepts(&d128));
-        assert!(emit(&d128).is_ok());
-        // At 127 and 129 the two agree (asserted divergence is ONLY 128).
+        // 3. Depth: NO divergence. Our cap matches serde_json's default recursion limit
+        //    (127), so the two agree at every depth — 127 both accept, 128 and beyond
+        //    both reject.
         let d127 = nested_arrays(127);
         assert!(serde_accepts(&d127) && emit(&d127).is_ok());
+        let d128 = nested_arrays(128);
+        assert!(!serde_accepts(&d128) && emit(&d128).is_err());
         let d129 = nested_arrays(129);
         assert!(!serde_accepts(&d129) && emit(&d129).is_err());
     }
