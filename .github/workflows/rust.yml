@@ -34,6 +34,9 @@ jobs:
       - name: Build
         run: cargo build
 
+      - name: Build transcript-verify (no_std core)
+        run: cargo build -p transcript-verify --no-default-features
+
       - name: "Test"
         # Run all tests (bins, examples, lib, integration and docs)
         # https://doc.rust-lang.org/cargo/commands/cargo-test.html#target-selection
