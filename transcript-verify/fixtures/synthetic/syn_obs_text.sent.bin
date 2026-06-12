@@ -1,0 +1,6 @@
+GET /headers/obs-text HTTP/1.1
+Host: synthetic.test
+User-Agent: transcript-verify-fixtures/0.1
+Accept: */*
+Connection: close
+

@@ -1,0 +1,52 @@
+HTTP/1.1 200 OK
+access-control-allow-credentials: true
+access-control-allow-origin: *
+content-type: application/json; charset=utf-8
+date: Wed, 10 Jun 2026 13:08:42 GMT
+content-length: 672
+connection: close
+server: Fly/1ce1a02c8 (2026-06-10)
+via: 1.1 fly.io, 1.1 fly.io
+fly-request-id: 01KTRTCF8F9NB1K5383CZHB58H-fra
+
+{
+  "args": {},
+  "headers": {
+    "Accept": [
+      "*/*"
+    ],
+    "Accept-Encoding": [
+      "identity"
+    ],
+    "Connection": [
+      "close"
+    ],
+    "Host": [
+      "httpbingo.org"
+    ],
+    "User-Agent": [
+      "transcript-verify-fixtures/0.1"
+    ],
+    "Via": [
+      "1.1 fly.io, 1.1 fly.io"
+    ],
+    "X-Forwarded-For": [
+      "205.147.28.36, 66.241.125.232"
+    ],
+    "X-Forwarded-Port": [
+      "443"
+    ],
+    "X-Forwarded-Proto": [
+      "https"
+    ],
+    "X-Forwarded-Ssl": [
+      "on"
+    ],
+    "X-Request-Start": [
+      "t=1781096922383699"
+    ]
+  },
+  "method": "GET",
+  "origin": "205.147.28.36",
+  "url": "https://httpbingo.org/get"
+}

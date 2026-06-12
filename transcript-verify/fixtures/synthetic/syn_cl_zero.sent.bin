@@ -1,0 +1,8 @@
+POST /api/ping HTTP/1.1
+Host: synthetic.test
+User-Agent: transcript-verify-fixtures/0.1
+Accept: application/json
+Content-Type: application/json
+Content-Length: 0
+Connection: close
+
