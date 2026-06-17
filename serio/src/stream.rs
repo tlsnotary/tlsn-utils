@@ -12,7 +12,7 @@ use futures_core::FusedFuture;
 
 #[cfg(feature = "compat")]
 use crate::FuturesCompat;
-use crate::{Deserialize, future::assert_future};
+use crate::{Message, future::assert_future};
 
 /// A stream with an error type of `std::io::Error`.
 pub trait IoStream: Stream<Error = std::io::Error> {}
@@ -48,7 +48,7 @@ pub trait Stream {
     ///
     /// - `Poll::Ready(None)` means that the stream has terminated, and
     ///   `poll_next` should not be invoked again.
-    fn poll_next<Item: Deserialize>(
+    fn poll_next<Item: Message>(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Item, Self::Error>>>;
@@ -89,7 +89,7 @@ pub trait Stream {
 impl<S: ?Sized + Stream + Unpin> Stream for &mut S {
     type Error = S::Error;
 
-    fn poll_next<Item: Deserialize>(
+    fn poll_next<Item: Message>(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Item, Self::Error>>> {
@@ -108,7 +108,7 @@ where
 {
     type Error = <P::Target as Stream>::Error;
 
-    fn poll_next<Item: Deserialize>(
+    fn poll_next<Item: Message>(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Item, Self::Error>>> {
@@ -175,7 +175,7 @@ pub trait StreamExt: Stream {
     /// assert_eq!(stream.next().await, None);
     /// # });
     /// ```
-    fn next<Item: Deserialize>(&mut self) -> Next<'_, Self, Item>
+    fn next<Item: Message>(&mut self) -> Next<'_, Self, Item>
     where
         Self: Unpin,
     {
@@ -185,7 +185,7 @@ pub trait StreamExt: Stream {
     /// Wraps the stream in a compatibility layer that allows it to be used as a
     /// futures 0.3 stream.
     #[cfg(feature = "compat")]
-    fn compat_stream<Item: Deserialize>(self) -> FuturesCompat<Self, Item>
+    fn compat_stream<Item: Message>(self) -> FuturesCompat<Self, Item>
     where
         Self: Sized,
     {
@@ -194,7 +194,7 @@ pub trait StreamExt: Stream {
 
     /// A convenience method for calling [`Stream::poll_next`] on [`Unpin`]
     /// stream types.
-    fn poll_next_unpin<Item: Deserialize>(
+    fn poll_next_unpin<Item: Message>(
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Item, Self::Error>>>
@@ -226,13 +226,13 @@ impl<'a, St: ?Sized + Stream + Unpin, Item> Next<'a, St, Item> {
     }
 }
 
-impl<St: ?Sized + FusedStream + Unpin, Item: Deserialize> FusedFuture for Next<'_, St, Item> {
+impl<St: ?Sized + FusedStream + Unpin, Item: Message> FusedFuture for Next<'_, St, Item> {
     fn is_terminated(&self) -> bool {
         self.stream.is_terminated()
     }
 }
 
-impl<St: ?Sized + Stream + Unpin, Item: Deserialize> Future for Next<'_, St, Item> {
+impl<St: ?Sized + Stream + Unpin, Item: Message> Future for Next<'_, St, Item> {
     type Output = Option<Result<Item, St::Error>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -245,7 +245,7 @@ impl<St: ?Sized + Stream + Unpin, Item: Deserialize> Future for Next<'_, St, Ite
 pub trait IoStreamExt: IoStream {
     /// Creates a future that resolves to the next item in the stream, returning
     /// an error if the stream is exhausted.
-    fn expect_next<Item: Deserialize>(&mut self) -> ExpectNext<'_, Self, Item>
+    fn expect_next<Item: Message>(&mut self) -> ExpectNext<'_, Self, Item>
     where
         Self: Unpin,
     {
@@ -268,7 +268,7 @@ pub struct ExpectNext<'a, St: ?Sized, Item> {
 
 impl<St: ?Sized + Unpin, Item> Unpin for ExpectNext<'_, St, Item> {}
 
-impl<St: ?Sized + IoStream + Unpin, Item: Deserialize> Future for ExpectNext<'_, St, Item> {
+impl<St: ?Sized + IoStream + Unpin, Item: Message> Future for ExpectNext<'_, St, Item> {
     type Output = Result<Item, St::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
