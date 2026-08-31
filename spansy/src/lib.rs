@@ -71,6 +71,9 @@ impl Store for Box<[u8]> {}
 /// A view into a byte store with tracked indices.
 ///
 /// Views can be sliced into subviews while preserving the original indices.
+/// For string views, the selected ranges must form valid UTF-8 when
+/// concatenated in index order; a code point may cross physical range
+/// boundaries.
 ///
 /// # Example
 ///
@@ -219,19 +222,17 @@ impl<S: Store> View<S, str> {
     ///
     /// # Panics
     ///
-    /// Panics if indices are not a subset of this view's indices or split a
-    /// UTF-8 character.
+    /// Panics if indices are not a subset of this view's indices or do not form
+    /// valid UTF-8 when their ranges are concatenated in index order. A UTF-8
+    /// code point may cross physical range boundaries.
     pub(crate) fn subview(&self, indices: RangeSet<usize>) -> Self {
         assert!(
             indices.is_subset(&self.indices),
             "indices should be subset of view"
         );
 
-        // Validate UTF-8 boundaries
-        let bytes = self.store.as_ref();
-        for range in indices.iter() {
-            std::str::from_utf8(&bytes[range]).expect("indices should not split UTF-8 characters");
-        }
+        validate_utf8_indices(self.store.as_ref(), &indices)
+            .expect("indices should contain valid UTF-8");
 
         Self {
             store: self.store.clone(),
@@ -250,13 +251,7 @@ impl<S: Store> View<S, str> {
     pub fn select(&self, range: Range<usize>) -> Option<Self> {
         let indices = select_indices(&self.indices, range)?;
 
-        // Validate UTF-8 boundaries
-        let bytes = self.store.as_ref();
-        for r in indices.iter() {
-            if std::str::from_utf8(&bytes[r]).is_err() {
-                return None;
-            }
-        }
+        validate_utf8_indices(self.store.as_ref(), &indices).ok()?;
 
         Some(Self {
             store: self.store.clone(),
@@ -270,16 +265,61 @@ impl<S: Store> TryFrom<View<S>> for View<S, str> {
     type Error = std::str::Utf8Error;
 
     fn try_from(value: View<S>) -> Result<Self, Self::Error> {
-        let data = value.store.as_ref();
-        for range in value.indices.iter() {
-            std::str::from_utf8(&data[range])?;
-        }
+        validate_utf8_indices(value.store.as_ref(), &value.indices)?;
 
         Ok(Self {
             store: value.store,
             indices: value.indices,
             _marker: PhantomData,
         })
+    }
+}
+
+/// Validates that the bytes selected by `indices` form valid UTF-8 when
+/// concatenated in index order.
+fn validate_utf8_indices(
+    bytes: &[u8],
+    indices: &RangeSet<usize>,
+) -> Result<(), std::str::Utf8Error> {
+    let mut pending = [0u8; 4];
+    let mut pending_len = 0;
+
+    for range in indices.iter() {
+        let segment = &bytes[range];
+        let mut offset = 0;
+
+        while pending_len > 0 && offset < segment.len() {
+            pending[pending_len] = segment[offset];
+            pending_len += 1;
+            offset += 1;
+
+            match std::str::from_utf8(&pending[..pending_len]) {
+                Ok(_) => pending_len = 0,
+                Err(err) if err.error_len().is_some() => return Err(err),
+                Err(_) => continue,
+            }
+        }
+
+        if pending_len > 0 {
+            continue;
+        }
+
+        let remaining = &segment[offset..];
+        if let Err(err) = std::str::from_utf8(remaining) {
+            if err.error_len().is_some() {
+                return Err(err);
+            }
+
+            let incomplete = &remaining[err.valid_up_to()..];
+            pending[..incomplete.len()].copy_from_slice(incomplete);
+            pending_len = incomplete.len();
+        }
+    }
+
+    if pending_len == 0 {
+        Ok(())
+    } else {
+        std::str::from_utf8(&pending[..pending_len]).map(|_| ())
     }
 }
 
@@ -594,5 +634,33 @@ mod tests {
 
         let sub = view.select(3..6).unwrap();
         assert_eq!(sub.as_str(), "本");
+    }
+
+    #[test]
+    fn test_view_str_utf8_across_non_contiguous_ranges() {
+        let data = [0xc2, b'-', 0xa2, b' ', 0xe2, b'-', 0x82, b'-', 0xac];
+        let byte_view =
+            View::new(data.as_slice()).subview(RangeSet::from([0..1, 2..5, 6..7, 8..9]));
+        let string_view: View<_, str> = byte_view.try_into().unwrap();
+
+        assert_eq!(string_view.as_str(), "¢ €");
+
+        let euro = string_view.select(3..6).unwrap();
+        assert_eq!(euro.as_str(), "€");
+        assert_eq!(*euro.indices(), RangeSet::from([4..5, 6..7, 8..9]));
+
+        assert!(string_view.select(3..5).is_none());
+    }
+
+    #[test]
+    fn test_view_str_rejects_invalid_utf8_across_non_contiguous_ranges() {
+        let incomplete = [0xe2, b'-', 0x82];
+        let incomplete_view =
+            View::new(incomplete.as_slice()).subview(RangeSet::from([0..1, 2..3]));
+        assert!(TryInto::<View<_, str>>::try_into(incomplete_view).is_err());
+
+        let invalid = [0xe2, b'-', b'x'];
+        let invalid_view = View::new(invalid.as_slice()).subview(RangeSet::from([0..1, 2..3]));
+        assert!(TryInto::<View<_, str>>::try_into(invalid_view).is_err());
     }
 }

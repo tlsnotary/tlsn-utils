@@ -423,14 +423,19 @@ fn parse_chunked_body<S: Store>(
     content_type: &[u8],
 ) -> Result<(Body<S>, usize), ParseError> {
     let full_data = view.as_bytes();
-    let src = &full_data[start..];
+    let src = full_data
+        .get(start..)
+        .ok_or_else(|| ParseError("chunked body starts beyond source".to_string()))?;
     let mut pos = 0;
     let mut chunks = Vec::new();
     let mut chunk_ranges: Vec<Range<usize>> = Vec::new();
 
     loop {
         // Find CRLF after chunk size
-        let size_end = src[pos..]
+        let remaining = src
+            .get(pos..)
+            .ok_or_else(|| ParseError("chunk position exceeds source".to_string()))?;
+        let size_end = remaining
             .windows(2)
             .position(|w| w == b"\r\n")
             .ok_or_else(|| ParseError("missing CRLF after chunk size".to_string()))?;
@@ -444,7 +449,9 @@ fn parse_chunked_body<S: Store>(
         let chunk_size = usize::from_str_radix(size_part, 16)
             .map_err(|e| ParseError(format!("invalid chunk size: {e}")))?;
 
-        pos += size_end + 2; // skip size line and CRLF
+        pos = pos
+            .checked_add(size_end + 2)
+            .ok_or_else(|| ParseError("chunk position overflow".to_string()))?;
 
         if chunk_size == 0 {
             // Last chunk - now parse trailers
@@ -452,8 +459,22 @@ fn parse_chunked_body<S: Store>(
         }
 
         // Record chunk data range (relative to view start)
-        let data_start = start + pos;
-        let data_end = data_start + chunk_size;
+        let chunk_end = pos
+            .checked_add(chunk_size)
+            .ok_or_else(|| ParseError("chunk size exceeds source".to_string()))?;
+        if chunk_end > src.len() {
+            return Err(ParseError(format!(
+                "chunk data exceeds source: declared {chunk_size} bytes, only {} remain",
+                src.len().saturating_sub(pos)
+            )));
+        }
+
+        let data_start = start
+            .checked_add(pos)
+            .ok_or_else(|| ParseError("chunk position overflow".to_string()))?;
+        let data_end = start
+            .checked_add(chunk_end)
+            .ok_or_else(|| ParseError("chunk position overflow".to_string()))?;
 
         chunks.push(Chunk {
             view: view
@@ -462,13 +483,16 @@ fn parse_chunked_body<S: Store>(
         });
         chunk_ranges.push(data_start..data_end);
 
-        pos += chunk_size;
+        pos = chunk_end;
 
         // Skip trailing CRLF after chunk data
-        if src.get(pos..pos + 2) != Some(b"\r\n") {
+        let crlf_end = pos
+            .checked_add(2)
+            .ok_or_else(|| ParseError("chunk position overflow".to_string()))?;
+        if src.get(pos..crlf_end) != Some(b"\r\n") {
             return Err(ParseError("missing CRLF after chunk data".to_string()));
         }
-        pos += 2;
+        pos = crlf_end;
     }
 
     // Parse trailers (headers after last chunk)
@@ -555,9 +579,9 @@ fn parse_trailers<S: Store>(
         let name = HeaderName {
             view: view
                 .select(name_range)
-                .expect("trailer name range should be valid")
+                .ok_or_else(|| ParseError("trailer name range exceeds source".to_string()))?
                 .try_into()
-                .expect("trailer name should be valid UTF-8"),
+                .map_err(|err| ParseError(format!("invalid trailer name encoding: {err}")))?,
         };
         let value = HeaderValue {
             view: view
@@ -793,6 +817,43 @@ mod tests {
     }
 
     #[test]
+    fn test_chunked_response_json_split_inside_utf8_code_point() {
+        let mut src = b"HTTP/1.1 200 OK\r\n\
+            Transfer-Encoding: chunked\r\n\
+            Content-Type: application/json\r\n\r\n"
+            .to_vec();
+        let prefix = br#"{"currency":""#;
+        let suffix = br#""}"#;
+
+        src.extend_from_slice(format!("{:x}\r\n", prefix.len() + 1).as_bytes());
+        src.extend_from_slice(prefix);
+        let first_euro_byte = src.len();
+        src.push(0xe2);
+        src.extend_from_slice(b"\r\n");
+
+        src.extend_from_slice(format!("{:x}\r\n", suffix.len() + 2).as_bytes());
+        let remaining_euro_bytes = src.len();
+        src.extend_from_slice(&[0x82, 0xac]);
+        src.extend_from_slice(suffix);
+        src.extend_from_slice(b"\r\n0\r\n\r\n");
+
+        let res = parse_response(src).unwrap();
+        let BodyContent::Json(value) = res.body.unwrap().content else {
+            panic!("body should be json");
+        };
+
+        let currency = value.get("currency").unwrap();
+        assert_eq!(currency, "€");
+        assert_eq!(
+            currency.view().indices(),
+            &RangeSet::from([
+                first_euro_byte..first_euro_byte + 1,
+                remaining_euro_bytes..remaining_euro_bytes + 2,
+            ])
+        );
+    }
+
+    #[test]
     fn test_chunked_with_trailers() {
         let src = b"HTTP/1.1 200 OK\r\n\
             Transfer-Encoding: chunked\r\n\r\n\
@@ -871,5 +932,28 @@ mod tests {
             5\r\nhello\r\n";
         let err = parse_response(src).unwrap_err();
         assert!(err.0.contains("missing CRLF after chunk size"), "{}", err.0);
+
+        // Declared chunk data is larger than the remaining input.
+        let src = b"HTTP/1.1 200 OK\r\n\
+            Transfer-Encoding: chunked\r\n\r\n\
+            20\r\nshort";
+        let err = parse_response(src).unwrap_err();
+        assert!(err.0.contains("chunk data exceeds source"), "{}", err.0);
+
+        // Adding the declared chunk size to the current position overflows.
+        let src = format!(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n",
+            usize::MAX
+        );
+        let err = parse_response(src.as_bytes()).unwrap_err();
+        assert!(err.0.contains("chunk size exceeds source"), "{}", err.0);
+
+        // Trailer names must be valid UTF-8 and must not panic the parser.
+        let src = b"HTTP/1.1 200 OK\r\n\
+            Transfer-Encoding: chunked\r\n\r\n\
+            0\r\n\
+            \xff: value\r\n\r\n";
+        let err = parse_response(src).unwrap_err();
+        assert!(err.0.contains("invalid trailer name encoding"), "{}", err.0);
     }
 }
