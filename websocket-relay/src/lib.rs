@@ -129,6 +129,9 @@ pub async fn run(listener: TcpListener) -> Result<()> {
 async fn accept_ws(io: TcpStream) -> Result<Mode> {
     let mut uri = None;
 
+    // The callback's error type is tungstenite's `ErrorResponse`, whose size is
+    // fixed by that signature: it cannot be boxed on our side.
+    #[allow(clippy::result_large_err)]
     let mut ws = accept_hdr_async(io, |req: &Request<()>, res| {
         uri = Some(req.uri().clone());
 

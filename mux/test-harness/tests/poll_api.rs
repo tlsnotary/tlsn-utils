@@ -89,7 +89,7 @@ fn prop_config_send_recv_multi() {
 
             // Send/recv on each stream
             let mut tasks = Vec::new();
-            for (stream, msg) in streams.into_iter().zip(msgs.into_iter()) {
+            for (stream, msg) in streams.into_iter().zip(msgs) {
                 tasks.push(task::spawn(async move {
                     let mut stream = stream;
                     send_recv_message(&mut stream, &msg).await.unwrap();
