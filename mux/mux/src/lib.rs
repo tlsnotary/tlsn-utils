@@ -30,6 +30,7 @@ mod frame;
 
 pub(crate) mod connection;
 mod tagged_stream;
+mod traffic;
 
 pub use crate::{
     connection::{Connection, Handle, Stream},
@@ -38,6 +39,7 @@ pub use crate::{
         FrameDecodeError,
         header::{HeaderDecodeError, StreamId},
     },
+    traffic::Traffic,
 };
 
 const KIB: usize = 1024;

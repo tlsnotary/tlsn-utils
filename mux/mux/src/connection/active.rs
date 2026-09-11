@@ -6,6 +6,7 @@ use crate::{
         header::{self, CONNECTION_ID, Data, GoAway, Header, Ping, StreamId, Tag, WindowUpdate},
     },
     tagged_stream::TaggedStream,
+    traffic::{Counters, Traffic},
 };
 use futures::{
     channel::mpsc,
@@ -255,6 +256,7 @@ impl StreamRegistry {
 #[derive(Clone)]
 pub struct Handle {
     registry: Arc<Mutex<StreamRegistry>>,
+    traffic: Arc<Counters>,
 }
 
 impl Handle {
@@ -263,6 +265,15 @@ impl Handle {
     /// The stream ID is computed from the user ID using BLAKE3.
     pub fn new_stream(&self, user_id: &[u8]) -> Result<Stream> {
         StreamRegistry::new_stream(&self.registry, user_id)
+    }
+
+    /// Payload counters for this connection, cumulative since it was created.
+    ///
+    /// Sampling takes no locks and blocks nothing, so a watchdog may poll it
+    /// as often as it likes. The counters keep their final values once the
+    /// connection is gone.
+    pub fn traffic(&self) -> Traffic {
+        self.traffic.snapshot()
     }
 }
 
@@ -308,6 +319,8 @@ fn go_away_error(id: Id, code: u32) -> ConnectionError {
 pub(crate) struct Active<T> {
     id: Id,
     pub(super) config: Arc<Config>,
+    /// Payload counters, shared with every `Handle`.
+    traffic: Arc<Counters>,
     socket: Fuse<frame::Io<T>>,
 
     registry: Arc<Mutex<StreamRegistry>>,
@@ -370,6 +383,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         let accumulated_max_stream_windows = Arc::new(Mutex::new(0));
         let (new_receiver_tx, new_receiver_rx) = mpsc::unbounded();
         let driver_waker = Arc::new(AtomicWaker::new());
+        let traffic = Arc::new(Counters::default());
         let registry = Arc::new(Mutex::new(StreamRegistry::new(
             id,
             config.clone(),
@@ -381,6 +395,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         Active {
             id,
             config,
+            traffic,
             socket,
             registry,
             stream_receivers: SelectAll::default(),
@@ -398,6 +413,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
     pub(super) fn handle(&self) -> Handle {
         Handle {
             registry: self.registry.clone(),
+            traffic: self.traffic.clone(),
         }
     }
 
@@ -521,6 +537,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                     continue;
                 }
                 if let Some(frame) = self.pending_write_frame.take() {
+                    // Every stream frame passes here: data, window updates and
+                    // close frames alike. Only data carries payload.
+                    if frame.header().tag() == Tag::Data {
+                        self.traffic.record_out(frame.header().len().val());
+                    }
                     self.socket.start_send_unpin(frame)?;
                     continue;
                 }
@@ -797,6 +818,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                 shared.update_state(self.id, stream_id, State::RecvClosed);
             }
             shared.consume_receive_window(frame.body_len());
+            self.traffic.record_in(frame.body_len());
             shared.buffer.push(frame.into_body());
             if let Some(w) = shared.reader.take() {
                 w.wake()

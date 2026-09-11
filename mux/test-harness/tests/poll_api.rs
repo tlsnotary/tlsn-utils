@@ -21,7 +21,7 @@ use futures::{
 use quickcheck::QuickCheck;
 use std::{panic::panic_any, pin::pin};
 use test_harness::*;
-use tlsn_mux::{Config, Connection, ConnectionError, StreamId, DEFAULT_CREDIT};
+use tlsn_mux::{Config, Connection, ConnectionError, StreamId, Traffic, DEFAULT_CREDIT};
 use tokio::{net::TcpStream, task};
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
@@ -1849,6 +1849,7 @@ fn high_load_stream_churn_no_slot_leak_or_deadlock() {
 
 const TAG_DATA: u8 = 0x00;
 const TAG_WINDOW_UPDATE: u8 = 0x01;
+const TAG_PING: u8 = 0x02;
 const TAG_GO_AWAY: u8 = 0x03;
 const FLAG_FIN: u8 = 0x01;
 const FLAG_RST: u8 = 0x02;
@@ -1983,6 +1984,97 @@ fn exceeding_the_stream_limit_sends_protocol_error() {
         Some(1),
         "exceeding the stream limit should report a protocol error"
     );
+}
+
+/// A ping request for the session id, carrying `nonce`.
+fn raw_ping(nonce: u32) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(HEADER_SIZE);
+    buf.push(TAG_PING);
+    buf.push(FLAG_SYN);
+    buf.extend_from_slice(&nonce.to_be_bytes());
+    buf.extend_from_slice(&[0u8; 8]);
+    buf
+}
+
+/// Payload arriving from the peer moves the inbound counter, and nothing
+/// else does: a bodyless open or close is activity but not progress, and
+/// control traffic keeps a connection alive without carrying anything the
+/// application can read. Both must leave the counter still, or a stalled
+/// connection looks busy to a caller watching it.
+#[test]
+fn traffic_counts_inbound_payload() {
+    let _ = env_logger::try_init();
+
+    let (mut peer, endpoint) = futures_ringbuf::Endpoint::pair(64 * 1024, 64 * 1024);
+    let mut conn = Connection::new(endpoint, Config::default());
+    let handle = conn.handle().unwrap();
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    let drive = |conn: &mut Connection<_>, cx: &mut std::task::Context<'_>| {
+        for _ in 0..50 {
+            let _ = conn.poll(cx);
+        }
+    };
+
+    assert_eq!(
+        handle.traffic(),
+        Traffic::default(),
+        "a fresh connection has carried nothing"
+    );
+
+    // The peer opens a stream and sends a body.
+    let frame = raw_frame(TAG_DATA, FLAG_SYN, 7, StreamId::new(b"x"), b"payload");
+    futures::executor::block_on(peer.write_all(&frame)).unwrap();
+    drive(&mut conn, &mut cx);
+    assert_eq!(handle.traffic().data_bytes_in, 7);
+
+    // A bodyless close carries no payload.
+    let frame = raw_frame(TAG_DATA, FLAG_FIN, 0, StreamId::new(b"x"), &[]);
+    futures::executor::block_on(peer.write_all(&frame)).unwrap();
+    drive(&mut conn, &mut cx);
+    assert_eq!(handle.traffic().data_bytes_in, 7, "a close is not payload");
+
+    // Control frames keep a connection alive without advancing anything the
+    // application can read, which is exactly the case a watchdog must catch.
+    let update = raw_frame(TAG_WINDOW_UPDATE, 0, 1024, StreamId::new(b"x"), &[]);
+    futures::executor::block_on(peer.write_all(&update)).unwrap();
+    futures::executor::block_on(peer.write_all(&raw_ping(42))).unwrap();
+    drive(&mut conn, &mut cx);
+    let t = handle.traffic();
+    assert_eq!(t.data_bytes_in, 7, "a window update or ping is not payload");
+    assert_eq!(t.data_bytes_out, 0, "answering a ping sends no payload");
+}
+
+/// The same on the way out, so a caller can tell "we have stopped sending
+/// too" from "we are sending and nothing comes back".
+#[test]
+fn traffic_counts_outbound_payload() {
+    let _ = env_logger::try_init();
+
+    let (_peer, endpoint) = futures_ringbuf::Endpoint::pair(64 * 1024, 64 * 1024);
+    let mut conn = Connection::new(endpoint, Config::default());
+    let handle = conn.handle().unwrap();
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    let mut x = conn.new_stream(b"x").unwrap();
+    assert!(pin!(&mut x).poll_write(&mut cx, b"four").is_ready());
+    for _ in 0..50 {
+        let _ = conn.poll(&mut cx);
+    }
+    assert_eq!(handle.traffic().data_bytes_out, 4);
+
+    // Closing sends a bodyless frame: activity, no payload.
+    assert!(pin!(&mut x).poll_close(&mut cx).is_ready());
+    for _ in 0..50 {
+        let _ = conn.poll(&mut cx);
+    }
+    let t = handle.traffic();
+    assert_eq!(t.data_bytes_out, 4, "a close carries no payload");
+    assert_eq!(t.data_bytes_in, 0, "nothing was received");
 }
 
 /// Open `x`, close it and let the driver reap it, then deliver `frame` — a
