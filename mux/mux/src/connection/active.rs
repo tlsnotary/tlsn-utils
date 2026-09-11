@@ -286,6 +286,24 @@ pub(crate) enum Action {
     Terminate(Frame<GoAway>),
 }
 
+/// A GoAway carries its reason in the header's length field. Report which one
+/// the peer sent, so a connection killed for cause is distinguishable from an
+/// ordinary shutdown.
+fn go_away_error(id: Id, code: u32) -> ConnectionError {
+    match code {
+        0 => ConnectionError::Closed,
+        1 => ConnectionError::PeerProtocolError,
+        2 => ConnectionError::PeerInternalError,
+        // A code this version does not know. It is not code 0, so the peer
+        // did not hang up gracefully: report it as an error rather than let
+        // it pass for a clean shutdown, but do not invent a cause for it.
+        other => {
+            log::warn!("{}: unknown go away code {}", id, other);
+            ConnectionError::PeerError(other)
+        }
+    }
+}
+
 /// The active state of [`super::Connection`].
 pub(crate) struct Active<T> {
     id: Id,
@@ -306,6 +324,11 @@ pub(crate) struct Active<T> {
     pending_pong: Option<u32>,
     /// A termination frame produced on a protocol error, awaiting send.
     pending_terminate: Option<Frame<()>>,
+    /// Set once we have decided to terminate. Inbound frames are ignored from
+    /// then on: the read side keeps draining (gating it would deadlock two
+    /// peers with full send buffers), but re-deciding per frame would emit a
+    /// GoAway and an error log for every frame the peer had already sent.
+    terminating: bool,
     /// The current outbound stream frame awaiting the socket.
     ///
     /// The driver keeps reading the socket even while these are set. Coupling
@@ -366,6 +389,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             driver_waker,
             pending_pong: None,
             pending_terminate: None,
+            terminating: false,
             pending_write_frame: None,
         }
     }
@@ -573,6 +597,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                         }
                         Action::Terminate(f) => {
                             log::trace!("{}: sending term", self.id);
+                            self.terminating = true;
                             self.pending_terminate = Some(f.into());
                         }
                     }
@@ -671,13 +696,18 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
     }
 
     fn on_frame(&mut self, frame: Frame<()>) -> Result<Action> {
+        if self.terminating {
+            log::trace!("{}: ignoring frame after terminate", self.id);
+            return Ok(Action::None);
+        }
+
         log::trace!("{}: received: {}", self.id, frame.header());
 
         let action = match frame.header().tag() {
             Tag::Data => self.on_data(frame.into_data()),
             Tag::WindowUpdate => self.on_window_update(&frame.into_window_update()),
             Tag::Ping => self.on_ping(&frame.into_ping()),
-            Tag::GoAway => return Err(ConnectionError::Closed),
+            Tag::GoAway => return Err(go_away_error(self.id, frame.header().len().val())),
         };
         Ok(action)
     }
@@ -691,20 +721,39 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             return Action::None;
         }
 
-        let is_finish = frame.header().flags().contains(header::FIN);
-
-        // SYN flag on Data frames is not allowed
-        if frame.header().flags().contains(header::SYN) {
-            log::error!("{}: SYN flag on Data frame is not allowed", self.id);
+        if stream_id.is_session() {
+            log::error!("{}: data frame for session stream ID 0", self.id);
             return Action::Terminate(Frame::protocol_error());
         }
 
-        // Implicit stream creation: if we receive data for an unknown stream,
-        // promote a local inactive handle or create it automatically (the
-        // remote opened this stream). Either way it now claims a slot.
+        let is_syn = frame.header().flags().contains(header::SYN);
+        let is_finish = frame.header().flags().contains(header::FIN);
+
+        // SYN decides only whether a frame may *create* a stream, so it is read
+        // in the branch below and nowhere else. A SYN for an id we already hold
+        // needs no handling of its own: creation happened when our own first
+        // write claimed the slot.
         if !registry.streams.contains_key(&stream_id) {
-            if stream_id.is_session() {
-                log::error!("{}: data frame for session stream ID 0", self.id);
+            // Only a SYN opens a stream. Any other frame for an id we do not
+            // hold is a leftover from a stream we already reaped. Discarding
+            // it is not a protocol violation.
+            if !is_syn {
+                log::trace!(
+                    "{}/{}: frame for unknown stream, reaped earlier",
+                    self.id,
+                    stream_id
+                );
+                return Action::None;
+            }
+
+            // An opening frame arrives before any window negotiation, so it
+            // cannot exceed the default credit.
+            if frame.body_len() > crate::DEFAULT_CREDIT {
+                log::error!(
+                    "{}/{}: opening frame exceeds default credit",
+                    self.id,
+                    stream_id
+                );
                 return Action::Terminate(Frame::protocol_error());
             }
 
@@ -712,8 +761,15 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             // buffering demand is bounded by `streams.len()`, not by close
             // frames we still owe (those hold no receive buffer).
             if registry.streams.len() >= self.config.max_num_streams {
-                log::error!("{}: maximum number of streams reached", self.id);
-                return Action::Terminate(Frame::internal_error());
+                log::warn!(
+                    "{}: maximum number of streams reached ({})",
+                    self.id,
+                    self.config.max_num_streams
+                );
+                // The peer opened more streams than we admit. Nothing on the
+                // wire was malformed, but it exceeded what this side allows,
+                // which is the peer's doing and not a fault of our own.
+                return Action::Terminate(Frame::protocol_error());
             }
 
             let shared = if let Some(shared) = registry.inactive.remove(&stream_id) {
@@ -721,11 +777,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                 shared.lock().set_activated();
                 shared
             } else {
-                log::trace!(
-                    "{}/{}: creating implicit stream from remote",
-                    self.id,
-                    stream_id
-                );
+                log::trace!("{}/{}: opening stream from peer SYN", self.id, stream_id);
                 registry.make_implicit_stream_shared()
             };
             registry.streams.insert(stream_id, shared);
@@ -758,56 +810,24 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         let stream_id = frame.header().stream_id();
         let mut registry = self.registry.lock();
 
-        if frame.header().flags().contains(header::RST) {
-            registry.handle_peer_reset(self.id, stream_id);
-            return Action::None;
-        }
-
-        let is_finish = frame.header().flags().contains(header::FIN);
-
-        // SYN flag on WindowUpdate frames is not allowed
-        if frame.header().flags().contains(header::SYN) {
-            log::error!("{}: SYN flag on WindowUpdate frame is not allowed", self.id);
-            return Action::Terminate(Frame::protocol_error());
-        }
-
-        // Implicit stream creation for window updates too
+        // An id we do not hold is one we have already released,
+        // and this is a leftover the peer queued before it learned we were
+        // done.
         if !registry.streams.contains_key(&stream_id) {
-            if stream_id.is_session() {
-                return Action::None; // Ignore window updates for session
-            }
-
-            // Only `streams` entries buffer/grow windows, so gate the peer on
-            // `streams.len()`, not on owed close frames.
-            if registry.streams.len() >= self.config.max_num_streams {
-                log::error!("{}: maximum number of streams reached", self.id);
-                return Action::Terminate(Frame::internal_error());
-            }
-
-            let shared = if let Some(shared) = registry.inactive.remove(&stream_id) {
-                log::trace!("{}/{}: promoting local inactive stream", self.id, stream_id);
-                shared.lock().set_activated();
-                shared
-            } else {
+            // Window updates for the session id are simply ignored.
+            if !stream_id.is_session() {
                 log::trace!(
-                    "{}/{}: creating implicit stream from remote window update",
+                    "{}/{}: window update for unknown stream",
                     self.id,
                     stream_id
                 );
-                registry.make_implicit_stream_shared()
-            };
-            registry.streams.insert(stream_id, shared);
+            }
+            return Action::None;
         }
 
         if let Some(s) = registry.streams.get_mut(&stream_id) {
             let mut shared = s.lock();
             shared.increase_send_window_by(frame.header().credit());
-            if is_finish {
-                shared.update_state(self.id, stream_id, State::RecvClosed);
-                if let Some(w) = shared.reader.take() {
-                    w.wake()
-                }
-            }
             if let Some(w) = shared.writer.take() {
                 w.wake()
             }

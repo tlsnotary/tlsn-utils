@@ -22,6 +22,15 @@ pub enum ConnectionError {
     Decode(FrameDecodeError),
     /// An operation fails because the connection is closed.
     Closed,
+    /// The peer terminated the connection reporting a protocol error: we sent
+    /// something it does not allow.
+    PeerProtocolError,
+    /// The peer terminated the connection reporting an internal error of its
+    /// own.
+    PeerInternalError,
+    /// The peer terminated the connection reporting a code this version does
+    /// not know. Not a graceful close, but the cause cannot be named.
+    PeerError(u32),
     /// Too many streams are open, so no further ones can be opened at this
     /// time.
     TooManyStreams,
@@ -37,6 +46,15 @@ impl std::fmt::Display for ConnectionError {
             ConnectionError::Io(e) => write!(f, "i/o error: {e}"),
             ConnectionError::Decode(e) => write!(f, "decode error: {e}"),
             ConnectionError::Closed => f.write_str("connection is closed"),
+            ConnectionError::PeerProtocolError => {
+                f.write_str("peer terminated the connection: protocol error")
+            }
+            ConnectionError::PeerInternalError => {
+                f.write_str("peer terminated the connection: internal error")
+            }
+            ConnectionError::PeerError(code) => {
+                write!(f, "peer terminated the connection: unknown code {code}")
+            }
             ConnectionError::TooManyStreams => f.write_str("maximum number of streams reached"),
             ConnectionError::InvalidUserIdLength => f.write_str("user ID exceeds maximum length"),
             ConnectionError::DuplicateStreamId => f.write_str("duplicate stream ID"),
@@ -50,6 +68,9 @@ impl std::error::Error for ConnectionError {
             ConnectionError::Io(e) => Some(e),
             ConnectionError::Decode(e) => Some(e),
             ConnectionError::Closed
+            | ConnectionError::PeerProtocolError
+            | ConnectionError::PeerInternalError
+            | ConnectionError::PeerError(_)
             | ConnectionError::TooManyStreams
             | ConnectionError::InvalidUserIdLength
             | ConnectionError::DuplicateStreamId => None,

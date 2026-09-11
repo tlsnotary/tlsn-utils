@@ -220,7 +220,14 @@ impl Stream {
             return Poll::Pending;
         }
 
-        self.shared.lock().set_activated();
+        // We claimed the slot ourselves, so we are this stream's opener: the
+        // first frame we send must announce it with SYN. A stream adopted from
+        // the peer above never takes this path and so never sends SYN.
+        {
+            let mut shared = self.shared.lock();
+            shared.set_activated();
+            shared.set_syn_pending();
+        }
         self.driver_waker.wake();
         Poll::Ready(())
     }
@@ -320,13 +327,21 @@ impl AsyncWrite for Stream {
             Vec::from(&buf[..k as usize])
         };
         let n = body.len();
-        let frame = Frame::data(stream_id, body).expect("body <= u32::MAX");
+        let mut frame = Frame::data(stream_id, body).expect("body <= u32::MAX");
+        let syn = self.shared().is_syn_pending();
+        if syn {
+            frame.header_mut().syn();
+            log::trace!("{}: opening stream", self);
+        }
         log::trace!("{}: write {} bytes", self, n);
 
         let cmd = StreamCommand::SendFrame(frame.into());
         self.sender
             .start_send(cmd)
             .map_err(|_| self.write_zero_err())?;
+        if syn {
+            self.shared().clear_syn_pending();
+        }
         self.driver_waker.wake();
         Poll::Ready(Ok(n))
     }
@@ -393,6 +408,11 @@ pub(crate) struct Shared {
     /// frame to the peer). Inactive streams consume no slot and emit no
     /// close frame.
     activated: bool,
+    /// Whether this side opened the stream and still owes the peer the SYN
+    /// that announces it. Set when we claim the slot ourselves; never set for
+    /// a stream the peer opened, which we adopt or are promoted into. Cleared
+    /// once the opening frame reaches the connection.
+    syn_pending: bool,
 }
 
 impl Shared {
@@ -417,6 +437,7 @@ impl Shared {
             reader: None,
             writer: None,
             activated: false,
+            syn_pending: false,
         }
     }
 
@@ -432,6 +453,22 @@ impl Shared {
     /// Mark this stream as having claimed a slot on the wire.
     pub(crate) fn set_activated(&mut self) {
         self.activated = true;
+    }
+
+    /// Returns `true` if this side opened the stream and has not yet sent the
+    /// SYN announcing it.
+    pub(crate) fn is_syn_pending(&self) -> bool {
+        self.syn_pending
+    }
+
+    /// Record that this side opened the stream, so its first frame carries SYN.
+    pub(crate) fn set_syn_pending(&mut self) {
+        self.syn_pending = true;
+    }
+
+    /// Record that the opening frame has reached the connection.
+    pub(crate) fn clear_syn_pending(&mut self) {
+        self.syn_pending = false;
     }
 
     /// Update the stream state and return the state before it was updated.

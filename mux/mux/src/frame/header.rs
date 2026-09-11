@@ -93,7 +93,7 @@ impl Header<()> {
     }
 }
 
-impl Header<Ping> {
+impl<T: HasSyn> Header<T> {
     /// Set the [`SYN`] flag.
     pub fn syn(&mut self) {
         self.flags.0 |= SYN.0
@@ -182,6 +182,9 @@ impl Header<GoAway> {
     }
 
     /// Terminate the session indicating an internal error to the remote.
+    // No sender today: the stream limit, its last user, reports a protocol
+    // error instead. Kept as the encoding counterpart of the code we decode.
+    #[allow(dead_code)]
     pub fn internal_error() -> Self {
         Self::go_away(2)
     }
@@ -218,15 +221,19 @@ pub trait HasAck: private::Sealed {}
 impl HasAck for Ping {}
 impl<A: HasAck, B: HasAck> HasAck for Either<A, B> {}
 
+/// Types which have a [`SYN`] flag: a ping request, or the frame that opens a
+/// stream.
+pub trait HasSyn: private::Sealed {}
+impl HasSyn for Data {}
+impl HasSyn for Ping {}
+
 /// Types which have a `fin` method.
 pub trait HasFin: private::Sealed {}
 impl HasFin for Data {}
-impl HasFin for WindowUpdate {}
 
 /// Types which have a `rst` method.
 pub trait HasRst: private::Sealed {}
 impl HasRst for Data {}
-impl HasRst for WindowUpdate {}
 
 pub(super) mod private {
     pub trait Sealed {}

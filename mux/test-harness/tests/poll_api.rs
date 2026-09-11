@@ -21,7 +21,7 @@ use futures::{
 use quickcheck::QuickCheck;
 use std::{panic::panic_any, pin::pin};
 use test_harness::*;
-use tlsn_mux::{Config, Connection, ConnectionError};
+use tlsn_mux::{Config, Connection, ConnectionError, StreamId, DEFAULT_CREDIT};
 use tokio::{net::TcpStream, task};
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
@@ -89,7 +89,7 @@ fn prop_config_send_recv_multi() {
 
             // Send/recv on each stream
             let mut tasks = Vec::new();
-            for (stream, msg) in streams.into_iter().zip(msgs.into_iter()) {
+            for (stream, msg) in streams.into_iter().zip(msgs) {
                 tasks.push(task::spawn(async move {
                     let mut stream = stream;
                     send_recv_message(&mut stream, &msg).await.unwrap();
@@ -1294,6 +1294,25 @@ fn concurrent_churn_request_response() {
         });
 }
 
+/// Open a stream on `client`, write its id and drop it (RST), then drive both
+/// connections so the frames are fully processed.
+fn complete_stream<T: AsyncRead + AsyncWrite + Unpin>(
+    id: &[u8],
+    client: &mut Connection<T>,
+    server: &mut Connection<T>,
+    cx: &mut std::task::Context<'_>,
+) {
+    use std::pin::pin;
+
+    let mut s = client.new_stream(id).unwrap();
+    assert!(pin!(&mut s).poll_write(cx, id).is_ready());
+    drop(s);
+    for _ in 0..50 {
+        let _ = client.poll(cx);
+        let _ = server.poll(cx);
+    }
+}
+
 /// Peer-completed streams that no local handle has claimed sit in their slots
 /// — data intact — until they are claimed; claiming and dropping one frees its
 /// slot, and a peer exceeding the unclaimed budget terminates the connection
@@ -1312,23 +1331,6 @@ fn unclaimed_peer_streams_hold_slots_until_claimed() {
 
     let waker = std::task::Waker::noop();
     let mut cx = std::task::Context::from_waker(waker);
-
-    /// Open a stream on `client`, write its id and drop it (RST), then drive
-    /// both connections so the frames are fully processed.
-    fn complete_stream<T: AsyncRead + AsyncWrite + Unpin>(
-        id: &[u8],
-        client: &mut Connection<T>,
-        server: &mut Connection<T>,
-        cx: &mut std::task::Context<'_>,
-    ) {
-        let mut s = client.new_stream(id).unwrap();
-        assert!(pin!(&mut s).poll_write(cx, id).is_ready());
-        drop(s);
-        for _ in 0..50 {
-            let _ = client.poll(cx);
-            let _ = server.poll(cx);
-        }
-    }
 
     // The client completes two streams the server has not claimed yet; they
     // fill the server's entire slot budget and wait there.
@@ -1362,6 +1364,72 @@ fn unclaimed_peer_streams_hold_slots_until_claimed() {
     // is never silently discarded to make room.
     complete_stream(b"d", &mut client, &mut server, &mut cx);
     assert!(matches!(server.poll(&mut cx), Poll::Ready(_)));
+}
+
+/// The receive-side slot limit bounds *concurrent* peer streams, not the
+/// number seen over the connection's life: claiming a peer-completed stream
+/// and dropping it must return its slot every time, not just the first.
+///
+/// One unclaimed stream is parked for the whole test, so with a budget of two
+/// exactly one slot is ever free. A single lost reclamation is therefore fatal
+/// on the very next iteration — the server terminates instead of admitting the
+/// next peer stream — and the loop pins where it happened.
+#[test]
+fn peer_slots_recycle_across_many_claim_drop_cycles() {
+    use std::{pin::pin, task::Poll};
+
+    let _ = env_logger::try_init();
+
+    const CYCLES: usize = 300;
+
+    let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
+    let mut server_cfg = Config::default();
+    server_cfg.set_max_num_streams(2);
+    let mut server = Connection::new(server_endpoint, server_cfg);
+    let mut client = Connection::new(client_endpoint, Config::default());
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    // Occupies one of the two slots for the duration: it is never claimed, so
+    // the churn below has a single slot to recycle through.
+    complete_stream(b"keep", &mut client, &mut server, &mut cx);
+
+    for k in 0..CYCLES {
+        let id = format!("cycle-{k}");
+        complete_stream(id.as_bytes(), &mut client, &mut server, &mut cx);
+        assert!(
+            server.poll(&mut cx).is_pending(),
+            "server terminated at cycle {k}: an earlier claim/drop did not return its slot"
+        );
+
+        // Claim it, drain the retained data and EOF, then drop it: the slot
+        // must be free again for the next cycle.
+        {
+            let mut s = server.new_stream(id.as_bytes()).unwrap();
+            let mut buf = [0u8; 32];
+            match pin!(&mut s).poll_read(&mut cx, &mut buf) {
+                Poll::Ready(Ok(n)) => assert_eq!(&buf[..n], id.as_bytes()),
+                other => panic!("cycle {k}: expected retained data, got {other:?}"),
+            }
+            match pin!(&mut s).poll_read(&mut cx, &mut buf) {
+                Poll::Ready(Ok(0)) => {}
+                other => panic!("cycle {k}: expected EOF, got {other:?}"),
+            }
+        }
+        for _ in 0..50 {
+            let _ = server.poll(&mut cx);
+            let _ = client.poll(&mut cx);
+        }
+    }
+
+    // The parked stream was never disturbed by the churn beside it.
+    let mut s = server.new_stream(b"keep").unwrap();
+    let mut buf = [0u8; 32];
+    match pin!(&mut s).poll_read(&mut cx, &mut buf) {
+        Poll::Ready(Ok(n)) => assert_eq!(&buf[..n], b"keep"),
+        other => panic!("the unclaimed stream lost its data during churn, got {other:?}"),
+    }
 }
 
 /// A reader parked on a never-activated stream must be woken with EOF when the
@@ -1768,4 +1836,395 @@ fn high_load_stream_churn_no_slot_leak_or_deadlock() {
                     "stream churn timed out: a slot was leaked (reap race) or the mux deadlocked",
                 );
         });
+}
+
+// ---------------------------------------------------------------------------
+// SYN: only an opening frame creates a stream
+// ---------------------------------------------------------------------------
+//
+// These tests hand-encode frames a conforming peer cannot produce: frames for a
+// stream id the peer has already released, and an opening frame that is too
+// large. The layout matches `frame::header::encode` — tag, flags, a big-endian
+// length, then the eight raw id bytes.
+
+const TAG_DATA: u8 = 0x00;
+const TAG_WINDOW_UPDATE: u8 = 0x01;
+const TAG_GO_AWAY: u8 = 0x03;
+const FLAG_FIN: u8 = 0x01;
+const FLAG_RST: u8 = 0x02;
+const FLAG_SYN: u8 = 0x04;
+const HEADER_SIZE: usize = 14;
+
+fn raw_frame(tag: u8, flags: u8, length: u32, id: StreamId, body: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(HEADER_SIZE + body.len());
+    buf.push(tag);
+    buf.push(flags);
+    buf.extend_from_slice(&length.to_be_bytes());
+    buf.extend_from_slice(id.as_bytes());
+    buf.extend_from_slice(body);
+    buf
+}
+
+/// A GoAway is the only frame carrying its tag with the zero stream id, which
+/// makes it recognisable without decoding the whole byte stream.
+fn contains_go_away(bytes: &[u8]) -> bool {
+    bytes
+        .windows(HEADER_SIZE)
+        .any(|w| w[0] == TAG_GO_AWAY && w[6..HEADER_SIZE] == [0u8; 8])
+}
+
+/// The code a GoAway carries, read from the header's length field.
+fn go_away_code(bytes: &[u8]) -> Option<u32> {
+    bytes
+        .windows(HEADER_SIZE)
+        .find(|w| w[0] == TAG_GO_AWAY && w[6..HEADER_SIZE] == [0u8; 8])
+        .map(|w| u32::from_be_bytes([w[2], w[3], w[4], w[5]]))
+}
+
+/// A GoAway for the session id, carrying `code`.
+fn raw_go_away(code: u32) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(HEADER_SIZE);
+    buf.push(TAG_GO_AWAY);
+    buf.push(0);
+    buf.extend_from_slice(&code.to_be_bytes());
+    buf.extend_from_slice(&[0u8; 8]);
+    buf
+}
+
+/// Deliver a GoAway carrying `code` and return what the connection's poll
+/// resolves to: `Ok(())` for a graceful shutdown, otherwise the error.
+fn outcome_for_go_away_code(code: u32) -> Result<(), ConnectionError> {
+    use std::task::Poll;
+
+    let (mut peer, endpoint) = futures_ringbuf::Endpoint::pair(64 * 1024, 64 * 1024);
+    let mut conn = Connection::new(endpoint, Config::default());
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    futures::executor::block_on(peer.write_all(&raw_go_away(code))).unwrap();
+    for _ in 0..200 {
+        if let Poll::Ready(outcome) = conn.poll(&mut cx) {
+            return outcome;
+        }
+    }
+    panic!("a GoAway with code {code} was not reported at all");
+}
+
+/// A GoAway states why the peer hung up, in the header's length field. Report
+/// each code distinctly: a connection killed for cause must not look like an
+/// ordinary shutdown to the side that caused it.
+#[test]
+fn go_away_code_is_reported() {
+    let _ = env_logger::try_init();
+
+    assert!(
+        outcome_for_go_away_code(0).is_ok(),
+        "code 0 is a graceful shutdown"
+    );
+    assert!(
+        matches!(
+            outcome_for_go_away_code(1),
+            Err(ConnectionError::PeerProtocolError)
+        ),
+        "code 1 is the peer reporting a protocol error"
+    );
+    assert!(
+        matches!(
+            outcome_for_go_away_code(2),
+            Err(ConnectionError::PeerInternalError)
+        ),
+        "code 2 is the peer reporting an internal error"
+    );
+    // A code we cannot name is still not code 0, so it must not pass for a
+    // clean close; it is reported with its raw value.
+    assert!(
+        matches!(
+            outcome_for_go_away_code(9),
+            Err(ConnectionError::PeerError(9))
+        ),
+        "an unknown code is reported as an error carrying the code"
+    );
+}
+
+/// A peer opening more streams than we admit sends nothing malformed, but it
+/// exceeds what this side allows: that is the peer's doing, so it is reported
+/// as a protocol error rather than an internal one.
+#[test]
+fn exceeding_the_stream_limit_sends_protocol_error() {
+    let _ = env_logger::try_init();
+
+    let (mut peer, endpoint) = futures_ringbuf::Endpoint::pair(64 * 1024, 64 * 1024);
+    let mut cfg = Config::default();
+    cfg.set_max_num_streams(1);
+    let mut conn = Connection::new(endpoint, cfg);
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    // Our own stream takes the only slot.
+    let mut x = conn.new_stream(b"x").unwrap();
+    assert!(pin!(&mut x).poll_write(&mut cx, b"hi").is_ready());
+    for _ in 0..50 {
+        let _ = conn.poll(&mut cx);
+    }
+
+    // The peer opens a second one.
+    let frame = raw_frame(TAG_DATA, FLAG_SYN, 2, StreamId::new(b"y"), b"hi");
+    futures::executor::block_on(peer.write_all(&frame)).unwrap();
+    for _ in 0..200 {
+        let _ = conn.poll(&mut cx);
+    }
+
+    let mut out = vec![0u8; 4096];
+    let n = futures::executor::block_on(peer.read(&mut out)).unwrap();
+    assert_eq!(
+        go_away_code(&out[..n]),
+        Some(1),
+        "exceeding the stream limit should report a protocol error"
+    );
+}
+
+/// Open `x`, close it and let the driver reap it, then deliver `frame` — a
+/// frame for that now-unknown id — and require that it changed nothing. A
+/// single slot makes the check sharp: had the frame created an entry, the slot
+/// would be gone and no other stream could ever activate.
+fn assert_ignored_after_reap(frame: Vec<u8>, what: &str) {
+    use std::task::Poll;
+
+    let _ = env_logger::try_init();
+
+    let (mut peer, endpoint) = futures_ringbuf::Endpoint::pair(64 * 1024, 64 * 1024);
+    let mut cfg = Config::default();
+    cfg.set_max_num_streams(1);
+    let mut conn = Connection::new(endpoint, cfg);
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    // Closing before dropping means the drop owes no RST, so the slot is free
+    // as soon as the driver reaps the stream.
+    let mut x = conn.new_stream(b"x").unwrap();
+    assert!(pin!(&mut x).poll_write(&mut cx, b"hi").is_ready());
+    assert!(pin!(&mut x).poll_close(&mut cx).is_ready());
+    drop(x);
+    for _ in 0..50 {
+        let _ = conn.poll(&mut cx);
+    }
+
+    futures::executor::block_on(peer.write_all(&frame)).unwrap();
+    for _ in 0..50 {
+        assert!(
+            !matches!(conn.poll(&mut cx), Poll::Ready(Err(_))),
+            "{what} for a reaped id tore down the connection"
+        );
+    }
+
+    let mut y = conn.new_stream(b"y").unwrap();
+    assert!(
+        pin!(&mut y).poll_write(&mut cx, b"z").is_ready(),
+        "{what} for a reaped id consumed the only slot"
+    );
+}
+
+/// A peer that wrote after we released the stream. Indistinguishable on the
+/// wire from a peer opening a stream we have not opened yet — except for SYN.
+#[test]
+fn trailing_data_for_reaped_stream_is_ignored() {
+    let frame = raw_frame(TAG_DATA, 0, 2, StreamId::new(b"x"), b"no");
+    assert_ignored_after_reap(frame, "a data frame");
+}
+
+/// The common case: the peer closes its half after we have already finished.
+#[test]
+fn trailing_fin_for_reaped_stream_is_ignored() {
+    let frame = raw_frame(TAG_DATA, FLAG_FIN, 0, StreamId::new(b"x"), &[]);
+    assert_ignored_after_reap(frame, "a FIN");
+}
+
+/// A peer draining its buffer keeps granting credit until it learns we are
+/// done, so a window update can outlive the stream it belongs to.
+#[test]
+fn trailing_window_update_for_reaped_stream_is_ignored() {
+    let frame = raw_frame(TAG_WINDOW_UPDATE, 0, 1024, StreamId::new(b"x"), &[]);
+    assert_ignored_after_reap(frame, "a window update");
+}
+
+/// Both peers derive the same id and open it independently, so each receives a
+/// SYN for a stream it already holds. Under deterministic ids that is
+/// convergence, not a duplicate: the halves become one stream carrying data
+/// both ways.
+#[test]
+fn simultaneous_open_converges() {
+    use std::task::Poll;
+
+    let _ = env_logger::try_init();
+
+    let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
+    let mut server = Connection::new(server_endpoint, Config::default());
+    let mut client = Connection::new(client_endpoint, Config::default());
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    let mut s = server.new_stream(b"sim").unwrap();
+    let mut c = client.new_stream(b"sim").unwrap();
+
+    // Both open before either has seen the other's opening frame.
+    assert!(pin!(&mut s).poll_write(&mut cx, b"from-server").is_ready());
+    assert!(pin!(&mut c).poll_write(&mut cx, b"from-client").is_ready());
+
+    for _ in 0..100 {
+        let _ = server.poll(&mut cx);
+        let _ = client.poll(&mut cx);
+    }
+
+    let mut buf = [0u8; 32];
+    match pin!(&mut c).poll_read(&mut cx, &mut buf) {
+        Poll::Ready(Ok(n)) => assert_eq!(&buf[..n], b"from-server"),
+        other => panic!("client should have the server's bytes, got {other:?}"),
+    }
+    match pin!(&mut s).poll_read(&mut cx, &mut buf) {
+        Poll::Ready(Ok(n)) => assert_eq!(&buf[..n], b"from-client"),
+        other => panic!("server should have the client's bytes, got {other:?}"),
+    }
+}
+
+/// `write(b"")` emits a zero-length data frame, which is still the frame that
+/// opens the stream and so must carry SYN. If it did not, the peer would
+/// discard it and every frame after it, since only a SYN creates a stream.
+#[test]
+fn zero_length_first_write_opens_stream() {
+    use std::task::Poll;
+
+    let _ = env_logger::try_init();
+
+    let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
+    let mut server = Connection::new(server_endpoint, Config::default());
+    let mut client = Connection::new(client_endpoint, Config::default());
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    let mut c = client.new_stream(b"empty").unwrap();
+    assert!(pin!(&mut c).poll_write(&mut cx, b"").is_ready());
+    // The second write carries no SYN, so it arrives only if the empty frame
+    // opened the stream.
+    assert!(pin!(&mut c).poll_write(&mut cx, b"payload").is_ready());
+
+    for _ in 0..100 {
+        let _ = client.poll(&mut cx);
+        let _ = server.poll(&mut cx);
+    }
+
+    let mut s = server.new_stream(b"empty").unwrap();
+    let mut buf = [0u8; 32];
+    match pin!(&mut s).poll_read(&mut cx, &mut buf) {
+        Poll::Ready(Ok(n)) => assert_eq!(&buf[..n], b"payload"),
+        other => panic!("empty first write did not open the stream, got {other:?}"),
+    }
+}
+
+/// A window update carries credit and nothing else: opening, half-closing and
+/// resetting a stream are all Data frames. FIN, RST and SYN mean nothing here,
+/// so a receiver ignores them rather than faulting the connection -- the
+/// update still applies, and the stream is left open in both directions.
+#[test]
+fn redundant_flags_on_window_update_are_ignored() {
+    use std::task::Poll;
+
+    let _ = env_logger::try_init();
+
+    let (mut peer, endpoint) = futures_ringbuf::Endpoint::pair(64 * 1024, 64 * 1024);
+    let mut conn = Connection::new(endpoint, Config::default());
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    // Put the stream on the wire first, so the frame reaches the update path
+    // for a stream we hold rather than being discarded as a leftover.
+    let mut x = conn.new_stream(b"x").unwrap();
+    assert!(pin!(&mut x).poll_write(&mut cx, b"hi").is_ready());
+    for _ in 0..50 {
+        let _ = conn.poll(&mut cx);
+    }
+
+    let frame = raw_frame(
+        TAG_WINDOW_UPDATE,
+        FLAG_FIN | FLAG_RST | FLAG_SYN,
+        1024,
+        StreamId::new(b"x"),
+        &[],
+    );
+    futures::executor::block_on(peer.write_all(&frame)).unwrap();
+    for _ in 0..200 {
+        assert!(
+            !matches!(conn.poll(&mut cx), Poll::Ready(Err(_))),
+            "flags on a window update tore down the connection"
+        );
+    }
+
+    let mut out = vec![0u8; 4096];
+    let n = futures::executor::block_on(peer.read(&mut out)).unwrap();
+    assert!(
+        !contains_go_away(&out[..n]),
+        "flags on a window update should not be answered with GoAway"
+    );
+
+    // The RST did not reset the stream: we can still write to it.
+    assert!(
+        matches!(
+            pin!(&mut x).poll_write(&mut cx, b"more"),
+            Poll::Ready(Ok(_))
+        ),
+        "an RST on a window update reset the stream"
+    );
+
+    // Nor did the FIN half-close it: data the peer sends afterwards arrives.
+    let data = raw_frame(TAG_DATA, 0, 7, StreamId::new(b"x"), b"payload");
+    futures::executor::block_on(peer.write_all(&data)).unwrap();
+    for _ in 0..50 {
+        let _ = conn.poll(&mut cx);
+    }
+    let mut buf = [0u8; 32];
+    match pin!(&mut x).poll_read(&mut cx, &mut buf) {
+        Poll::Ready(Ok(n)) => assert_eq!(&buf[..n], b"payload"),
+        other => panic!("a FIN on a window update closed the read half, got {other:?}"),
+    }
+}
+
+/// An opening frame arrives before any window negotiation, so its body cannot
+/// exceed the default credit. A larger one is a protocol violation, answered
+/// with GoAway rather than silently buffered.
+#[test]
+fn oversized_opening_frame_is_protocol_error() {
+    let _ = env_logger::try_init();
+
+    let cap = DEFAULT_CREDIT as usize + 64 * 1024;
+    let (mut peer, endpoint) = futures_ringbuf::Endpoint::pair(cap, cap);
+    let mut conn = Connection::new(endpoint, Config::default());
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    let body = vec![0u8; DEFAULT_CREDIT as usize + 1];
+    let frame = raw_frame(
+        TAG_DATA,
+        FLAG_SYN,
+        body.len() as u32,
+        StreamId::new(b"big"),
+        &body,
+    );
+    futures::executor::block_on(peer.write_all(&frame)).unwrap();
+
+    for _ in 0..200 {
+        let _ = conn.poll(&mut cx);
+    }
+
+    let mut out = vec![0u8; 4096];
+    let n = futures::executor::block_on(peer.read(&mut out)).unwrap();
+    assert!(
+        contains_go_away(&out[..n]),
+        "an oversized opening frame should be answered with GoAway"
+    );
 }
