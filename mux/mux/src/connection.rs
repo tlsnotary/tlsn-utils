@@ -34,7 +34,7 @@ use std::{
 };
 
 pub use active::Handle;
-pub(crate) use active::{Action, StreamCommand};
+pub(crate) use active::{Action, StreamCommand, StreamRegistry};
 pub use stream::Stream;
 
 /// The connection identifier.

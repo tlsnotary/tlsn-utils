@@ -37,6 +37,10 @@ impl<T> Frame<T> {
     pub fn header(&self) -> &Header<T> {
         &self.header
     }
+
+    pub(crate) fn header_mut(&mut self) -> &mut Header<T> {
+        &mut self.header
+    }
 }
 
 impl<A: header::private::Sealed> From<Frame<A>> for Frame<()> {
@@ -140,6 +144,9 @@ impl Frame<GoAway> {
         }
     }
 
+    // No sender today: the stream limit, its last user, reports a protocol
+    // error instead. Kept as the encoding counterpart of the code we decode.
+    #[allow(dead_code)]
     pub fn internal_error() -> Self {
         Frame {
             header: Header::internal_error(),

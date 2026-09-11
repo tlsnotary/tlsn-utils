@@ -11,9 +11,9 @@
 // at https://opensource.org/licenses/MIT.
 
 use crate::{
-    Config, DEFAULT_CREDIT,
+    Config,
     chunks::Chunks,
-    connection::{self, StreamCommand, UserId, rtt, rtt::Rtt},
+    connection::{self, StreamCommand, StreamRegistry, UserId, rtt::Rtt},
     frame::{Frame, header::StreamId},
 };
 use flow_control::FlowController;
@@ -69,8 +69,19 @@ pub struct Stream {
     user_id: UserId,
     conn: connection::Id,
     config: Arc<Config>,
-    sender: mpsc::Sender<StreamCommand>,
     shared: Arc<Mutex<Shared>>,
+    /// Declared before `sender` on purpose: fields are dropped in declaration
+    /// order, and dropping `sender` is what signals `(id, None)` to the driver,
+    /// which reaps the stream based on `Arc::strong_count` of `shared`. Were
+    /// this clone of `shared` still alive at that point, the driver could
+    /// observe an inflated count, mistake this for a live sibling handle, and
+    /// skip reaping — leaving the stream's close frame unsent forever.
+    sender: mpsc::Sender<StreamCommand>,
+    /// Handle to the connection's stream registry, used to claim a slot when
+    /// the stream first becomes active on the wire. This points at the
+    /// registry, not at this stream's [`Shared`], so it does not affect the
+    /// `Shared` reference count used by reaping.
+    registry: Arc<Mutex<StreamRegistry>>,
     /// Waker for the connection's poll driver. Fired after every push
     /// into `sender`.
     driver_waker: Arc<AtomicWaker>,
@@ -93,38 +104,8 @@ impl fmt::Display for Stream {
 }
 
 impl Stream {
-    /// Create a new stream.
+    /// Create a stream with existing shared state.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        stream_id: StreamId,
-        user_id: UserId,
-        conn: connection::Id,
-        config: Arc<Config>,
-        sender: mpsc::Sender<StreamCommand>,
-        rtt: rtt::Rtt,
-        accumulated_max_stream_windows: Arc<Mutex<usize>>,
-        driver_waker: Arc<AtomicWaker>,
-    ) -> Self {
-        Self {
-            stream_id,
-            user_id,
-            conn,
-            config: config.clone(),
-            sender,
-            shared: Arc::new(Mutex::new(Shared::new(
-                State::Open,
-                DEFAULT_CREDIT,
-                DEFAULT_CREDIT,
-                accumulated_max_stream_windows,
-                rtt,
-                config,
-            ))),
-            driver_waker,
-        }
-    }
-
-    /// Create a stream with existing shared state (for merging with implicit
-    /// stream).
     pub(crate) fn with_shared(
         stream_id: StreamId,
         user_id: UserId,
@@ -132,6 +113,7 @@ impl Stream {
         config: Arc<Config>,
         sender: mpsc::Sender<StreamCommand>,
         shared: Arc<Mutex<Shared>>,
+        registry: Arc<Mutex<StreamRegistry>>,
         driver_waker: Arc<AtomicWaker>,
     ) -> Self {
         Self {
@@ -141,6 +123,7 @@ impl Stream {
             config,
             sender,
             shared,
+            registry,
             driver_waker,
         }
     }
@@ -165,10 +148,6 @@ impl Stream {
 
     pub(crate) fn shared(&self) -> MutexGuard<'_, Shared> {
         self.shared.lock()
-    }
-
-    pub(crate) fn clone_shared(&self) -> Arc<Mutex<Shared>> {
-        self.shared.clone()
     }
 
     fn write_zero_err(&self) -> io::Error {
@@ -203,6 +182,54 @@ impl Stream {
         self.driver_waker.wake();
 
         Poll::Ready(Ok(()))
+    }
+
+    /// Ensure this stream has claimed a slot on the wire before sending its
+    /// first frame to the peer.
+    ///
+    /// Returns `Poll::Ready(())` once the stream holds a slot (or already
+    /// did), and `Poll::Pending` (registering `cx`'s waker) when the slot
+    /// limit is reached and no slot is currently free.
+    fn poll_activate(&mut self, cx: &mut Context) -> Poll<()> {
+        if self.shared.lock().is_activated() {
+            return Poll::Ready(());
+        }
+
+        let mut registry = self.registry.lock();
+
+        if self.shared.lock().is_activated() {
+            return Poll::Ready(());
+        }
+
+        // The peer may have implicitly created an active entry for this id.
+        // Adopt it rather than claim a new slot.
+        if let Some(shared) = registry.adopt_active(self.stream_id) {
+            shared.lock().set_activated();
+            self.shared = shared;
+            return Poll::Ready(());
+        }
+
+        if !registry.try_claim_slot(self.stream_id, &self.shared) {
+            // If the connection is closing the receiver is closed; don't park
+            // on a slot that will never free (the driver is gone). Proceed so
+            // the caller surfaces a write error instead of hanging.
+            if self.sender.is_closed() {
+                return Poll::Ready(());
+            }
+            registry.register_slot_waker(cx.waker());
+            return Poll::Pending;
+        }
+
+        // We claimed the slot ourselves, so we are this stream's opener: the
+        // first frame we send must announce it with SYN. A stream adopted from
+        // the peer above never takes this path and so never sends SYN.
+        {
+            let mut shared = self.shared.lock();
+            shared.set_activated();
+            shared.set_syn_pending();
+        }
+        self.driver_waker.wake();
+        Poll::Ready(())
     }
 }
 
@@ -266,6 +293,10 @@ impl AsyncWrite for Stream {
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
+        // Writing a stream is what makes it active on the wire; claim a slot
+        // first, applying backpressure if the slot limit is reached.
+        ready!(self.poll_activate(cx));
+
         ready!(
             self.sender
                 .poll_ready(cx)
@@ -296,13 +327,21 @@ impl AsyncWrite for Stream {
             Vec::from(&buf[..k as usize])
         };
         let n = body.len();
-        let frame = Frame::data(stream_id, body).expect("body <= u32::MAX");
+        let mut frame = Frame::data(stream_id, body).expect("body <= u32::MAX");
+        let syn = self.shared().is_syn_pending();
+        if syn {
+            frame.header_mut().syn();
+            log::trace!("{}: opening stream", self);
+        }
         log::trace!("{}: write {} bytes", self, n);
 
         let cmd = StreamCommand::SendFrame(frame.into());
         self.sender
             .start_send(cmd)
             .map_err(|_| self.write_zero_err())?;
+        if syn {
+            self.shared().clear_syn_pending();
+        }
         self.driver_waker.wake();
         Poll::Ready(Ok(n))
     }
@@ -316,6 +355,20 @@ impl AsyncWrite for Stream {
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
         if self.is_closed() {
             return Poll::Ready(Ok(()));
+        }
+
+        // A stream that was never activated has no presence on the wire, so
+        // closing it sends nothing and consumes no slot; we only update the
+        // local state. Check activation under the registry lock so a concurrent
+        // peer-driven promotion (which sets `activated` while holding that lock)
+        // is not missed, matching the lock order in `poll_activate`.
+        {
+            let _registry = self.registry.lock();
+            if !self.shared.lock().is_activated() {
+                self.shared()
+                    .update_state(self.conn, self.stream_id, State::SendClosed);
+                return Poll::Ready(Ok(()));
+            }
         }
 
         ready!(
@@ -351,6 +404,15 @@ pub(crate) struct Shared {
     pub(crate) buffer: Chunks,
     pub(crate) reader: Option<Waker>,
     pub(crate) writer: Option<Waker>,
+    /// Whether this stream has claimed a slot on the wire (sent its first
+    /// frame to the peer). Inactive streams consume no slot and emit no
+    /// close frame.
+    activated: bool,
+    /// Whether this side opened the stream and still owes the peer the SYN
+    /// that announces it. Set when we claim the slot ourselves; never set for
+    /// a stream the peer opened, which we adopt or are promoted into. Cleared
+    /// once the opening frame reaches the connection.
+    syn_pending: bool,
 }
 
 impl Shared {
@@ -374,11 +436,39 @@ impl Shared {
             buffer: Chunks::new(),
             reader: None,
             writer: None,
+            activated: false,
+            syn_pending: false,
         }
     }
 
     pub(crate) fn state(&self) -> State {
         self.state
+    }
+
+    /// Returns `true` if this stream has claimed a slot on the wire.
+    pub(crate) fn is_activated(&self) -> bool {
+        self.activated
+    }
+
+    /// Mark this stream as having claimed a slot on the wire.
+    pub(crate) fn set_activated(&mut self) {
+        self.activated = true;
+    }
+
+    /// Returns `true` if this side opened the stream and has not yet sent the
+    /// SYN announcing it.
+    pub(crate) fn is_syn_pending(&self) -> bool {
+        self.syn_pending
+    }
+
+    /// Record that this side opened the stream, so its first frame carries SYN.
+    pub(crate) fn set_syn_pending(&mut self) {
+        self.syn_pending = true;
+    }
+
+    /// Record that the opening frame has reached the connection.
+    pub(crate) fn clear_syn_pending(&mut self) {
+        self.syn_pending = false;
     }
 
     /// Update the stream state and return the state before it was updated.

@@ -98,15 +98,24 @@ Flags modify frame behavior. Multiple flags MAY be set simultaneously by combini
 
 | Flag | Value | Applicable Types | Description |
 |------|-------|------------------|-------------|
-| FIN | `0x01` | Data, Window Update | Half-closes the stream in the sender's direction. |
-| RST | `0x02` | Data, Window Update | Immediately resets (terminates) the stream. |
-| SYN | `0x04` | Ping | Ping request. |
+| FIN | `0x01` | Data | Half-closes the stream in the sender's direction. |
+| RST | `0x02` | Data | Immediately resets (terminates) the stream. |
+| SYN | `0x04` | Data, Ping | On Data, opens the stream. On Ping, a ping request. |
 | ACK | `0x08` | Ping | Ping response. |
 
 ### 4.1 Flag Constraints
 
-- FIN and RST MUST NOT be set together. If both are set, RST takes precedence.
-- SYN and ACK are only valid on Ping frames.
+- FIN and RST are valid on Data frames only.
+- ACK is only valid on Ping frames.
+- SYN is valid on Data frames, where it opens a stream, and on Ping frames,
+  where it marks a request.
+- SYN and FIN MAY be set together: a stream opened and half-closed by one frame.
+- A sender MUST NOT set FIN and RST on the same frame, nor SYN and RST. A
+  receiver that observes either combination MUST process the frame as a reset
+  and ignore the other flag.
+- A sender MUST NOT set a flag on a frame type it is not applicable to. A
+  receiver MUST ignore such a flag and process the frame as if it were unset,
+  rather than treating it as a connection error.
 
 ## 5. Stream Management
 
@@ -124,20 +133,38 @@ The first 8 bytes of the BLAKE3 hash are used as the Stream ID. The zero Stream 
 - Stream IDs are deterministic: the same user ID always produces the same Stream ID.
 - Either peer MAY open any stream by sending frames to that Stream ID.
 - If both peers open the same stream simultaneously, the streams merge automatically.
+  Each side sends its own opening frame, and receiving SYN for a Stream ID that
+  already exists locally is expected, not an error.
+- A Stream ID MUST NOT be opened more than once per connection, even after that
+  stream has closed. Implementations are not required to enforce this.
 
-### 5.2 Implicit Stream Creation
+### 5.2 Opening a Stream
 
-Streams are created implicitly when the first frame for a Stream ID is sent or received:
+A stream is opened by a Data frame carrying the SYN flag. No other frame creates
+a stream.
 
 **When sending:**
 1. Compute the Stream ID from the user-defined identifier.
-2. If the stream does not exist locally, create it.
-3. Send the frame.
+2. If the stream does not exist locally, create it and mark its first outbound
+   frame as the opening frame.
+3. Set SYN on that frame. A stream adopted from a peer that opened it first is
+   already open and MUST NOT send SYN.
 
-**When receiving:**
-1. If the Stream ID is unknown, create the stream.
-2. If the stream limit is exceeded, send GoAway with Protocol Error.
-3. Process the frame normally.
+**When receiving a Data frame with SYN:**
+1. If the Stream ID is already known, this is a simultaneous open: process the
+   frame normally against the existing stream.
+2. Otherwise create the stream. The body of an opening frame MUST NOT exceed the
+   default credit, as it precedes any window negotiation; a larger body is a
+   protocol violation and MUST be answered with GoAway (Protocol Error).
+3. If the stream limit would be exceeded, send GoAway with Internal Error.
+
+**When receiving any other frame for an unknown Stream ID:**
+
+Ignore it. It is not a protocol violation and MUST NOT be answered with GoAway or
+a stream reset. Such a frame is ordinarily a leftover from a stream the receiver
+has already released while the sender was still flushing frames queued before it
+learned of the close. Creating a stream for it would produce an entry no local
+handle can claim, which would hold its resources until the connection ends.
 
 ### 5.3 Stream Lifecycle
 
