@@ -33,6 +33,11 @@ registerMessageListener(self, 'web_spawn_start_worker', async (data) => {
     const exports = wasm.initSync({ module, memory });
     wasm.web_spawn_start_worker(worker);
 
+    // Optional hook – only call if provided by the wasm module.
+    if (typeof exports.__worker_teardown === 'function') {
+        exports.__worker_teardown();
+    }
+
     exports.__wbindgen_thread_destroy();
 
     close();

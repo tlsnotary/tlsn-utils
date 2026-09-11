@@ -37,6 +37,11 @@ registerMessageListener(self, 'web_spawn_start_worker', async (data) => {
 
     pkg.web_spawn_start_worker(workerPtr);
 
+    // Optional hook – only call if provided by the wasm module.
+    if (typeof exports.__worker_teardown === 'function') {
+        exports.__worker_teardown();
+    }
+
     exports.__wbindgen_thread_destroy();
 
     close();
