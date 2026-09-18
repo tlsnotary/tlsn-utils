@@ -1,0 +1,16 @@
+HTTP/1.1 200 OK
+Date: Wed, 10 Jun 2026 13:08:44 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 415
+Connection: close
+etag: W/"19f-iYbAB1XQ7C/xodmhiO5wD7HT2/k"
+vary: Accept-Encoding
+x-envoy-upstream-service-time: 6
+cf-cache-status: DYNAMIC
+Set-Cookie: sails.sid=s%3Ae6AIaLTNoGYffvy8YEE5L1j6UNydf14x.gAmMetnEr36O2zspqs0hOfCYIDqBs4gtohGytQLl9Ss; Path=/; HttpOnly
+set-cookie: __cf_bm=kTYkjWMzWy_EvndZjm5ZS7xmQKlGeYWEchjUivl.V3I-1781096924.497302-1.0.1.1-lxwS824kzdfb_dCDfAfh3WBlEu60ilj3yG4vij_FoxGpmlxogpNJwnIT3OXKh1atLHhs1cH2CaN6M9zUZaByWNu1MEA4pdG1BEUpWKFcd.ZBUsd8qonSXdpIDdLxm8Rn; HttpOnly; SameSite=None; Secure; Path=/; Domain=postman-echo.com; Expires=Wed, 10 Jun 2026 13:38:44 GMT
+set-cookie: _cfuvid=3jdEPI.6A.z6xfsRffXyA_jNXPS96zwOWTogzj4Dkcw-1781096924.497302-1.0.1.1-cSonbKCBBBUhCz6r3.juBORfZ6LdV_TfZCegljqtjT0; HttpOnly; SameSite=None; Secure; Path=/; Domain=postman-echo.com
+Server: cloudflare
+CF-RAY: a0989b421da6dcd9-TXL
+
+{"args":{},"data":"","files":{},"form":{"name":"ditto","level":"42","note":"hello world"},"headers":{"host":"postman-echo.com","content-length":"38","user-agent":"transcript-verify-fixtures/0.1","content-type":"application/x-www-form-urlencoded","accept-encoding":"gzip, br","x-forwarded-proto":"https","accept":"*/*"},"json":{"name":"ditto","level":"42","note":"hello world"},"url":"https://postman-echo.com/post"}

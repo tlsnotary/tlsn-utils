@@ -1,0 +1,37 @@
+[package]
+name = "transcript-verify"
+version = "0.1.0"
+edition = "2024"
+authors = ["TLSNotary Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tlsnotary/tlsn-utils"
+description = "Sound validation of pre-parsed HTTP/JSON transcript span tables, for zkVM guests"
+keywords = ["http", "json", "zkvm", "transcript", "verification"]
+
+[features]
+default = ["std", "parse"]
+std = []
+# Host-side span-table production.
+parse = ["std", "dep:spansy"]
+# Serde derives on the wire-format types.
+serde = ["dep:serde"]
+
+[dependencies]
+# Not `workspace = true`: the workspace entries for thiserror/serde do not set
+# `default-features = false`, so a member cannot disable default features
+# through inheritance (cargo ignores it with a warning). The no_std core
+# requires them disabled.
+thiserror = { version = "2", default-features = false }
+serde = { version = "1", optional = true, default-features = false, features = [
+    "derive",
+    "alloc",
+] }
+spansy = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json = "1"
+criterion = { workspace = true }
+
+[[bench]]
+name = "validate"
+harness = false

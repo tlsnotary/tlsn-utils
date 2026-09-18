@@ -11,6 +11,7 @@ members = [
     "rand06-compat",
     "rangeset",
     "rangeset/fuzz",
+    "transcript-verify",
 ]
 resolver = "3"
 
@@ -20,6 +21,7 @@ serio = { path = "serio" }
 spansy = { path = "spansy" }
 tlsn-mux = { path = "mux/mux" }
 rangeset = { path = "rangeset" }
+transcript-verify = { path = "transcript-verify" }
 
 async-trait = "0.1"
 bincode = "1.3"

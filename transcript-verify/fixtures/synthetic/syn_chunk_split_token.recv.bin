@@ -1,0 +1,15 @@
+HTTP/1.1 200 OK
+Date: Wed, 10 Jun 2026 00:00:00 GMT
+Server: synthetic/0.1
+Content-Type: application/json
+Transfer-Encoding: chunked
+Connection: close
+
+c
+{"price":123
+13
+45.678,"name":"alph
+6
+abet"}
+0
+
