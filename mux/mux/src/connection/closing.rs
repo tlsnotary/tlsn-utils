@@ -25,7 +25,6 @@ pub struct Closing<T> {
     stream_receivers: SelectAll<TaggedStream<StreamId, mpsc::Receiver<StreamCommand>>>,
     pending_frames: VecDeque<Frame<()>>,
     socket: Option<Fuse<frame::Io<T>>>,
-    wait_for_reply: bool,
     keep_alive: bool,
 }
 
@@ -38,7 +37,6 @@ where
         stream_receivers: SelectAll<TaggedStream<StreamId, mpsc::Receiver<StreamCommand>>>,
         pending_frames: VecDeque<Frame<()>>,
         socket: Fuse<frame::Io<T>>,
-        wait_for_reply: bool,
         keep_alive: bool,
     ) -> Self {
         Self {
@@ -47,7 +45,6 @@ where
             stream_receivers,
             pending_frames,
             socket: Some(socket),
-            wait_for_reply,
             keep_alive,
         }
     }
@@ -102,36 +99,9 @@ where
                     match this.pending_frames.pop_front() {
                         Some(frame) => socket.start_send_unpin(frame)?,
                         None => {
-                            if this.wait_for_reply {
-                                log::debug!("{}: awaiting goaway", this.id);
-                                this.state = State::WaitingForReply;
-                            } else {
-                                log::debug!("{}: closing socket", this.id);
-                                this.state = State::ClosingSocket;
-                            }
-                        }
-                    }
-                }
-                State::WaitingForReply => {
-                    // Wait for a GoAway frame from the remote before closing.
-                    let socket = this.socket.as_mut().expect("socket should be present");
-                    match socket.poll_next_unpin(cx) {
-                        Poll::Ready(Some(Ok(frame))) => {
-                            if frame.header().tag() == frame::header::Tag::GoAway {
-                                log::debug!("{}: received goaway", this.id);
-                                this.state = State::ClosingSocket;
-                            }
-                            // Ignore other frames while waiting for GoAway
-                        }
-                        Poll::Ready(Some(Err(e))) => {
-                            return Poll::Ready(Err(e.into()));
-                        }
-                        Poll::Ready(None) => {
-                            // Remote closed without sending GoAway, proceed to close
-                            log::debug!("{}: remote closed without goaway", this.id);
+                            log::debug!("{}: closing socket", this.id);
                             this.state = State::ClosingSocket;
                         }
-                        Poll::Pending => return Poll::Pending,
                     }
                 }
                 State::ClosingSocket => {
@@ -159,7 +129,6 @@ enum State {
     ClosingStreamReceiver,
     DrainingStreamReceiver,
     FlushingPendingFrames,
-    WaitingForReply,
     ClosingSocket,
 }
 
@@ -254,7 +223,6 @@ mod tests {
             stream_receivers,
             pending_frames.into(),
             frame::Io::new(crate::connection::Id(0), &mut socket).fuse(),
-            false,
             false,
         );
         futures::executor::block_on(async { poll_fn(|cx| closing.poll_unpin(cx)).await.unwrap() });

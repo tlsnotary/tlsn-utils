@@ -73,6 +73,10 @@ pub(crate) struct StreamRegistry {
     config: Arc<Config>,
     rtt: rtt::Rtt,
     accumulated_max_stream_windows: Arc<Mutex<usize>>,
+    /// GoAway code received from the peer, if any. While set, the connection
+    /// is receive-draining: it sends nothing, serves only mux-buffered reads,
+    /// and stays alive so unclaimed peer-opened streams can be adopted.
+    remote_goaway: Option<u32>,
 }
 
 impl StreamRegistry {
@@ -97,6 +101,7 @@ impl StreamRegistry {
             config,
             rtt,
             accumulated_max_stream_windows,
+            remote_goaway: None,
         }
     }
 
@@ -104,6 +109,41 @@ impl StreamRegistry {
     /// plus close frames owed to the peer but not yet flushed.
     fn active_slots(&self) -> usize {
         self.streams.len() + self.owed_close.len()
+    }
+
+    /// Record a GoAway received from the peer and freeze the read halves:
+    /// the peer sends nothing more, so every stream becomes receive-closed
+    /// and readers drain only what is already buffered.
+    fn set_remote_goaway(&mut self, code: u32) {
+        if self.remote_goaway.is_some() {
+            return;
+        }
+        self.remote_goaway = Some(code);
+        for (id, s) in self.streams.iter().chain(self.inactive.iter()) {
+            let mut shared = s.lock();
+            shared.update_state(self.id, *id, State::RecvClosed);
+            if let Some(w) = shared.reader.take() {
+                w.wake()
+            }
+            if let Some(w) = shared.writer.take() {
+                w.wake()
+            }
+        }
+        self.wake_slot_waiters();
+    }
+
+    /// Whether a GoAway has been received from the peer.
+    pub(crate) fn has_remote_goaway(&self) -> bool {
+        self.remote_goaway.is_some()
+    }
+
+    /// Whether any peer-opened stream has no local handle yet.
+    ///
+    /// The map holds one `Arc` per entry, so a `strong_count` of 1 means only
+    /// the registry references it: the peer created it but no local `Stream`
+    /// has claimed the id yet.
+    fn has_unclaimed(&self) -> bool {
+        self.streams.values().any(|s| Arc::strong_count(s) == 1)
     }
 
     /// Register a waker to be notified when a slot becomes available.
@@ -156,12 +196,16 @@ impl StreamRegistry {
 
     /// Attempt to claim a slot for `shared`, promoting it from the inactive
     /// set into the active `streams` map. Returns `false` (claiming nothing)
-    /// when no slot is available.
+    /// when no slot is available, or when a GoAway was received: after a
+    /// GoAway no new wire streams may be opened, only existing ones adopted.
     pub(crate) fn try_claim_slot(
         &mut self,
         stream_id: StreamId,
         shared: &Arc<Mutex<stream::Shared>>,
     ) -> bool {
+        if self.remote_goaway.is_some() {
+            return false;
+        }
         if self.active_slots() >= self.config.max_num_streams {
             return false;
         }
@@ -174,6 +218,21 @@ impl StreamRegistry {
         let mut this = registry.lock();
         let user_id = UserId::new(user_id)?;
         let stream_id = StreamId::new(user_id.as_bytes());
+
+        // After receiving GoAway no new streams may be opened: only allow
+        // adopting an id the peer already created (present in `streams`) or
+        // merging with a local inactive handle for the same id.
+        if this.remote_goaway.is_some()
+            && !this.streams.contains_key(&stream_id)
+            && !this.inactive.contains_key(&stream_id)
+        {
+            log::trace!(
+                "{}/{}: rejecting new stream after GoAway",
+                this.id,
+                stream_id
+            );
+            return Err(ConnectionError::Closed);
+        }
 
         // Adopt the canonical `Shared` if one already exists, otherwise create
         // a fresh inactive one. The handle never inserts into `streams`: a
@@ -419,15 +478,36 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
 
     /// Gracefully close the connection to the remote.
     pub(super) fn close(mut self) -> Closing<T> {
+        {
+            let registry = self.registry.lock();
+            let unclaimed = registry
+                .streams
+                .values()
+                .filter(|s| std::sync::Arc::strong_count(s) == 1)
+                .count();
+            if unclaimed > 0 {
+                log::warn!(
+                    "{}: closing with {unclaimed} unclaimed stream(s): peer data will be lost",
+                    self.id
+                );
+            }
+            let unread: usize = registry
+                .streams
+                .values()
+                .chain(registry.inactive.values())
+                .map(|s| s.lock().buffer.len())
+                .sum();
+            if unread > 0 {
+                log::warn!("{}: closing with {unread} unread byte(s) buffered", self.id);
+            }
+        }
         self.prepare_close();
-        let wait_for_reply = self.config.close_sync;
         let pending_frames = self.take_pending_frames();
         Closing::new(
             self.id,
             self.stream_receivers,
             pending_frames,
             self.socket,
-            wait_for_reply,
             self.config.keep_alive,
         )
     }
@@ -437,10 +517,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
     /// parked on slot availability. Once we leave the active state the driver
     /// no longer frees slots, so a parked writer would otherwise hang forever.
     ///
-    /// Nothing is delivered to streams once we leave the active state, so every
-    /// stream — active or not — is marked receive-closed and its parked
-    /// readers/writers are woken: a reader drains its buffer and then observes
-    /// EOF, and a writer observes the closed channel, instead of hanging.
+    /// The sender of a GoAway needs nothing further from its streams, so
+    /// every stream — active or not — is discarded unilaterally: marked
+    /// closed, its buffered data dropped, and its parked readers/writers
+    /// woken. Readers observe EOF immediately and writers observe the closed
+    /// channel, instead of hanging.
     fn prepare_close(&mut self) {
         for stream in self.stream_receivers.iter_mut() {
             stream.inner_mut().close();
@@ -449,7 +530,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
         let registry = &mut *registry;
         for (id, s) in registry.streams.iter().chain(registry.inactive.iter()) {
             let mut shared = s.lock();
-            shared.update_state(self.id, *id, State::RecvClosed);
+            shared.update_state(self.id, *id, State::Closed);
+            shared.buffer = crate::chunks::Chunks::new();
             if let Some(w) = shared.reader.take() {
                 w.wake()
             }
@@ -462,6 +544,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
 
     /// Collect any control/data frames not yet flushed to the socket, in
     /// send-priority order, so a closing connection can drain them.
+    ///
+    /// `close()` flushes everything queued before the call (ordered before
+    /// the GoAway) and accepts nothing new afterwards: stream command
+    /// receivers are closed by `prepare_close`, so only already-queued
+    /// commands drain. Inbound buffers were already discarded there.
     fn take_pending_frames(&self) -> PendingFrames {
         let pong = self.pending_pong.map(|nonce| {
             let mut hdr = Header::ping(nonce);
@@ -485,20 +572,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             .collect::<PendingFrames>()
     }
 
-    /// Close the connection without waiting for a reply.
-    pub(super) fn close_no_wait(mut self) -> Closing<T> {
-        self.prepare_close();
-        let pending_frames = self.take_pending_frames();
-        Closing::new(
-            self.id,
-            self.stream_receivers,
-            pending_frames,
-            self.socket,
-            false,
-            self.config.keep_alive,
-        )
-    }
-
     /// Cleanup all our resources.
     pub(super) fn cleanup(mut self, error: ConnectionError) -> Cleanup {
         self.drop_all_streams();
@@ -507,6 +580,32 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
 
     pub(super) fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         loop {
+            self.driver_waker.register(cx.waker());
+
+            // Receive-drain after GoAway: send nothing (no socket I/O at
+            // all — TCP leftovers are intentionally lost, only mux-buffered
+            // reads are served). Stay alive so unclaimed streams can be
+            // adopted; report the GoAway once none remain. `close()` still
+            // works at any point. (Single lock: parking_lot is not reentrant.)
+            let drain = {
+                let registry = self.registry.lock();
+                registry
+                    .remote_goaway
+                    .map(|code| (code, registry.has_unclaimed()))
+            };
+            if let Some((code, unclaimed)) = drain {
+                if unclaimed {
+                    // Drop queued receivers so drops don't leak, but never
+                    // flush anything: the receiver of a GoAway sends nothing
+                    // back.
+                    while let Poll::Ready(Some(_)) = self.new_receiver_rx.poll_next_unpin(cx) {
+                        continue;
+                    }
+                    return Poll::Pending;
+                }
+                return Poll::Ready(Err(go_away_error(self.id, code)));
+            }
+
             // Poll for new stream receivers from Handle
             while let Poll::Ready(Some(receiver)) = self.new_receiver_rx.poll_next_unpin(cx) {
                 self.stream_receivers.push(receiver);
@@ -514,8 +613,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                     waker.wake();
                 }
             }
-
-            self.driver_waker.register(cx.waker());
 
             if self.socket.poll_ready_unpin(cx).is_ready() {
                 if let Some(frame) = self.registry.lock().rtt.next_ping() {
@@ -728,7 +825,16 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
             Tag::Data => self.on_data(frame.into_data()),
             Tag::WindowUpdate => self.on_window_update(&frame.into_window_update()),
             Tag::Ping => self.on_ping(&frame.into_ping()),
-            Tag::GoAway => return Err(go_away_error(self.id, frame.header().len().val())),
+            Tag::GoAway => {
+                let code = frame.header().len().val();
+                log::debug!("{}: received GoAway code {}", self.id, code);
+                // Receive-drain: send nothing more, keep mux-buffered reads,
+                // stay alive until unclaimed streams are adopted or the user
+                // closes. `poll` reports the GoAway once nothing unclaimed
+                // remains.
+                self.registry.lock().set_remote_goaway(code);
+                return Ok(Action::None);
+            }
         };
         Ok(action)
     }

@@ -71,7 +71,6 @@ const DEFAULT_SPLIT_SEND_SIZE: usize = 16 * KIB;
 /// - max. number of streams = 512
 /// - read after close = true
 /// - split send size = 16 KiB
-/// - close sync = false
 /// - keep alive = false
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -79,7 +78,6 @@ pub struct Config {
     max_num_streams: usize,
     read_after_close: bool,
     split_send_size: usize,
-    pub(crate) close_sync: bool,
     keep_alive: bool,
 }
 
@@ -90,7 +88,6 @@ impl Default for Config {
             max_num_streams: 512,
             read_after_close: true,
             split_send_size: DEFAULT_SPLIT_SEND_SIZE,
-            close_sync: false,
             keep_alive: false,
         }
     }
@@ -188,16 +185,6 @@ impl Config {
         self
     }
 
-    /// Enable or disable synchronized close.
-    ///
-    /// When enabled, the initiating side will wait for a GoAway reply before
-    /// completing the close. The receiving side will send a GoAway reply before
-    /// closing.
-    pub fn set_close_sync(&mut self, b: bool) -> &mut Self {
-        self.close_sync = b;
-        self
-    }
-
     /// Enable or disable keep-alive pings.
     ///
     /// Note: This is currently a placeholder and has no effect.
@@ -233,7 +220,6 @@ impl quickcheck::Arbitrary for Config {
             max_num_streams,
             read_after_close: bool::arbitrary(g),
             split_send_size: g.gen_range(DEFAULT_SPLIT_SEND_SIZE..usize::MAX),
-            close_sync: bool::arbitrary(g),
             keep_alive: bool::arbitrary(g),
         }
     }

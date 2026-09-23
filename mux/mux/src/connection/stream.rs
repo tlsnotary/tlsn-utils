@@ -155,6 +155,12 @@ impl Stream {
         io::Error::new(io::ErrorKind::WriteZero, msg)
     }
 
+    /// Whether the connection is receive-draining after a GoAway: the
+    /// receiver of a GoAway sends nothing back, so streams are read-only.
+    fn is_draining(&self) -> bool {
+        self.registry.lock().has_remote_goaway()
+    }
+
     /// Send new credit to the sending side via a window update message if
     /// permitted.
     fn send_window_update(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
@@ -239,12 +245,16 @@ impl AsyncRead for Stream {
         cx: &mut Context,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        // Try to send window update, but don't fail if sender is closed
-        match self.send_window_update(cx) {
-            Poll::Ready(Ok(())) => {}
-            Poll::Ready(Err(_)) if self.sender.is_closed() => {}
-            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-            Poll::Pending => {}
+        // After a GoAway the receiver sends nothing back, so reads must not
+        // emit window updates: serve mux-buffered data, then EOF.
+        if !self.is_draining() {
+            // Try to send window update, but don't fail if sender is closed
+            match self.send_window_update(cx) {
+                Poll::Ready(Ok(())) => {}
+                Poll::Ready(Err(_)) if self.sender.is_closed() => {}
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => {}
+            }
         }
 
         let mut shared = self.shared();
@@ -293,6 +303,11 @@ impl AsyncWrite for Stream {
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
+        // The receiver of a GoAway sends nothing back: fail fast instead of
+        // claiming slots or parking.
+        if self.is_draining() {
+            return Poll::Ready(Err(self.write_zero_err()));
+        }
         // Writing a stream is what makes it active on the wire; claim a slot
         // first, applying backpressure if the slot limit is reached.
         ready!(self.poll_activate(cx));
@@ -354,6 +369,14 @@ impl AsyncWrite for Stream {
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
         if self.is_closed() {
+            return Poll::Ready(Ok(()));
+        }
+
+        // The receiver of a GoAway sends nothing back: close locally only,
+        // never queue a close frame.
+        if self.is_draining() {
+            self.shared()
+                .update_state(self.conn, self.stream_id, State::SendClosed);
             return Poll::Ready(Ok(()));
         }
 

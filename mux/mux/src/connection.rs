@@ -143,12 +143,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                         self.inner = ConnectionState::Active(active);
                         return Poll::Pending;
                     }
-                    Poll::Ready(Err(ConnectionError::Closed)) if active.config.close_sync => {
-                        // Remote sent GoAway with close_sync enabled.
-                        // Send our GoAway reply via Closing (no wait).
-                        self.inner = ConnectionState::Closing(active.close_no_wait());
-                        continue;
-                    }
                     Poll::Ready(Err(e)) => {
                         self.inner = ConnectionState::Cleanup(active.cleanup(e));
                         continue;

@@ -88,9 +88,8 @@ GoAway frames signal connection termination. The Length field contains an error 
 
 **Behavior:**
 - GoAway frames MUST use the zero Stream ID.
-- After sending GoAway, an implementation MUST NOT open new streams.
-- After receiving GoAway, an implementation MUST NOT open new streams.
-- Existing streams MAY continue until closed.
+- After sending GoAway, an implementation MUST NOT send new streams or data on existing streams.
+- After receiving GoAway, an implementation MUST NOT open new streams. It MAY keep sending on existing streams.
 
 ## 4. Flags
 
@@ -254,26 +253,12 @@ MUX does not require an explicit handshake. The connection is considered establi
 
 To gracefully close a connection:
 
-1. Send a GoAway frame with error code `0x00` (Normal).
+1. Flush queued stream frames, then send a GoAway frame with error code `0x00` (Normal).
 2. Stop opening new streams.
 3. Wait for existing streams to close naturally or with timeout.
 4. Close the underlying connection.
 
-### 7.3 Synchronized Close Mode
-
-In synchronized close mode, both sides exchange GoAway frames before closing.
-
-**Initiator behavior:**
-1. Send GoAway.
-2. Wait to receive GoAway from peer (with timeout).
-3. Close underlying connection.
-
-**Responder behavior:**
-1. Receive GoAway.
-2. Send GoAway.
-3. Close underlying connection.
-
-### 7.4 Keep-Alive
+### 7.3 Keep-Alive
 
 Implementations MAY send periodic Ping frames to detect connection liveness and measure RTT.
 

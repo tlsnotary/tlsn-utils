@@ -679,54 +679,6 @@ fn close_through_drop_of_stream_propagates_to_remote() {
     .unwrap();
 }
 
-#[test]
-fn close_sync() {
-    let _ = env_logger::try_init();
-
-    let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(1024, 1024);
-    let mut config = Config::default();
-    config.set_close_sync(true);
-    let mut server = Connection::new(server_endpoint, config.clone());
-    let mut client = Connection::new(client_endpoint, config);
-
-    let waker = std::task::Waker::noop();
-    let mut cx = std::task::Context::from_waker(waker);
-
-    // Create streams on both sides with same ID
-    let stream_id = b"test";
-    let client_stream = client.new_stream(stream_id).unwrap();
-    let server_stream = server.new_stream(stream_id).unwrap();
-
-    // Write from client (this sends StreamInit + Data)
-    assert!(pin!(client_stream).poll_write(&mut cx, b"hello").is_ready());
-
-    // Client initiates close
-    client.close();
-
-    // Poll client a bunch of times and ensure it doesn't finish closing yet.
-    for _ in 0..10 {
-        assert!(client.poll(&mut cx).is_pending());
-    }
-
-    // Server polls to receive StreamInit and transition the stream
-    let _ = server.poll(&mut cx);
-    let _ = server.poll(&mut cx);
-
-    let mut buf = [0u8; 5];
-    assert!(pin!(server_stream).poll_read(&mut cx, &mut buf).is_ready());
-    assert_eq!(&buf, b"hello");
-
-    // Server polls more to receive GoAway
-    while server.poll(&mut cx).is_pending() {}
-
-    // Now server closes
-    server.close();
-    let _ = server.poll(&mut cx);
-
-    // Client should now be able to finish closing
-    while client.poll(&mut cx).is_pending() {}
-}
-
 /// A writer blocked on the slot limit is woken when a slot frees, with no lost
 /// wakeup: dropping the only active stream and flushing its RST wakes the
 /// blocked writer's registered waker.
@@ -2319,4 +2271,250 @@ fn oversized_opening_frame_is_protocol_error() {
         contains_go_away(&out[..n]),
         "an oversized opening frame should be answered with GoAway"
     );
+}
+
+/// A peer violating the spec by opening streams after its GoAway gains
+/// nothing: frames past the GoAway are never read, so the late id can never
+/// be adopted while the pre-GoAway id can.
+#[test]
+fn post_goaway_syn_cannot_open_new_streams() {
+    use std::task::Poll;
+
+    let _ = env_logger::try_init();
+
+    let (mut peer, endpoint) = futures_ringbuf::Endpoint::pair(64 * 1024, 64 * 1024);
+    let mut conn = Connection::new(endpoint, Config::default());
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    // Legit open before the GoAway, spec violation after it.
+    let open_x = raw_frame(TAG_DATA, FLAG_SYN, 1, StreamId::new(b"x"), b"x");
+    futures::executor::block_on(peer.write_all(&open_x)).unwrap();
+    for _ in 0..50 {
+        let _ = conn.poll(&mut cx);
+    }
+    futures::executor::block_on(peer.write_all(&raw_go_away(0))).unwrap();
+    let open_y = raw_frame(TAG_DATA, FLAG_SYN, 1, StreamId::new(b"y"), b"y");
+    futures::executor::block_on(peer.write_all(&open_y)).unwrap();
+    for _ in 0..50 {
+        assert!(
+            conn.poll(&mut cx).is_pending(),
+            "poll must stay pending while an unclaimed stream exists"
+        );
+    }
+
+    // Pre-GoAway id adopts; post-GoAway id was never created.
+    let mut x = conn.new_stream(b"x").unwrap();
+    assert!(conn.new_stream(b"y").is_err());
+    let mut buf = [0u8; 8];
+    match pin!(&mut x).poll_read(&mut cx, &mut buf) {
+        Poll::Ready(Ok(n)) => assert_eq!(&buf[..n], b"x"),
+        other => panic!("pre-GoAway stream should be adoptable, got {other:?}"),
+    }
+
+    // Nothing unclaimed remains: the GoAway is reported as clean shutdown.
+    let mut done = false;
+    for _ in 0..200 {
+        if let Poll::Ready(outcome) = conn.poll(&mut cx) {
+            assert!(outcome.is_ok());
+            done = true;
+            break;
+        }
+    }
+    assert!(done, "poll should report GoAway once claimed");
+}
+
+/// The receiver of a GoAway sends nothing back and stays alive until
+/// peer-opened streams are claimed: polls stay pending, truly new ids are
+/// rejected, the adopted id drains mux-buffered bytes then EOF, writes fail.
+#[test]
+fn goaway_received_waits_for_unclaimed_claims() {
+    use std::task::Poll;
+
+    let _ = env_logger::try_init();
+
+    let (mut peer, endpoint) = futures_ringbuf::Endpoint::pair(64 * 1024, 64 * 1024);
+    let mut conn = Connection::new(endpoint, Config::default());
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    // Peer opens a stream and buffers data; we never claim it.
+    let frame = raw_frame(TAG_DATA, FLAG_SYN, 7, StreamId::new(b"late"), b"payload");
+    futures::executor::block_on(peer.write_all(&frame)).unwrap();
+    for _ in 0..50 {
+        let _ = conn.poll(&mut cx);
+    }
+
+    // Peer goes away cleanly. Drain anything predating the GoAway (e.g. the
+    // initial RTT ping) so the later assertion checks post-GoAway silence.
+    loop {
+        match pin!(&mut peer).poll_read(&mut cx, &mut [0u8; 1024]) {
+            Poll::Ready(Ok(n)) if n > 0 => continue,
+            _ => break,
+        }
+    }
+    futures::executor::block_on(peer.write_all(&raw_go_away(0))).unwrap();
+    for _ in 0..50 {
+        assert!(
+            conn.poll(&mut cx).is_pending(),
+            "poll must stay pending while an unclaimed stream exists"
+        );
+    }
+
+    // Truly new ids are rejected; the peer-opened id adopts with its data.
+    assert!(conn.new_stream(b"brand-new").is_err());
+    let mut late = conn.new_stream(b"late").unwrap();
+
+    // Receiver sends nothing back: writes fail fast...
+    match pin!(&mut late).poll_write(&mut cx, b"reply") {
+        Poll::Ready(Err(_)) => {}
+        other => panic!("write after GoAway should fail, got {other:?}"),
+    }
+    // ...and reads drain only mux-buffered bytes, then EOF...
+    let mut buf = [0u8; 32];
+    match pin!(&mut late).poll_read(&mut cx, &mut buf) {
+        Poll::Ready(Ok(n)) => assert_eq!(&buf[..n], b"payload"),
+        other => panic!("claim should read buffered payload, got {other:?}"),
+    }
+    match pin!(&mut late).poll_read(&mut cx, &mut buf) {
+        Poll::Ready(Ok(0)) => {}
+        other => panic!("second read should be EOF, got {other:?}"),
+    }
+
+    // Nothing was sent back to the peer.
+    let mut out = [0u8; 1024];
+    assert!(
+        pin!(&mut peer).poll_read(&mut cx, &mut out).is_pending(),
+        "receiver of GoAway must send nothing back"
+    );
+
+    // All claimed: the GoAway is now reported as a clean shutdown.
+    let mut done = false;
+    for _ in 0..200 {
+        if let Poll::Ready(outcome) = conn.poll(&mut cx) {
+            assert!(outcome.is_ok());
+            done = true;
+            break;
+        }
+    }
+    assert!(done, "poll should report GoAway once claimed");
+}
+
+/// `close()` flushes everything queued before the call — data and stream
+/// closes alike — ordered before the GoAway, and accepts nothing new after.
+#[test]
+fn close_flushes_queued_then_goaway() {
+    let _ = env_logger::try_init();
+
+    let (mut peer, endpoint) = futures_ringbuf::Endpoint::pair(64 * 1024, 64 * 1024);
+    let mut conn = Connection::new(endpoint, Config::default());
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    // Queue stream traffic without pumping the driver, so it is still staged
+    // when close happens: data plus a clean close on one activated stream.
+    let mut x = conn.new_stream(b"x").unwrap();
+    assert!(pin!(&mut x).poll_write(&mut cx, b"hi").is_ready());
+    assert!(pin!(&mut x).poll_close(&mut cx).is_ready());
+
+    conn.close();
+    while conn.poll(&mut cx).is_pending() {}
+
+    let mut out = vec![0u8; 4096];
+    let n = futures::executor::block_on(peer.read(&mut out)).unwrap();
+    // Data frame (14 + 2) + close frame (14) + GoAway (14), in drain order.
+    assert_eq!(
+        n,
+        HEADER_SIZE + 2 + HEADER_SIZE + HEADER_SIZE,
+        "close should flush queued data and closes before the GoAway, got {n} bytes"
+    );
+    assert_eq!(
+        go_away_code(&out[..n]),
+        Some(0),
+        "close should end with a clean GoAway"
+    );
+    let x_id = StreamId::new(b"x");
+    assert!(
+        out.windows(HEADER_SIZE).any(|w| w[0] == TAG_DATA
+            && (w[1] & FLAG_FIN) != 0
+            && w[6..HEADER_SIZE] == x_id.as_bytes()[..]),
+        "queued stream close should be flushed before the GoAway"
+    );
+}
+
+/// Buffered stream data is discarded on close: readers observe EOF
+/// immediately and writers fail, instead of draining stale bytes.
+#[test]
+fn close_discards_buffers_immediate_eof() {
+    use std::task::Poll;
+
+    let _ = env_logger::try_init();
+
+    let (mut peer, endpoint) = futures_ringbuf::Endpoint::pair(64 * 1024, 64 * 1024);
+    let mut conn = Connection::new(endpoint, Config::default());
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    // Claim the id locally, then let the peer fill its buffer.
+    let mut s = conn.new_stream(b"s").unwrap();
+    let frame = raw_frame(TAG_DATA, FLAG_SYN, 7, StreamId::new(b"s"), b"payload");
+    futures::executor::block_on(peer.write_all(&frame)).unwrap();
+    for _ in 0..50 {
+        let _ = conn.poll(&mut cx);
+    }
+
+    conn.close();
+    while conn.poll(&mut cx).is_pending() {}
+
+    let mut buf = [0u8; 32];
+    match pin!(&mut s).poll_read(&mut cx, &mut buf) {
+        Poll::Ready(Ok(0)) => {}
+        other => panic!("read after close should be immediate EOF, got {other:?}"),
+    }
+    match pin!(&mut s).poll_write(&mut cx, b"more") {
+        Poll::Ready(Err(_)) => {}
+        other => panic!("write after close should fail, got {other:?}"),
+    }
+}
+
+/// Parked readers and writers are woken on close instead of hanging: the
+/// writer blocked on slot exhaustion fails and the reader on an empty stream
+/// sees EOF.
+#[test]
+fn close_wakes_parked_parties() {
+    use std::task::Poll;
+
+    let _ = env_logger::try_init();
+
+    let (mut _peer, endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
+    let mut cfg = Config::default();
+    cfg.set_max_num_streams(1);
+    let mut conn = Connection::new(endpoint, cfg);
+
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+
+    // A claims the only slot; B parks on it and a reader parks on empty A.
+    let mut a = conn.new_stream(b"a").unwrap();
+    assert!(pin!(&mut a).poll_write(&mut cx, b"x").is_ready());
+    let mut b = conn.new_stream(b"b").unwrap();
+    assert!(pin!(&mut b).poll_write(&mut cx, b"y").is_pending());
+    let mut buf = [0u8; 8];
+    assert!(pin!(&mut a).poll_read(&mut cx, &mut buf).is_pending());
+
+    conn.close();
+    while conn.poll(&mut cx).is_pending() {}
+
+    match pin!(&mut b).poll_write(&mut cx, b"y") {
+        Poll::Ready(Err(_)) => {}
+        other => panic!("parked writer should fail after close, got {other:?}"),
+    }
+    match pin!(&mut a).poll_read(&mut cx, &mut buf) {
+        Poll::Ready(Ok(0)) => {}
+        other => panic!("parked reader should see EOF after close, got {other:?}"),
+    }
 }
