@@ -442,6 +442,16 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
     /// readers/writers are woken: a reader drains its buffer and then observes
     /// EOF, and a writer observes the closed channel, instead of hanging.
     fn prepare_close(&mut self) {
+        // Fold in receivers the Handle queued but the driver has not adopted
+        // yet. `Active::poll` normally moves them from `new_receiver_rx` into
+        // `stream_receivers`; a stream may be created and written to before
+        // the next poll. Under the close contract no new streams are opened
+        // after this point, so a one-shot drain captures them all and their
+        // queued frames are closed + flushed by `Closing` instead of being
+        // silently dropped with `new_receiver_rx` when `Active` is consumed.
+        while let Ok(receiver) = self.new_receiver_rx.try_recv() {
+            self.stream_receivers.push(receiver);
+        }
         for stream in self.stream_receivers.iter_mut() {
             stream.inner_mut().close();
         }
@@ -879,6 +889,12 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
 impl<T> Active<T> {
     /// Close and drop all `Stream`s and wake any pending `Waker`s.
     pub(super) fn drop_all_streams(&mut self) {
+        // Fold in receivers the Handle queued but the driver never adopted, so
+        // their (error-path) senders observe a closed channel rather than being
+        // dropped with `new_receiver_rx`. Mirrors `prepare_close`.
+        while let Ok(receiver) = self.new_receiver_rx.try_recv() {
+            self.stream_receivers.push(receiver);
+        }
         // Close the stream command receivers before waking anyone: a woken
         // writer re-polls immediately and must observe a closed channel,
         // otherwise it could re-register on a slot that will never free now
