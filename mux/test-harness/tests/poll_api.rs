@@ -126,9 +126,11 @@ fn concurrent_streams() {
         let data = Msg(vec![0x42; PAYLOAD_SIZE]);
         let n_streams = 256;
 
-        let mut cfg = Config::default();
-        cfg.set_split_send_size(PAYLOAD_SIZE);
-        cfg.set_max_num_streams(n_streams);
+        let cfg = Config::builder()
+            .split_send_size(PAYLOAD_SIZE)
+            .max_num_streams(n_streams)
+            .build()
+            .expect("valid config");
 
         let (mut server, mut client) = connected_peers(cfg.clone(), cfg, tcp_buffer_sizes)
             .await
@@ -213,8 +215,10 @@ fn new_stream_never_errors_with_many_handles() {
     let _ = env_logger::try_init();
 
     let (server_endpoint, _client_endpoint) = futures_ringbuf::Endpoint::pair(1024, 1024);
-    let mut cfg = Config::default();
-    cfg.set_max_num_streams(2);
+    let cfg = Config::builder()
+        .max_num_streams(2)
+        .build()
+        .expect("valid config");
     let mut conn = Connection::new(server_endpoint, cfg);
 
     // Far more handles than max_num_streams; every call succeeds.
@@ -234,8 +238,10 @@ fn write_gated_pending_at_limit_then_ready_after_slot_frees() {
     let _ = env_logger::try_init();
 
     let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
-    let mut cfg = Config::default();
-    cfg.set_max_num_streams(1);
+    let cfg = Config::builder()
+        .max_num_streams(1)
+        .build()
+        .expect("valid config");
     let mut client = Connection::new(client_endpoint, cfg.clone());
     // A peer to drain frames off the socket so writes can flush.
     let mut server = Connection::new(server_endpoint, cfg);
@@ -273,10 +279,14 @@ fn peer_cannot_exceed_max_streams() {
 
     async fn run_test() -> Result<(), ConnectionError> {
         // The client may open many streams; the server's limit is small.
-        let mut client_cfg = Config::default();
-        client_cfg.set_max_num_streams(64);
-        let mut server_cfg = Config::default();
-        server_cfg.set_max_num_streams(4);
+        let client_cfg = Config::builder()
+            .max_num_streams(64)
+            .build()
+            .expect("valid config");
+        let server_cfg = Config::builder()
+            .max_num_streams(4)
+            .build()
+            .expect("valid config");
 
         let (mut server, mut client) = connected_peers(server_cfg, client_cfg, None).await?;
 
@@ -342,8 +352,10 @@ fn never_activated_close_and_drop_emit_nothing() {
     let _ = env_logger::try_init();
 
     let (_server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(1024, 1024);
-    let mut cfg = Config::default();
-    cfg.set_max_num_streams(1);
+    let cfg = Config::builder()
+        .max_num_streams(1)
+        .build()
+        .expect("valid config");
     let mut client = Connection::new(client_endpoint, cfg);
 
     let waker = std::task::Waker::noop();
@@ -684,8 +696,10 @@ fn close_sync() {
     let _ = env_logger::try_init();
 
     let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(1024, 1024);
-    let mut config = Config::default();
-    config.set_close_sync(true);
+    let config = Config::builder()
+        .close_sync(true)
+        .build()
+        .expect("valid config");
     let mut server = Connection::new(server_endpoint, config.clone());
     let mut client = Connection::new(client_endpoint, config);
 
@@ -750,8 +764,10 @@ fn blocked_writer_is_woken_on_slot_free() {
     }
 
     let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
-    let mut cfg = Config::default();
-    cfg.set_max_num_streams(1);
+    let cfg = Config::builder()
+        .max_num_streams(1)
+        .build()
+        .expect("valid config");
     let mut client = Connection::new(client_endpoint, cfg.clone());
     let mut server = Connection::new(server_endpoint, cfg);
 
@@ -816,8 +832,10 @@ fn blocked_writer_is_woken_on_close() {
     }
 
     let (_server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
-    let mut cfg = Config::default();
-    cfg.set_max_num_streams(1);
+    let cfg = Config::builder()
+        .max_num_streams(1)
+        .build()
+        .expect("valid config");
     let mut client = Connection::new(client_endpoint, cfg);
 
     let noop = std::task::Waker::noop();
@@ -868,8 +886,10 @@ fn reopen_after_drop_at_limit_succeeds() {
     let _ = env_logger::try_init();
 
     let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
-    let mut cfg = Config::default();
-    cfg.set_max_num_streams(1);
+    let cfg = Config::builder()
+        .max_num_streams(1)
+        .build()
+        .expect("valid config");
     let mut client = Connection::new(client_endpoint, cfg.clone());
     let mut server = Connection::new(server_endpoint, cfg);
 
@@ -979,8 +999,10 @@ fn owed_close_does_not_block_peer_stream_creation() {
     let mut pool = LocalPool::new();
 
     let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
-    let mut server_cfg = Config::default();
-    server_cfg.set_max_num_streams(2);
+    let server_cfg = Config::builder()
+        .max_num_streams(2)
+        .build()
+        .expect("valid config");
     let mut server = Connection::new(server_endpoint, server_cfg);
     let mut client = Connection::new(client_endpoint, Config::default());
 
@@ -1324,8 +1346,10 @@ fn unclaimed_peer_streams_hold_slots_until_claimed() {
     let _ = env_logger::try_init();
 
     let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
-    let mut server_cfg = Config::default();
-    server_cfg.set_max_num_streams(2);
+    let server_cfg = Config::builder()
+        .max_num_streams(2)
+        .build()
+        .expect("valid config");
     let mut server = Connection::new(server_endpoint, server_cfg);
     let mut client = Connection::new(client_endpoint, Config::default());
 
@@ -1383,8 +1407,10 @@ fn peer_slots_recycle_across_many_claim_drop_cycles() {
     const CYCLES: usize = 300;
 
     let (server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
-    let mut server_cfg = Config::default();
-    server_cfg.set_max_num_streams(2);
+    let server_cfg = Config::builder()
+        .max_num_streams(2)
+        .build()
+        .expect("valid config");
     let mut server = Connection::new(server_endpoint, server_cfg);
     let mut client = Connection::new(client_endpoint, Config::default());
 
@@ -1613,8 +1639,10 @@ fn blocked_writer_is_woken_on_connection_error() {
     }
 
     let (mut server_endpoint, client_endpoint) = futures_ringbuf::Endpoint::pair(8192, 8192);
-    let mut cfg = Config::default();
-    cfg.set_max_num_streams(1);
+    let cfg = Config::builder()
+        .max_num_streams(1)
+        .build()
+        .expect("valid config");
     let mut client = Connection::new(client_endpoint, cfg);
 
     let noop = std::task::Waker::noop();
@@ -1683,10 +1711,14 @@ fn high_load_write_gating_no_lost_wakers_or_deadlock() {
         // The client is tightly slot-limited to force backpressure. The server
         // has ample slots so it can echo every stream without ever reaching its
         // own limit (there are only TOTAL_STREAMS distinct ids).
-        let mut client_cfg = Config::default();
-        client_cfg.set_max_num_streams(CLIENT_MAX_STREAMS);
-        let mut server_cfg = Config::default();
-        server_cfg.set_max_num_streams(TOTAL_STREAMS + 8);
+        let client_cfg = Config::builder()
+            .max_num_streams(CLIENT_MAX_STREAMS)
+            .build()
+            .expect("valid config");
+        let server_cfg = Config::builder()
+            .max_num_streams(TOTAL_STREAMS + 8)
+            .build()
+            .expect("valid config");
 
         let (mut server, mut client) = connected_peers(server_cfg, client_cfg, None)
             .await
@@ -1779,15 +1811,19 @@ fn high_load_stream_churn_no_slot_leak_or_deadlock() {
     const PER_WORKER: usize = 8000;
 
     async fn run_test() {
-        let mut client_cfg = Config::default();
-        client_cfg.set_max_num_streams(CLIENT_MAX_STREAMS);
+        let client_cfg = Config::builder()
+            .max_num_streams(CLIENT_MAX_STREAMS)
+            .build()
+            .expect("valid config");
         // The server never claims the peer-completed streams, so every one of
         // them sits in a slot — data retained — until the connection ends.
         // Its budget must therefore cover the full churn volume (and the
         // window limit, which is asserted against the slot count, is lifted).
-        let mut server_cfg = Config::default();
-        server_cfg.set_max_connection_receive_window(None);
-        server_cfg.set_max_num_streams(WORKERS * PER_WORKER + 8);
+        let server_cfg = Config::builder()
+            .max_connection_receive_window(None)
+            .max_num_streams(WORKERS * PER_WORKER + 8)
+            .build()
+            .expect("valid config");
 
         let (mut server, mut client) = connected_peers(server_cfg, client_cfg, None)
             .await
@@ -1956,8 +1992,10 @@ fn exceeding_the_stream_limit_sends_protocol_error() {
     let _ = env_logger::try_init();
 
     let (mut peer, endpoint) = futures_ringbuf::Endpoint::pair(64 * 1024, 64 * 1024);
-    let mut cfg = Config::default();
-    cfg.set_max_num_streams(1);
+    let cfg = Config::builder()
+        .max_num_streams(1)
+        .build()
+        .expect("valid config");
     let mut conn = Connection::new(endpoint, cfg);
 
     let waker = std::task::Waker::noop();
@@ -2087,8 +2125,10 @@ fn assert_ignored_after_reap(frame: Vec<u8>, what: &str) {
     let _ = env_logger::try_init();
 
     let (mut peer, endpoint) = futures_ringbuf::Endpoint::pair(64 * 1024, 64 * 1024);
-    let mut cfg = Config::default();
-    cfg.set_max_num_streams(1);
+    let cfg = Config::builder()
+        .max_num_streams(1)
+        .build()
+        .expect("valid config");
     let mut conn = Connection::new(endpoint, cfg);
 
     let waker = std::task::Waker::noop();

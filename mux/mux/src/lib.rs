@@ -97,11 +97,65 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Creates a new [`ConfigBuilder`], initialized with the default
+    /// configuration.
+    ///
+    /// The builder validates cross-field invariants at [`ConfigBuilder::build`]
+    /// time and returns a [`ConfigError`] instead of panicking.
+    pub fn builder() -> ConfigBuilder {
+        ConfigBuilder::default()
+    }
+}
+
+/// The error returned when a [`Config`] cannot be built.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigError {
+    /// The configured `max_connection_receive_window` is smaller than
+    /// `256 KiB * max_num_streams`, leaving some streams less than the default
+    /// window.
+    ReceiveWindowTooSmall {
+        /// The configured total receive window, in bytes.
+        max_connection_receive_window: usize,
+        /// The configured maximum number of streams.
+        max_num_streams: usize,
+        /// The minimum total receive window required for `max_num_streams`, in
+        /// bytes.
+        min_required: usize,
+    },
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigError::ReceiveWindowTooSmall {
+                max_connection_receive_window,
+                max_num_streams,
+                min_required,
+            } => write!(
+                f,
+                "`max_connection_receive_window` ({max_connection_receive_window} bytes) is smaller \
+                 than the {min_required} bytes required to give each of the {max_num_streams} \
+                 streams the default window size"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+/// A builder for [`Config`].
+#[derive(Debug, Clone, Default)]
+pub struct ConfigBuilder {
+    config: Config,
+}
+
+impl ConfigBuilder {
     /// Set the upper limit for the total receive window size across all streams
     /// of a connection.
     ///
     /// Must be `>= 256 KiB * max_num_streams` to allow each stream at least the
-    /// default window size.
+    /// default window size; otherwise [`build`](Self::build) fails.
     ///
     /// The window of a stream starts at 256 KiB and is increased (auto-tuned)
     /// based on the connection's round-trip time and the stream's bandwidth
@@ -130,16 +184,8 @@ impl Config {
     /// `max_connection_receive_window` to protect against this attack,
     /// especially since an attacker might use more than one stream per
     /// connection.
-    pub fn set_max_connection_receive_window(&mut self, n: Option<usize>) -> &mut Self {
-        self.max_connection_receive_window = n;
-
-        assert!(
-            self.max_connection_receive_window.unwrap_or(usize::MAX)
-                >= self.max_num_streams * DEFAULT_CREDIT as usize,
-            "`max_connection_receive_window` must be `>= 256 KiB * max_num_streams` to allow each
-            stream at least the default window size"
-        );
-
+    pub fn max_connection_receive_window(mut self, n: Option<usize>) -> Self {
+        self.config.max_connection_receive_window = n;
         self
     }
 
@@ -161,30 +207,22 @@ impl Config {
     /// their data is never discarded. It is the application's responsibility
     /// to open streams deterministically on both sides so every peer-opened
     /// stream is eventually claimed.
-    pub fn set_max_num_streams(&mut self, n: usize) -> &mut Self {
-        self.max_num_streams = n.max(1);
-
-        assert!(
-            self.max_connection_receive_window.unwrap_or(usize::MAX)
-                >= self.max_num_streams * DEFAULT_CREDIT as usize,
-            "`max_connection_receive_window` must be `>= 256 KiB * max_num_streams` to allow each
-            stream at least the default window size"
-        );
-
+    pub fn max_num_streams(mut self, n: usize) -> Self {
+        self.config.max_num_streams = n.max(1);
         self
     }
 
     /// Allow or disallow streams to read from buffered data after
     /// the connection has been closed.
-    pub fn set_read_after_close(&mut self, b: bool) -> &mut Self {
-        self.read_after_close = b;
+    pub fn read_after_close(mut self, b: bool) -> Self {
+        self.config.read_after_close = b;
         self
     }
 
     /// Set the max. payload size used when sending data frames. Payloads larger
     /// than the configured max. will be split.
-    pub fn set_split_send_size(&mut self, n: usize) -> &mut Self {
-        self.split_send_size = n;
+    pub fn split_send_size(mut self, n: usize) -> Self {
+        self.config.split_send_size = n;
         self
     }
 
@@ -193,17 +231,39 @@ impl Config {
     /// When enabled, the initiating side will wait for a GoAway reply before
     /// completing the close. The receiving side will send a GoAway reply before
     /// closing.
-    pub fn set_close_sync(&mut self, b: bool) -> &mut Self {
-        self.close_sync = b;
+    pub fn close_sync(mut self, b: bool) -> Self {
+        self.config.close_sync = b;
         self
     }
 
     /// Enable or disable keep-alive pings.
     ///
     /// Note: This is currently a placeholder and has no effect.
-    pub fn set_keep_alive(&mut self, b: bool) -> &mut Self {
-        self.keep_alive = b;
+    pub fn keep_alive(mut self, b: bool) -> Self {
+        self.config.keep_alive = b;
         self
+    }
+
+    /// Builds the [`Config`], validating it.
+    ///
+    /// Returns [`ConfigError::ReceiveWindowTooSmall`] if the configured
+    /// `max_connection_receive_window` cannot give every stream the default
+    /// window size.
+    pub fn build(self) -> std::result::Result<Config, ConfigError> {
+        let max_num_streams = self.config.max_num_streams;
+        let min_required = max_num_streams.saturating_mul(DEFAULT_CREDIT as usize);
+
+        if let Some(window) = self.config.max_connection_receive_window
+            && window < min_required
+        {
+            return Err(ConfigError::ReceiveWindowTooSmall {
+                max_connection_receive_window: window,
+                max_num_streams,
+                min_required,
+            });
+        }
+
+        Ok(self.config)
     }
 }
 
@@ -236,5 +296,96 @@ impl quickcheck::Arbitrary for Config {
             close_sync: bool::arbitrary(g),
             keep_alive: bool::arbitrary(g),
         }
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    const CREDIT: usize = DEFAULT_CREDIT as usize;
+
+    #[test]
+    fn builder_default_equals_config_default() {
+        let built = Config::builder().build().expect("default config is valid");
+        let default = Config::default();
+
+        assert_eq!(
+            built.max_connection_receive_window,
+            default.max_connection_receive_window
+        );
+        assert_eq!(built.max_num_streams, default.max_num_streams);
+        assert_eq!(built.read_after_close, default.read_after_close);
+        assert_eq!(built.split_send_size, default.split_send_size);
+        assert_eq!(built.close_sync, default.close_sync);
+        assert_eq!(built.keep_alive, default.keep_alive);
+    }
+
+    #[test]
+    fn receive_window_too_small_is_an_error() {
+        let err = Config::builder()
+            .max_num_streams(512)
+            .max_connection_receive_window(Some(512 * CREDIT - 1))
+            .build()
+            .expect_err("window below `max_num_streams * DEFAULT_CREDIT` must fail");
+
+        assert_eq!(
+            err,
+            ConfigError::ReceiveWindowTooSmall {
+                max_connection_receive_window: 512 * CREDIT - 1,
+                max_num_streams: 512,
+                min_required: 512 * CREDIT,
+            }
+        );
+    }
+
+    #[test]
+    fn minimum_window_is_accepted() {
+        let cfg = Config::builder()
+            .max_num_streams(512)
+            .max_connection_receive_window(Some(512 * CREDIT))
+            .build()
+            .expect("window of exactly `max_num_streams * DEFAULT_CREDIT` is valid");
+
+        assert_eq!(cfg.max_num_streams, 512);
+    }
+
+    #[test]
+    fn option_order_does_not_matter() {
+        // `64 MiB`/`256` streams is a valid combination that a sequential,
+        // validate-on-each-setter API would reject if the window was lowered
+        // before the stream count (the still-default 512 streams need 128 MiB).
+        let window = 256 * CREDIT;
+
+        let window_first = Config::builder()
+            .max_connection_receive_window(Some(window))
+            .max_num_streams(256)
+            .build();
+        let streams_first = Config::builder()
+            .max_num_streams(256)
+            .max_connection_receive_window(Some(window))
+            .build();
+
+        assert!(window_first.is_ok());
+        assert!(streams_first.is_ok());
+    }
+
+    #[test]
+    fn unlimited_window_is_always_valid() {
+        Config::builder()
+            .max_num_streams(usize::MAX)
+            .max_connection_receive_window(None)
+            .build()
+            .expect("`None` disables the limit and is valid for any stream count");
+    }
+
+    #[test]
+    fn zero_streams_is_clamped_to_one() {
+        let cfg = Config::builder()
+            .max_num_streams(0)
+            .build()
+            .expect("valid config");
+
+        assert_eq!(cfg.max_num_streams, 1);
     }
 }
