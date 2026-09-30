@@ -17,10 +17,11 @@ use futures::{AsyncRead, AsyncWrite};
 use tlsn_mux::{Config, Connection};
 
 fn cfg() -> Config {
-    let mut c = Config::default();
-    c.set_keep_alive(true);
-    c.set_close_sync(true);
-    c
+    Config::builder()
+        .keep_alive(true)
+        .close_sync(true)
+        .build()
+        .expect("valid config")
 }
 
 #[test]

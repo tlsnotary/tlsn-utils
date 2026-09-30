@@ -149,18 +149,20 @@ impl Arbitrary for TestConfig {
     fn arbitrary(g: &mut Gen) -> Self {
         use quickcheck::GenRange;
 
-        let mut c = Config::default();
         let max_num_streams = 512;
 
-        c.set_read_after_close(Arbitrary::arbitrary(g));
-        c.set_max_num_streams(max_num_streams);
-        if bool::arbitrary(g) {
-            c.set_max_connection_receive_window(Some(
-                g.gen_range(max_num_streams * (tlsn_mux::DEFAULT_CREDIT as usize)..usize::MAX),
-            ));
+        let max_connection_receive_window = if bool::arbitrary(g) {
+            Some(g.gen_range(max_num_streams * (tlsn_mux::DEFAULT_CREDIT as usize)..usize::MAX))
         } else {
-            c.set_max_connection_receive_window(None);
-        }
+            None
+        };
+
+        let c = Config::builder()
+            .read_after_close(Arbitrary::arbitrary(g))
+            .max_num_streams(max_num_streams)
+            .max_connection_receive_window(max_connection_receive_window)
+            .build()
+            .expect("arbitrary config is valid");
 
         TestConfig(c)
     }
