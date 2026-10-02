@@ -1,0 +1,10 @@
+HTTP/1.1 200 OK
+Date: Wed, 10 Jun 2026 00:00:00 GMT
+Server: synthetic/0.1
+Content-Type: application/json
+Content-Length: 14
+Set-Cookie: session=abc123; Path=/; HttpOnly
+Set-Cookie: theme=dark; Max-Age=3600
+Connection: close
+
+{"login":"ok"}

@@ -1,0 +1,12 @@
+HTTP/1.1 200 OK
+Date: Wed, 10 Jun 2026 13:08:51 GMT
+Content-Type: text/html
+Connection: close
+Server: cloudflare
+last-modified: Tue, 09 Jun 2026 21:01:00 GMT
+allow: GET, HEAD
+Accept-Ranges: bytes
+Age: 581
+cf-cache-status: HIT
+CF-RAY: a0989b6fcc943494-WAW
+

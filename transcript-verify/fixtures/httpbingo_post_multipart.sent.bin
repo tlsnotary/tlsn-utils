@@ -1,0 +1,23 @@
+POST /post HTTP/1.1
+Host: httpbingo.org
+User-Agent: transcript-verify-fixtures/0.1
+Accept: */*
+Accept-Encoding: identity
+Connection: close
+Content-Type: multipart/form-data; boundary=X-FIXTURE-BOUNDARY-7d9f1c
+Content-Length: 413
+
+--X-FIXTURE-BOUNDARY-7d9f1c
+Content-Disposition: form-data; name="field1"
+
+value-one
+--X-FIXTURE-BOUNDARY-7d9f1c
+Content-Disposition: form-data; name="field2"
+
+second value with spaces
+--X-FIXTURE-BOUNDARY-7d9f1c
+Content-Disposition: form-data; name="file"; filename="note.txt"
+Content-Type: text/plain
+
+0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+--X-FIXTURE-BOUNDARY-7d9f1c--

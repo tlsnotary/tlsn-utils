@@ -1,0 +1,10 @@
+POST /post HTTP/1.1
+Host: postman-echo.com
+User-Agent: transcript-verify-fixtures/0.1
+Accept: */*
+Accept-Encoding: identity
+Connection: close
+Content-Type: application/json
+Content-Length: 83
+
+{"name":"ditto","level":42,"tags":["a","b"],"nested":{"x":1.5e3,"y":null,"z":true}}

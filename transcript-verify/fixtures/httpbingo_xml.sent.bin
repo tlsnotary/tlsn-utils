@@ -1,0 +1,7 @@
+GET /xml HTTP/1.1
+Host: httpbingo.org
+User-Agent: transcript-verify-fixtures/0.1
+Accept: */*
+Accept-Encoding: identity
+Connection: close
+

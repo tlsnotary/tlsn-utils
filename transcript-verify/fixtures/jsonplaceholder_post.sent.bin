@@ -1,0 +1,10 @@
+POST /posts HTTP/1.1
+Host: jsonplaceholder.typicode.com
+User-Agent: transcript-verify-fixtures/0.1
+Accept: */*
+Accept-Encoding: identity
+Connection: close
+Content-Type: application/json
+Content-Length: 39
+
+{"title":"foo","body":"bar","userId":1}

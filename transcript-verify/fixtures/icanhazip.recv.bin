@@ -1,0 +1,13 @@
+HTTP/1.1 200 OK
+Date: Wed, 10 Jun 2026 13:15:27 GMT
+Content-Type: text/plain
+Content-Length: 14
+Connection: close
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET
+set-cookie: __cf_bm=IqNDD3f1qVf2r2g3fa9qYf.p0sS4m5UQGLUbuVRSXj0-1781097327.772422-1.0.1.1-NXCJVqRCcu7YfPdogYOqDXi0q2uD70mNCxsYVY4NdG1BRSv28v53Eu0ybq.XtvTvt.G342jAmfEokfrk1aILyPoY_RzbaAzJk8niARWrvx0rH80v1zDUCdCU5O4jFaT0; HttpOnly; SameSite=None; Secure; Path=/; Domain=icanhazip.com; Expires=Wed, 10 Jun 2026 13:45:27 GMT
+Server: cloudflare
+CF-RAY: a098a51a99b9630d-HAM
+alt-svc: h3=":443"; ma=86400
+
+205.147.28.36

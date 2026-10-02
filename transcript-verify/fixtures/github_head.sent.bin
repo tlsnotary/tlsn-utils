@@ -1,0 +1,7 @@
+HEAD /zen HTTP/1.1
+Host: api.github.com
+User-Agent: transcript-verify-fixtures/0.1
+Accept: */*
+Accept-Encoding: identity
+Connection: close
+
