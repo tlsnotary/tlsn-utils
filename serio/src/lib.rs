@@ -29,6 +29,11 @@ pub trait Deserialize: serde::de::DeserializeOwned + Send + Sync + 'static {}
 
 impl<T> Deserialize for T where T: serde::de::DeserializeOwned + Send + Sync + 'static {}
 
+/// A type that can be both serialized and deserialized.
+pub trait Message: Serialize + Deserialize {}
+
+impl<T> Message for T where T: Serialize + Deserialize {}
+
 /// A duplex.
 pub trait Duplex: Sink + Stream {}
 

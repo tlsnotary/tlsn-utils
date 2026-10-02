@@ -9,7 +9,7 @@ use std::{
 
 #[cfg(feature = "compat")]
 use crate::FuturesCompat;
-use crate::{Serialize, future::assert_future};
+use crate::{Message, future::assert_future};
 
 /// A sink with an error type of `std::io::Error`.
 pub trait IoSink: Sink<Error = std::io::Error> {}
@@ -58,7 +58,7 @@ pub trait Sink {
     ///
     /// In most cases, if the sink encounters an error, the sink will
     /// permanently be unable to receive items.
-    fn start_send<Item: Serialize>(self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error>;
+    fn start_send<Item: Message>(self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error>;
 
     /// Flush any remaining output from this sink.
     ///
@@ -95,10 +95,7 @@ impl<S: ?Sized + Sink + Unpin> Sink for &mut S {
         Pin::new(&mut **self).poll_ready(cx)
     }
 
-    fn start_send<Item: Serialize>(
-        mut self: Pin<&mut Self>,
-        item: Item,
-    ) -> Result<(), Self::Error> {
+    fn start_send<Item: Message>(mut self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
         Pin::new(&mut **self).start_send(item)
     }
 
@@ -122,7 +119,7 @@ where
         self.get_mut().as_mut().poll_ready(cx)
     }
 
-    fn start_send<Item: Serialize>(self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
+    fn start_send<Item: Message>(self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
         self.get_mut().as_mut().start_send(item)
     }
 
@@ -152,7 +149,7 @@ pub trait SinkExt: Sink {
     /// Note that, **because of the flushing requirement, it is usually better
     /// to batch together items to send via `feed` or `send_all`,
     /// rather than flushing between each item.**
-    fn send<Item: Serialize>(&mut self, item: Item) -> Send<'_, Self, Item>
+    fn send<Item: Message>(&mut self, item: Item) -> Send<'_, Self, Item>
     where
         Self: Unpin,
     {
@@ -165,7 +162,7 @@ pub trait SinkExt: Sink {
     /// Unlike `send`, the returned future does not flush the sink.
     /// It is the caller's responsibility to ensure all pending items
     /// are processed, which can be done via `flush` or `close`.
-    fn feed<Item: Serialize>(&mut self, item: Item) -> Feed<'_, Self, Item>
+    fn feed<Item: Message>(&mut self, item: Item) -> Feed<'_, Self, Item>
     where
         Self: Unpin,
     {
@@ -183,7 +180,7 @@ pub trait SinkExt: Sink {
     /// Wraps the sink in a compatibility layer that allows it to be used as a
     /// futures 0.3 sink.
     #[cfg(feature = "compat")]
-    fn compat_sink<Item: Serialize>(self) -> FuturesCompat<Self, Item>
+    fn compat_sink<Item: Message>(self) -> FuturesCompat<Self, Item>
     where
         Self: Sized,
     {
@@ -237,7 +234,7 @@ impl<'a, Si: Sink + Unpin + ?Sized, Item> Send<'a, Si, Item> {
     }
 }
 
-impl<Si: Sink + Unpin + ?Sized, Item: Serialize> Future for Send<'_, Si, Item> {
+impl<Si: Sink + Unpin + ?Sized, Item: Message> Future for Send<'_, Si, Item> {
     type Output = Result<(), Si::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -284,7 +281,7 @@ impl<'a, Si: Sink + Unpin + ?Sized, Item> Feed<'a, Si, Item> {
     }
 }
 
-impl<Si: Sink + Unpin + ?Sized, Item: Serialize> Future for Feed<'_, Si, Item> {
+impl<Si: Sink + Unpin + ?Sized, Item: Message> Future for Feed<'_, Si, Item> {
     type Output = Result<(), Si::Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

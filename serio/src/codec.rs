@@ -11,7 +11,7 @@ use bytes::{Bytes, BytesMut};
 use futures_core::stream::TryStream;
 use futures_io::{AsyncRead, AsyncWrite};
 
-use crate::{Deserialize, IoDuplex, Serialize, Sink, Stream};
+use crate::{Deserialize, Message, IoDuplex, Serialize, Sink, Stream};
 
 /// A codec.
 pub trait Codec<Io> {
@@ -167,7 +167,7 @@ where
 {
     type Error = Error;
 
-    fn poll_next<Item: Deserialize>(
+    fn poll_next<Item: Message>(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Item, Error>>> {
