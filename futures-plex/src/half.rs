@@ -60,7 +60,7 @@ impl<'a, T: Unpin> DerefMut for WriteGuard<'a, T> {
 /// The writable half of an object.
 #[derive(Debug)]
 pub struct WriteHalf<T> {
-    handle: BiLock<T>,
+    pub(crate) handle: BiLock<T>,
 }
 
 fn lock_and_then<T, U, E, F>(lock: &BiLock<T>, cx: &mut Context<'_>, f: F) -> Poll<Result<U, E>>
