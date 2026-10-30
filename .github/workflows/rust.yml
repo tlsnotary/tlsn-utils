@@ -8,7 +8,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-  RUST_VERSION: "1.95.0"
+  RUST_VERSION: "1.95"
 
 jobs:
   build_and_test:
@@ -83,3 +83,50 @@ jobs:
         run: |
           cd web-spawn
           ./run_tests.sh
+
+  wasi_tests:
+    name: "Test WASI threads under V8"
+    runs-on: ubuntu-latest
+    env:
+      # Pin the engine so a stray wasmtime install can't change what runs.
+      WASM_HARNESS_ENGINE: v8
+      # wasm's libstd reports one core; cap rayon so V8 workers stay low.
+      WASM_HARNESS_ENV_RAYON_NUM_THREADS: "2"
+      RAYON_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: wasm32-wasip1-threads
+
+      - name: Use caching
+        uses: Swatinem/rust-cache@v2.7.7
+        with:
+          # Own entry: this lane builds a different target than the host jobs.
+          key: wasi-tests
+
+      - name: Install wasm-harness
+        # Exact pin: a bare "0.2.1" is a caret range and may pick up 0.2.x.
+        run: cargo install wasm-harness --version '=0.2.1' --locked
+
+      # jsvu installs the V8 shell (d8) to ~/.jsvu/bin, which wasm-harness
+      # searches automatically.
+      - name: Install V8
+        run: |
+          npm install -g jsvu
+          jsvu --os=linux64 --engines=v8
+
+      # Host-only crates: websocket-relay uses tokio's net/process features,
+      # test-harness adds tokio net/rt-multi-thread, and rangeset-fuzz is a
+      # libFuzzer binary. web-spawn also builds here (its std fallback).
+      - name: Run tests under V8
+        run: >
+          cargo test --workspace
+          --exclude websocket-relay
+          --exclude test-harness
+          --exclude rangeset-fuzz
+          --target wasm32-wasip1-threads
+          --no-fail-fast
