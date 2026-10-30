@@ -588,6 +588,7 @@ dependencies = [
 name = "futures-plex"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "futures",
 ]
 

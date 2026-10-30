@@ -6,3 +6,10 @@ description = "Port of tokio's `SimplexStream` and `DuplexStream` for the `futur
 
 [dependencies]
 futures = { version = "0.3", default-features = false, features = ["unstable", "bilock", "executor"] }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "duplex"
+harness = false
