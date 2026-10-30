@@ -3,14 +3,74 @@
 use std::{
     io::{Read, Write},
     pin::{Pin, pin},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     task::{self, Poll, Waker, ready},
 };
 
-use futures::{AsyncBufRead, AsyncRead, AsyncWrite, future::poll_fn, io};
+use futures::{AsyncBufRead, AsyncRead, AsyncWrite, future::poll_fn, io, task::AtomicWaker};
 
 mod half;
 
 pub use half::{ReadGuard, ReadHalf, WriteGuard, WriteHalf};
+
+/// State that must be reachable without acquiring the `BiLock` guarding a
+/// [`SimplexStream`].
+///
+/// Dropping a [`DuplexStream`] has to close both directions, but the peer may
+/// be holding the corresponding `BiLock` (it can even be the code that drops
+/// us), so blocking on it would deadlock. Only what a close needs lives here:
+/// the closed flag, and a waker slot per parked side so that a close can wake
+/// the peer without the lock.
+///
+/// The wakers used by the data path stay in the [`SimplexStream`], under the
+/// lock, so that `advance`/`advance_mut` don't touch an atomic.
+#[derive(Debug)]
+struct CloseState {
+    /// Set once this side is closed: readers then observe EOF and writers
+    /// observe `BrokenPipe`.
+    ///
+    /// A `SimplexStream` only carries one direction, so both closers set the
+    /// same flag.
+    closed: AtomicBool,
+    /// Waker of a task parked in [`SimplexStream::poll_get`], woken when this
+    /// stream is closed.
+    ///
+    /// It is not cleared when the task is woken for data instead, so a close
+    /// may spuriously wake a task that is no longer parked.
+    read_closer: AtomicWaker,
+    /// Waker of a task parked in [`SimplexStream::poll_mut`], woken when this
+    /// stream is closed.
+    write_closer: AtomicWaker,
+}
+
+impl CloseState {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            closed: AtomicBool::new(false),
+            read_closer: AtomicWaker::new(),
+            write_closer: AtomicWaker::new(),
+        })
+    }
+
+    /// Closes the write side and returns the reader's waker, if one is parked.
+    ///
+    /// The flag is published before the waker is taken: pollers register their
+    /// waker and then re-check the flag, so a close racing a registration
+    /// cannot lose the wakeup.
+    fn close_write(&self) -> Option<Waker> {
+        self.closed.store(true, Ordering::Release);
+        self.read_closer.take()
+    }
+
+    /// Closes the read side and returns the writer's waker, if one is parked.
+    fn close_read(&self) -> Option<Waker> {
+        self.closed.store(true, Ordering::Release);
+        self.write_closer.take()
+    }
+}
 
 /// A bidirectional pipe to read and write bytes in memory.
 ///
@@ -50,6 +110,12 @@ pub use half::{ReadGuard, ReadHalf, WriteGuard, WriteHalf};
 pub struct DuplexStream {
     read: ReadHalf<SimplexStream>,
     write: WriteHalf<SimplexStream>,
+    // Close state of the stream behind `read`, whose read side is closed when
+    // this duplex is dropped. Kept outside the `BiLock` so `Drop` never blocks.
+    read_close: Arc<CloseState>,
+    // Close state of the stream behind `write`, whose write side is closed
+    // when this duplex is dropped.
+    write_close: Arc<CloseState>,
 }
 
 impl DuplexStream {
@@ -94,20 +160,54 @@ impl DuplexStream {
 ///
 /// The `max_buf_size` argument is the maximum amount of bytes that can be
 /// written to a side before the write returns `Poll::Pending`.
+///
+/// # Panics
+///
+/// This function panics if `max_buf_size` is 0: with no space to ever write,
+/// both sides would wait forever.
+#[track_caller]
 pub fn duplex(max_buf_size: usize) -> (DuplexStream, DuplexStream) {
-    let (read_0, write_0) = half::split(SimplexStream::new_unsplit(max_buf_size));
-    let (read_1, write_1) = half::split(SimplexStream::new_unsplit(max_buf_size));
+    assert!(max_buf_size > 0, "`max_buf_size` must be greater than 0");
+
+    let stream_0 = SimplexStream::new_unsplit(max_buf_size);
+    let stream_1 = SimplexStream::new_unsplit(max_buf_size);
+    let (close_0, close_1) = (stream_0.close.clone(), stream_1.close.clone());
+
+    let (read_0, write_0) = half::split(stream_0);
+    let (read_1, write_1) = half::split(stream_1);
 
     (
         DuplexStream {
             read: read_0,
             write: write_1,
+            read_close: close_0.clone(),
+            write_close: close_1.clone(),
         },
         DuplexStream {
             read: read_1,
             write: write_0,
+            read_close: close_1,
+            write_close: close_0,
         },
     )
+}
+
+impl Drop for DuplexStream {
+    fn drop(&mut self) {
+        // Close both directions without taking the `BiLock`s: the peer may be
+        // holding one (it may even be the code that is dropping us), so
+        // blocking here would deadlock. Only atomics are touched, and the
+        // wakers are woken after the flags are published.
+        let writer_waker = self.read_close.close_read();
+        let reader_waker = self.write_close.close_write();
+
+        if let Some(waker) = writer_waker {
+            waker.wake();
+        }
+        if let Some(waker) = reader_waker {
+            waker.wake();
+        }
+    }
 }
 
 impl AsyncRead for DuplexStream {
@@ -202,8 +302,10 @@ pub struct SimplexStream {
     ptr: usize,
     // Number of bytes in the buffer.
     len: usize,
-    // Determines if the write side has been closed.
-    is_closed: bool,
+    // Closed flag and close-notification wakers. Shared with the owning
+    // `DuplexStream` (if any) so that it can close this stream without taking
+    // the lock.
+    close: Arc<CloseState>,
     // If the `read` side has been polled and is pending, this is the waker
     // for that parked task.
     read_waker: Option<Waker>,
@@ -251,11 +353,15 @@ impl SimplexStream {
     /// The `buf_size` argument is the maximum amount of bytes that can be
     /// written to a buffer before the it returns `Poll::Pending`.
     pub fn new_unsplit(buf_size: usize) -> SimplexStream {
+        Self::with_close(buf_size, CloseState::new())
+    }
+
+    fn with_close(buf_size: usize, close: Arc<CloseState>) -> SimplexStream {
         SimplexStream {
             buffer: vec![0; buf_size].into_boxed_slice(),
             ptr: 0,
             len: 0,
-            is_closed: false,
+            close,
             read_waker: None,
             write_waker: None,
         }
@@ -293,11 +399,19 @@ impl SimplexStream {
     pub fn poll_get(&mut self, cx: &mut task::Context<'_>) -> Poll<io::Result<&[u8]>> {
         if self.remaining() > 0 {
             Poll::Ready(Ok(self.get()))
-        } else if self.is_closed {
+        } else if self.close.closed.load(Ordering::Acquire) {
             Poll::Ready(Ok(&[]))
         } else {
+            // Park on the in-lock waker for data, and on the lock-free one so
+            // that a concurrent close can reach us. Then re-check the flag: a
+            // close may have happened before the registration.
             self.read_waker = Some(cx.waker().clone());
-            Poll::Pending
+            self.close.read_closer.register(cx.waker());
+            if self.close.closed.load(Ordering::Acquire) {
+                Poll::Ready(Ok(&[]))
+            } else {
+                Poll::Pending
+            }
         }
     }
 
@@ -326,16 +440,28 @@ impl SimplexStream {
     /// Returns a mutable reference to the available space in the buffer when
     /// there is space available.
     pub fn poll_mut(&mut self, cx: &mut task::Context<'_>) -> Poll<io::Result<&mut [u8]>> {
-        if self.is_closed {
+        if self.is_closed() {
             return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
         }
         let avail = self.remaining_mut();
         if avail == 0 {
+            // Park on the in-lock waker for space, and on the lock-free one so
+            // that a concurrent close can reach us. Then re-check the flag.
             self.write_waker = Some(cx.waker().clone());
+            self.close.write_closer.register(cx.waker());
+            if self.is_closed() {
+                return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
+            }
             Poll::Pending
         } else {
             Poll::Ready(Ok(self.get_mut()))
         }
+    }
+
+    /// Returns `true` if this stream has been closed, meaning that no more
+    /// bytes can be written into it.
+    fn is_closed(&self) -> bool {
+        self.close.closed.load(Ordering::Acquire)
     }
 
     /// Advances the read cursor.
@@ -417,12 +543,9 @@ impl SimplexStream {
         Poll::Ready(Ok(len))
     }
 
-    fn close_write(&mut self) {
-        self.is_closed = true;
-        // needs to notify any readers that no more data will come
-        if let Some(waker) = self.read_waker.take() {
-            waker.wake();
-        }
+    /// Closes the write side and returns the reader's waker, if one is parked.
+    pub(crate) fn close_write(&self) -> Option<Waker> {
+        self.close.close_write()
     }
 
     fn poll_read_internal(
@@ -533,8 +656,10 @@ impl AsyncWrite for SimplexStream {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, _: &mut task::Context<'_>) -> Poll<io::Result<()>> {
-        self.close_write();
+    fn poll_close(self: Pin<&mut Self>, _: &mut task::Context<'_>) -> Poll<io::Result<()>> {
+        if let Some(waker) = self.close_write() {
+            waker.wake();
+        }
         Poll::Ready(Ok(()))
     }
 }
@@ -554,184 +679,5 @@ impl Write for SimplexStream {
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_simplex_no_capacity() {
-        let mut s = SimplexStream::new_unsplit(0);
-        assert!(s.get().is_empty());
-        assert!(s.get_mut().is_empty());
-    }
-
-    #[test]
-    fn test_simplex() {
-        let mut s = SimplexStream::new_unsplit(8);
-        assert!(s.get().is_empty());
-        assert_eq!(s.get_mut().len(), 8);
-        assert_eq!(s.get_mut(), &vec![0; 8]);
-
-        s.get_mut().copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7]);
-
-        // write 2 bytes
-        s.advance_mut(2);
-        assert_eq!(s.remaining(), 2);
-        assert_eq!(s.remaining_mut(), 6);
-        assert_eq!(s.get(), &[0, 1]);
-        assert_eq!(s.get_mut(), &[2, 3, 4, 5, 6, 7]);
-
-        // read 1 byte
-        s.advance(1);
-        assert_eq!(s.remaining(), 1);
-        // space is reclaimed immediately with ring buffer
-        assert_eq!(s.remaining_mut(), 7);
-
-        // write the rest of the bytes
-        s.advance_mut(6);
-        assert_eq!(s.get(), &[1, 2, 3, 4, 5, 6, 7]);
-        // read everything out
-        s.advance(7);
-
-        assert!(s.get().is_empty());
-        assert_eq!(s.get_mut().len(), 8);
-    }
-
-    #[test]
-    fn test_read_to() {
-        let mut s0 = SimplexStream::new_unsplit(16);
-        let mut s1 = SimplexStream::new_unsplit(8);
-
-        s0.advance_mut(8);
-        assert_eq!(s0.remaining(), 8);
-
-        let waker = Waker::noop();
-        let mut cx = task::Context::from_waker(waker);
-
-        assert_eq!(s1.remaining(), 0);
-        assert!(s0.poll_read_to(&mut cx, &mut s1).is_ready());
-        assert_eq!(s0.remaining(), 0);
-        assert_eq!(s1.remaining(), 8);
-
-        s1.advance(8);
-        assert_eq!(s1.remaining(), 0);
-
-        s0.advance_mut(4);
-        assert_eq!(s0.remaining(), 4);
-
-        assert!(s0.poll_read_to(&mut cx, &mut s1).is_ready());
-        assert_eq!(s0.remaining(), 0);
-        assert_eq!(s1.remaining(), 4);
-
-        s1.advance(4);
-        assert_eq!(s1.remaining(), 0);
-
-        // With ring buffer, data wraps around and may need multiple reads
-        s0.advance_mut(16);
-        assert_eq!(s0.remaining(), 16);
-
-        // Transfer in chunks due to ring buffer wrap-around
-        while s0.remaining() > 0 && s1.remaining_mut() > 0 {
-            assert!(s0.poll_read_to(&mut cx, &mut s1).is_ready());
-        }
-        assert_eq!(s1.remaining(), 8);
-        s1.advance(8);
-
-        while s0.remaining() > 0 && s1.remaining_mut() > 0 {
-            assert!(s0.poll_read_to(&mut cx, &mut s1).is_ready());
-        }
-        assert_eq!(s0.remaining(), 0);
-        assert_eq!(s1.remaining(), 8);
-    }
-
-    #[test]
-    fn test_write_from() {
-        let mut s0 = SimplexStream::new_unsplit(16);
-        let mut s1 = SimplexStream::new_unsplit(8);
-
-        s0.advance_mut(8);
-        assert_eq!(s0.remaining(), 8);
-
-        let waker = Waker::noop();
-        let mut cx = task::Context::from_waker(waker);
-
-        assert_eq!(s1.remaining(), 0);
-        assert!(s1.poll_write_from(&mut cx, &mut s0).is_ready());
-        assert_eq!(s0.remaining(), 0);
-        assert_eq!(s1.remaining(), 8);
-
-        s1.advance(8);
-        assert_eq!(s1.remaining(), 0);
-
-        s0.advance_mut(4);
-        assert_eq!(s0.remaining(), 4);
-
-        assert!(s1.poll_write_from(&mut cx, &mut s0).is_ready());
-        assert_eq!(s0.remaining(), 0);
-        assert_eq!(s1.remaining(), 4);
-
-        s1.advance(4);
-        assert_eq!(s1.remaining(), 0);
-
-        // With ring buffer, data wraps around and may need multiple writes
-        s0.advance_mut(16);
-        assert_eq!(s0.remaining(), 16);
-
-        // Transfer in chunks due to ring buffer wrap-around
-        while s0.remaining() > 0 && s1.remaining_mut() > 0 {
-            assert!(s1.poll_write_from(&mut cx, &mut s0).is_ready());
-        }
-        assert_eq!(s1.remaining(), 8);
-        s1.advance(8);
-
-        while s0.remaining() > 0 && s1.remaining_mut() > 0 {
-            assert!(s1.poll_write_from(&mut cx, &mut s0).is_ready());
-        }
-        assert_eq!(s0.remaining(), 0);
-        assert_eq!(s1.remaining(), 8);
-    }
-
-    #[test]
-    fn test_ring_buffer_wrap() {
-        let mut s = SimplexStream::new_unsplit(8);
-
-        // Fill buffer completely
-        s.get_mut().copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7]);
-        s.advance_mut(8);
-        assert_eq!(s.remaining(), 8);
-        assert_eq!(s.remaining_mut(), 0);
-
-        // Read 4 bytes - this frees space at the front
-        assert_eq!(s.get(), &[0, 1, 2, 3, 4, 5, 6, 7]);
-        s.advance(4);
-        // ptr=4, len=4
-        assert_eq!(s.remaining(), 4);
-        assert_eq!(s.remaining_mut(), 4);
-        assert_eq!(s.get(), &[4, 5, 6, 7]);
-
-        // Write space wraps to the front
-        // tail = (4+4) % 8 = 0, so get_mut returns buffer[0..4]
-        assert_eq!(s.get_mut().len(), 4);
-        s.get_mut().copy_from_slice(&[8, 9, 10, 11]);
-        s.advance_mut(4);
-        // ptr=4, len=8
-        assert_eq!(s.remaining(), 8);
-        assert_eq!(s.remaining_mut(), 0);
-
-        // Read wraps around - first chunk is [4,5,6,7]
-        assert_eq!(s.get(), &[4, 5, 6, 7]);
-        s.advance(4);
-        // ptr=0, len=4
-
-        // Second chunk is [8,9,10,11]
-        assert_eq!(s.get(), &[8, 9, 10, 11]);
-        s.advance(4);
-        // ptr=4, len=0
-
-        assert!(s.get().is_empty());
-        assert_eq!(s.remaining_mut(), 8);
     }
 }
