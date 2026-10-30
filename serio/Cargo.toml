@@ -36,8 +36,13 @@ bincode = { workspace = true, optional = true }
 [dev-dependencies]
 futures.workspace = true
 serde = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["codec"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "rt"] }
 
 [[example]]
 name = "tokio_codec"

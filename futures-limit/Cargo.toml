@@ -10,8 +10,11 @@ futures-timer = { version = "3" }
 pin-project-lite = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-futures-timer = { version = "3", features = ["wasm-bindgen"] }
 web-time = { version = "1.1" }
+
+# Browser-only: wasm-bindgen timers do not work on WASI (wasip1/wasip1-threads).
+[target.'cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))'.dependencies]
+futures-timer = { version = "3", features = ["wasm-bindgen"] }
 
 [dev-dependencies]
 criterion = { workspace = true }

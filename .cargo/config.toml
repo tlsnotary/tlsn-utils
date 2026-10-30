@@ -1,0 +1,2 @@
+[target.wasm32-wasip1-threads]
+runner = ["wasm-harness"]

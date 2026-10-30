@@ -13,7 +13,7 @@ struct Ping(String);
 #[derive(Serialize, Deserialize)]
 struct Pong(u32);
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     let (a, b) = duplex(1024);
 
