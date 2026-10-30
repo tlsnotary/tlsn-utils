@@ -98,10 +98,10 @@ impl FlowController {
                     // the overall configured conneciton limit
                     (self.config.max_connection_receive_window.unwrap_or(usize::MAX)
                     // minus the minimum amount of window guaranteed to each stream
-                    - self.config.max_num_streams * DEFAULT_CREDIT as usize
+                    .saturating_sub(self.config.max_num_streams.saturating_mul(DEFAULT_CREDIT as usize))
                     // minus the amount of bytes beyond the minimum amount (`DEFAULT_CREDIT`)
                     // already allocated by this and other streams on the connection.
-                    - *accumulated_max_stream_windows);
+                    .saturating_sub(*accumulated_max_stream_windows));
 
                 cmp::min(new_max, connection_limit.try_into().unwrap_or(u32::MAX))
             };
@@ -151,8 +151,14 @@ impl FlowController {
         );
         assert!(
             (self.max_receive_window - DEFAULT_CREDIT) as usize
-                <= config.max_connection_receive_window.unwrap_or(usize::MAX)
-                    - config.max_num_streams * DEFAULT_CREDIT as usize,
+                <= config
+                    .max_connection_receive_window
+                    .unwrap_or(usize::MAX)
+                    .saturating_sub(
+                        config
+                            .max_num_streams
+                            .saturating_mul(DEFAULT_CREDIT as usize)
+                    ),
             "The maximum never exceeds its maximum portion of the configured connection limit."
         );
         assert!(
@@ -248,9 +254,13 @@ mod tests {
             let config = Arc::new(Config::arbitrary(g));
             let rtt = Rtt::arbitrary(g);
 
-            let max_connection_minus_default =
-                config.max_connection_receive_window.unwrap_or(usize::MAX)
-                    - (config.max_num_streams * (DEFAULT_CREDIT as usize));
+            // Compute in u64 so this does not overflow on 32-bit targets (e.g. wasm32).
+            let min_required = (config.max_num_streams as u64 * DEFAULT_CREDIT as u64)
+                .min(usize::MAX as u64) as usize;
+            let max_connection_minus_default = config
+                .max_connection_receive_window
+                .unwrap_or(usize::MAX)
+                .saturating_sub(min_required);
 
             let max_receive_window = if rtt.get().is_none() {
                 DEFAULT_CREDIT

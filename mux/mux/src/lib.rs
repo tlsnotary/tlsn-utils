@@ -282,11 +282,14 @@ impl quickcheck::Arbitrary for Config {
     fn arbitrary(g: &mut quickcheck::Gen) -> Self {
         use quickcheck::GenRange;
 
-        let max_num_streams = g.gen_range(0..u16::MAX as usize);
+        // Keep `max_num_streams * DEFAULT_CREDIT` representable on 32-bit targets.
+        let max_streams = (usize::MAX / DEFAULT_CREDIT as usize).min(u16::MAX as usize);
+        let max_num_streams = g.gen_range(0..max_streams);
+        let min_receive_window = DEFAULT_CREDIT as usize * max_num_streams;
 
         Config {
             max_connection_receive_window: if bool::arbitrary(g) {
-                Some(g.gen_range((DEFAULT_CREDIT as usize * max_num_streams)..usize::MAX))
+                Some(g.gen_range(min_receive_window..usize::MAX))
             } else {
                 None
             },
