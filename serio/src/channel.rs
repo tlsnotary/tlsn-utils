@@ -12,7 +12,7 @@ use futures_channel::mpsc;
 use futures_core::Stream as _;
 use futures_sink::Sink as _;
 
-use crate::{Deserialize, Serialize, Sink, Stream};
+use crate::{Message, Sink, Stream};
 
 type Item = Box<dyn Any + Send + Sync + 'static>;
 
@@ -30,10 +30,7 @@ impl Sink for MemorySink {
             .map_err(|e| Error::new(ErrorKind::ConnectionAborted, e))
     }
 
-    fn start_send<Item: Serialize>(
-        mut self: Pin<&mut Self>,
-        item: Item,
-    ) -> Result<(), Self::Error> {
+    fn start_send<Item: Message>(mut self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
         Pin::new(&mut self.0)
             .start_send(Box::new(item))
             .map_err(|e| Error::new(ErrorKind::ConnectionAborted, e))
@@ -60,7 +57,7 @@ pub struct MemoryStream(mpsc::Receiver<Item>);
 impl Stream for MemoryStream {
     type Error = Error;
 
-    fn poll_next<Item: Deserialize>(
+    fn poll_next<Item: Message>(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Item, Self::Error>>> {
@@ -94,10 +91,7 @@ impl Sink for UnboundedMemorySink {
             .map_err(|e| Error::new(ErrorKind::ConnectionAborted, e))
     }
 
-    fn start_send<Item: Serialize>(
-        mut self: Pin<&mut Self>,
-        item: Item,
-    ) -> Result<(), Self::Error> {
+    fn start_send<Item: Message>(mut self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
         Pin::new(&mut self.0)
             .start_send(Box::new(item))
             .map_err(|e| Error::new(ErrorKind::ConnectionAborted, e))
@@ -124,7 +118,7 @@ pub struct UnboundedMemoryStream(mpsc::UnboundedReceiver<Item>);
 impl Stream for UnboundedMemoryStream {
     type Error = Error;
 
-    fn poll_next<Item: Deserialize>(
+    fn poll_next<Item: Message>(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Item, Self::Error>>> {
@@ -175,10 +169,7 @@ impl Sink for MemoryDuplex {
         Pin::new(&mut self.sink).poll_ready(cx)
     }
 
-    fn start_send<Item: Serialize>(
-        mut self: Pin<&mut Self>,
-        item: Item,
-    ) -> Result<(), Self::Error> {
+    fn start_send<Item: Message>(mut self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
         Pin::new(&mut self.sink).start_send(item)
     }
 
@@ -194,7 +185,7 @@ impl Sink for MemoryDuplex {
 impl Stream for MemoryDuplex {
     type Error = Error;
 
-    fn poll_next<Item: Deserialize>(
+    fn poll_next<Item: Message>(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Item, Self::Error>>> {
@@ -244,10 +235,7 @@ impl Sink for UnboundedMemoryDuplex {
         Pin::new(&mut self.sink).poll_ready(cx)
     }
 
-    fn start_send<Item: Serialize>(
-        mut self: Pin<&mut Self>,
-        item: Item,
-    ) -> Result<(), Self::Error> {
+    fn start_send<Item: Message>(mut self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
         Pin::new(&mut self.sink).start_send(item)
     }
 
@@ -263,7 +251,7 @@ impl Sink for UnboundedMemoryDuplex {
 impl Stream for UnboundedMemoryDuplex {
     type Error = Error;
 
-    fn poll_next<Item: Deserialize>(
+    fn poll_next<Item: Message>(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Item, Self::Error>>> {
